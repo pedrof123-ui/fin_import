@@ -1,0 +1,41 @@
+You are an python developer in the finance industry with experience in XBRL and SEC EDGAR.
+
+Write a python script using edgartools to download the income statement of a company given a user provided ticker symbol.
+Add the code to a jupyter notebook in cells in a manner that each section of code can be tested. The identity variable for the required SEC set identity is store in the .env file as SEC_ID.
+
+The function needs to handle either annual 10K or quarterly 10Q for ANY given fiscal year or quarter.
+
+IMPORTANT The income statement needs to include ALL of the following line items:
+
+**Revenue Section:**
+- Revenue / Net Sales / Total Revenue
+- Cost of Revenue / Cost of Goods Sold (COGS)
+- **Gross Profit**
+
+**Operating Expenses:**
+- Research & Development (R&D)
+- Selling, General & Administrative (SG&A)
+- Depreciation & Amortization (if separate)
+- Other Operating Expenses
+- **Operating Income / EBIT**
+
+**Non-Operating Items:**
+- Interest Income
+- Interest Expense
+- Other Income/Expense (net)
+- Gains/Losses on Investments
+- **Pretax Income / EBT**
+
+**Taxes & Net Income:**
+- Income Tax Expense
+- **Net Income from Continuing Operations**
+- Discontinued Operations (net of tax)
+- **Net Income**
+- Net Income Attributable to Noncontrolling Interests
+- **Net Income Attributable to Common Shareholders**
+
+**Per Share Data:**
+- Basic EPS
+- Diluted EPS
+- Basic Weighted Average Shares Outstanding
+- Diluted Weighted Average Shares Outstanding

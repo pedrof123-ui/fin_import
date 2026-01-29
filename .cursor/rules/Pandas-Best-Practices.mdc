@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+Pandas Best Practices: Favor method chaining. Use .pipe() for complex transformations. Always specify dtypes to save memory when handling large SEC datasets.

@@ -1,0 +1,8 @@
+---
+description: 
+alwaysApply: true
+---
+
+The User-Agent Rule: When using edgartools or yfinance, always ensure a set_identity or headers block is present to avoid SEC 403 blocks.
+
+Pandas Best Practices: Favor method chaining. Use .pipe() for complex transformations. Always specify dtypes to save memory when handling large SEC datasets.
