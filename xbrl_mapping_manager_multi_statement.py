@@ -25,10 +25,29 @@ from datetime import datetime, date
 from typing import Optional, List, Dict, Tuple, Literal
 import asyncio
 
-# Import all three mapping files
-from income_statement_xbrl_mapping import INCOME_STATEMENT_MAPPING
-# from balance_sheet_xbrl_mapping import BALANCE_SHEET_MAPPING  # To be created
-# from cash_flow_xbrl_mapping import CASH_FLOW_MAPPING  # To be created
+# Import mapping files using recommended structure
+# Option 1: If using package structure (xbrl_mappings/)
+try:
+    from xbrl_mappings import (
+        INCOME_STATEMENT_MAPPING,
+        BALANCE_SHEET_MAPPING,
+        CASH_FLOW_MAPPING,
+    )
+except ImportError:
+    # Option 2: If using flat file structure (backward compatible)
+    from income_statement_xbrl_mapping import INCOME_STATEMENT_MAPPING
+    
+    try:
+        from balance_sheet_xbrl_mapping import BALANCE_SHEET_MAPPING
+    except ImportError:
+        print("⚠ balance_sheet_xbrl_mapping.py not found")
+        BALANCE_SHEET_MAPPING = None
+    
+    try:
+        from cash_flow_xbrl_mapping import CASH_FLOW_MAPPING
+    except ImportError:
+        print("⚠ cash_flow_xbrl_mapping.py not found")
+        CASH_FLOW_MAPPING = None
 
 
 StatementType = Literal['income', 'balance', 'cashflow']
@@ -65,50 +84,203 @@ class XBRLMappingManager:
         
         if not tables:
             print("Creating multi-statement database schema...")
-            # Read and execute schema file
-            schema_path = Path(__file__).parent / 'xbrl_mapping_schema_multi_statement.sql'
-            if schema_path.exists():
-                with open(schema_path) as f:
-                    self.conn.executescript(f.read())
-            
-            # Sync Python mappings to database
+            self._create_schema()
             self._sync_core_mappings()
+    
+    def _create_schema(self):
+        """Create database schema directly (DuckDB-compatible)"""
+        
+        # Table 1: Core Concept Mappings
+        self.conn.execute("""
+            CREATE TABLE core_concept_mappings (
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                concept VARCHAR NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 1,
+                added_date DATE DEFAULT CURRENT_DATE,
+                source VARCHAR DEFAULT 'manual',
+                notes TEXT,
+                PRIMARY KEY (statement_type, field_name, concept)
+            )
+        """)
+        
+        # Table 2: AI-Discovered Mappings
+        self.conn.execute("""
+            CREATE SEQUENCE ai_discovered_mappings_seq START 1
+        """)
+        self.conn.execute("""
+            CREATE TABLE ai_discovered_mappings (
+                id INTEGER PRIMARY KEY DEFAULT nextval('ai_discovered_mappings_seq'),
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                concept VARCHAR NOT NULL,
+                discovered_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                confidence_score FLOAT DEFAULT 0.0,
+                times_used INTEGER DEFAULT 0,
+                times_failed INTEGER DEFAULT 0,
+                promoted_to_core BOOLEAN DEFAULT FALSE,
+                UNIQUE(statement_type, field_name, concept)
+            )
+        """)
+        
+        # Table 3: Company-Specific Overrides
+        self.conn.execute("""
+            CREATE TABLE company_specific_mappings (
+                ticker VARCHAR NOT NULL,
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                concept VARCHAR NOT NULL,
+                priority INTEGER DEFAULT 1,
+                added_date DATE DEFAULT CURRENT_DATE,
+                added_by VARCHAR,
+                reason TEXT,
+                PRIMARY KEY (ticker, statement_type, field_name, concept)
+            )
+        """)
+        
+        # Table 4: Extraction Log
+        self.conn.execute("""
+            CREATE SEQUENCE extraction_log_seq START 1
+        """)
+        self.conn.execute("""
+            CREATE TABLE extraction_log (
+                id INTEGER PRIMARY KEY DEFAULT nextval('extraction_log_seq'),
+                ticker VARCHAR NOT NULL,
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                concept VARCHAR,
+                value DOUBLE,
+                filing_date DATE,
+                period_end_date DATE,
+                filing_type VARCHAR,
+                extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                source VARCHAR NOT NULL,
+                success BOOLEAN NOT NULL,
+                error_message TEXT
+            )
+        """)
+        
+        # Table 5: AI Discovery Queue
+        self.conn.execute("""
+            CREATE SEQUENCE ai_discovery_queue_seq START 1
+        """)
+        self.conn.execute("""
+            CREATE TABLE ai_discovery_queue (
+                id INTEGER PRIMARY KEY DEFAULT nextval('ai_discovery_queue_seq'),
+                ticker VARCHAR NOT NULL,
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                concept VARCHAR NOT NULL,
+                discovered_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                filing_date DATE,
+                period_end_date DATE,
+                value DOUBLE,
+                reviewed BOOLEAN DEFAULT FALSE,
+                approved BOOLEAN DEFAULT FALSE,
+                reviewer VARCHAR,
+                review_date TIMESTAMP,
+                review_notes TEXT
+            )
+        """)
+        
+        # Table 6: Concept Metadata
+        self.conn.execute("""
+            CREATE TABLE concept_metadata (
+                concept VARCHAR PRIMARY KEY,
+                concept_type VARCHAR,
+                company_prefix VARCHAR,
+                description TEXT,
+                typical_statement VARCHAR,
+                typical_field VARCHAR,
+                first_seen_date DATE,
+                last_seen_date DATE,
+                occurrence_count INTEGER DEFAULT 1,
+                companies_using_count INTEGER DEFAULT 1
+            )
+        """)
+        
+        # Table 7: Statement Coverage Stats
+        self.conn.execute("""
+            CREATE TABLE statement_coverage_stats (
+                ticker VARCHAR NOT NULL,
+                filing_date DATE NOT NULL,
+                filing_type VARCHAR NOT NULL,
+                statement_type VARCHAR NOT NULL,
+                total_fields INTEGER NOT NULL,
+                fields_found INTEGER NOT NULL,
+                extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ticker, filing_date, statement_type)
+            )
+        """)
+        
+        # Create indexes
+        self.conn.execute("CREATE INDEX idx_core_statement_field ON core_concept_mappings(statement_type, field_name, priority)")
+        self.conn.execute("CREATE INDEX idx_ai_statement_field ON ai_discovered_mappings(statement_type, field_name)")
+        self.conn.execute("CREATE INDEX idx_log_ticker_statement ON extraction_log(ticker, statement_type, extraction_date)")
+        
+        print("✓ Database schema created successfully")
     
     def _sync_core_mappings(self):
         """Sync Python mapping files to database"""
         print("Syncing core mappings from Python files...")
         
+        count = 0
+        
         # Sync Income Statement
-        for field_name, concepts in INCOME_STATEMENT_MAPPING.items():
-            for priority, concept in enumerate(concepts, start=1):
-                self.conn.execute("""
-                    INSERT OR IGNORE INTO core_concept_mappings 
-                    (statement_type, field_name, concept, priority, source)
-                    VALUES ('income', ?, ?, ?, 'manual')
-                """, [field_name, concept, priority])
+        if INCOME_STATEMENT_MAPPING:
+            for field_name, concepts in INCOME_STATEMENT_MAPPING.items():
+                for priority, concept in enumerate(concepts, start=1):
+                    self.conn.execute("""
+                        INSERT OR IGNORE INTO core_concept_mappings 
+                        (statement_type, field_name, concept, priority, source)
+                        VALUES ('income', ?, ?, ?, 'manual')
+                    """, [field_name, concept, priority])
+                    count += 1
+            print(f"  ✓ Synced income statement: {len(INCOME_STATEMENT_MAPPING)} fields")
         
-        # TODO: Sync Balance Sheet when file exists
-        # for field_name, concepts in BALANCE_SHEET_MAPPING.items():
-        #     for priority, concept in enumerate(concepts, start=1):
-        #         self.conn.execute("""
-        #             INSERT OR IGNORE INTO core_concept_mappings 
-        #             (statement_type, field_name, concept, priority, source)
-        #             VALUES ('balance', ?, ?, ?, 'manual')
-        #         """, [field_name, concept, priority])
+        # Sync Balance Sheet (if available)
+        if BALANCE_SHEET_MAPPING:
+            for field_name, concepts in BALANCE_SHEET_MAPPING.items():
+                for priority, concept in enumerate(concepts, start=1):
+                    self.conn.execute("""
+                        INSERT OR IGNORE INTO core_concept_mappings 
+                        (statement_type, field_name, concept, priority, source)
+                        VALUES ('balance', ?, ?, ?, 'manual')
+                    """, [field_name, concept, priority])
+                    count += 1
+            print(f"  ✓ Synced balance sheet: {len(BALANCE_SHEET_MAPPING)} fields")
+        else:
+            print("  ⊘ Balance sheet mapping not available yet")
         
-        # TODO: Sync Cash Flow when file exists
-        # for field_name, concepts in CASH_FLOW_MAPPING.items():
-        #     for priority, concept in enumerate(concepts, start=1):
-        #         self.conn.execute("""
-        #             INSERT OR IGNORE INTO core_concept_mappings 
-        #             (statement_type, field_name, concept, priority, source)
-        #             VALUES ('cashflow', ?, ?, ?, 'manual')
-        #         """, [field_name, concept, priority])
+        # Sync Cash Flow (if available)
+        if CASH_FLOW_MAPPING:
+            for field_name, concepts in CASH_FLOW_MAPPING.items():
+                for priority, concept in enumerate(concepts, start=1):
+                    self.conn.execute("""
+                        INSERT OR IGNORE INTO core_concept_mappings 
+                        (statement_type, field_name, concept, priority, source)
+                        VALUES ('cashflow', ?, ?, ?, 'manual')
+                    """, [field_name, concept, priority])
+                    count += 1
+            print(f"  ✓ Synced cash flow: {len(CASH_FLOW_MAPPING)} fields")
+        else:
+            print("  ⊘ Cash flow mapping not available yet")
         
         self.conn.commit()
         
-        count = self.conn.execute("SELECT COUNT(*) FROM core_concept_mappings").fetchone()[0]
-        print(f"✓ Synced {count} core concept mappings across all statements")
+        print(f"✓ Total: {count} core concept mappings synced")
+        
+        # Show what's available
+        summary = self.conn.execute("""
+            SELECT statement_type, COUNT(DISTINCT field_name) as fields, COUNT(*) as concepts
+            FROM core_concept_mappings
+            GROUP BY statement_type
+        """).fetchall()
+        
+        if summary:
+            print("\nAvailable statements:")
+            for stmt_type, fields, concepts in summary:
+                print(f"  • {stmt_type}: {fields} fields, {concepts} concepts")
     
     async def get_concepts_for_field(
         self, 
@@ -157,9 +329,19 @@ class XBRLMappingManager:
                 SELECT concept, 'ai_discovered' as source
                 FROM ai_discovered_mappings
                 WHERE statement_type = ? AND field_name = ?
-                  AND success_rate >= 0.80
+                  AND CASE 
+                      WHEN (times_used + times_failed) > 0 
+                      THEN times_used::FLOAT / (times_used + times_failed)
+                      ELSE 0.0 
+                  END >= 0.80
                   AND times_used >= 3
-                ORDER BY success_rate DESC, times_used DESC
+                ORDER BY 
+                  CASE 
+                      WHEN (times_used + times_failed) > 0 
+                      THEN times_used::FLOAT / (times_used + times_failed)
+                      ELSE 0.0 
+                  END DESC,
+                  times_used DESC
                 LIMIT 5
             """, [statement_type, field_name]).fetchall()
             
@@ -238,7 +420,49 @@ class XBRLMappingManager:
         self.conn.commit()
         
         print(f"  ✓ AI discovery logged: {concept} → {statement_type}.{field_name}")
-    
+
+    def get_prior_discoveries(
+        self,
+        statement_type: StatementType,
+        min_occurrences: int = 2
+    ) -> Dict[str, str]:
+        """
+        Query ai_discovery_queue for concept→field pairs seen across multiple tickers.
+
+        When a concept maps to multiple fields, takes the one with the most ticker occurrences.
+
+        Args:
+            statement_type: 'income', 'balance', or 'cashflow'
+            min_occurrences: Minimum number of distinct tickers for a mapping to qualify
+
+        Returns:
+            Dict of {concept: field_name} for trusted prior discoveries
+        """
+        rows = self.conn.execute("""
+            WITH ranked AS (
+                SELECT
+                    concept,
+                    field_name,
+                    COUNT(DISTINCT ticker) as ticker_count,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY concept
+                        ORDER BY COUNT(DISTINCT ticker) DESC
+                    ) as rn
+                FROM ai_discovery_queue
+                WHERE statement_type = ?
+                GROUP BY concept, field_name
+                HAVING COUNT(DISTINCT ticker) >= ?
+            )
+            SELECT concept, field_name
+            FROM ranked
+            WHERE rn = 1
+        """, [statement_type, min_occurrences]).fetchall()
+
+        result = {row[0]: row[1] for row in rows}
+        if result:
+            print(f"  DB lookup: found {len(result)} prior AI discoveries for {statement_type}")
+        return result
+
     async def update_statement_coverage(
         self,
         ticker: str,
@@ -263,7 +487,7 @@ class XBRLMappingManager:
         
         stats = self.conn.execute("""
             SELECT 
-                AVG(coverage_pct) as overall_coverage,
+                AVG((fields_found::FLOAT / total_fields) * 100) as overall_coverage,
                 COUNT(DISTINCT statement_type) as statements_extracted,
                 COUNT(*) as total_filings,
                 MAX(filing_date) as latest_filing
@@ -275,7 +499,7 @@ class XBRLMappingManager:
         per_statement = self.conn.execute("""
             SELECT 
                 statement_type,
-                AVG(coverage_pct) as avg_coverage,
+                AVG((fields_found::FLOAT / total_fields) * 100) as avg_coverage,
                 COUNT(*) as filings_count
             FROM statement_coverage_stats
             WHERE ticker = ?
@@ -309,24 +533,39 @@ class XBRLMappingManager:
     ) -> List[Dict]:
         """Get AI discoveries that should be promoted to core mapping"""
         
+        # Calculate success_rate in query since DuckDB virtual columns are different
         query = """
             SELECT 
                 statement_type,
                 field_name,
                 concept,
                 times_used,
-                success_rate,
+                CASE 
+                    WHEN (times_used + times_failed) > 0 
+                    THEN times_used::FLOAT / (times_used + times_failed)
+                    ELSE 0.0 
+                END as success_rate,
                 confidence_score,
                 discovered_date
-            FROM ai_promotion_candidates
+            FROM ai_discovered_mappings
+            WHERE times_used >= 10
+              AND promoted_to_core = FALSE
         """
         
         params = []
         if statement_type:
-            query += " WHERE statement_type = ?"
+            query += " AND statement_type = ?"
             params.append(statement_type)
         
-        query += " LIMIT ?"
+        query += """
+            AND CASE 
+                WHEN (times_used + times_failed) > 0 
+                THEN times_used::FLOAT / (times_used + times_failed)
+                ELSE 0.0 
+            END >= 0.90
+            ORDER BY success_rate DESC, times_used DESC
+            LIMIT ?
+        """
         params.append(limit)
         
         candidates = self.conn.execute(query, params).fetchall()
@@ -384,9 +623,9 @@ class XBRLMappingManager:
             SELECT 
                 statement_type,
                 COUNT(DISTINCT ticker) as companies,
-                AVG(coverage_pct) as avg_coverage,
-                MIN(coverage_pct) as min_coverage,
-                MAX(coverage_pct) as max_coverage,
+                AVG((fields_found::FLOAT / total_fields) * 100) as avg_coverage,
+                MIN((fields_found::FLOAT / total_fields) * 100) as min_coverage,
+                MAX((fields_found::FLOAT / total_fields) * 100) as max_coverage,
                 COUNT(*) as total_extractions
             FROM statement_coverage_stats
             WHERE filing_date >= CURRENT_DATE - INTERVAL 90 DAY
