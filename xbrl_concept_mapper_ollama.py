@@ -343,13 +343,6 @@ async def batch_classify_concepts(
         print(f"  No valid field names found for {statement_type}")
         return {}
 
-    # Read mapping file for context
-    try:
-        mapping_content = read_mapping_file(statement_type)
-    except Exception as e:
-        print(f"  Error reading mapping file for batch classify: {e}")
-        return {}
-
     merged_results = {}
 
     # Process in chunks
@@ -362,28 +355,15 @@ async def batch_classify_concepts(
         concept_list = "\n".join(f"  - {c}" for c in chunk)
         field_list = ", ".join(sorted(valid_fields))
 
-        prompt = f"""You are a financial analyst mapping XBRL concepts to standardized field names.
-
-TASK: For each XBRL concept below, find the best matching field name from the {statement_type} statement mapping.
+        prompt = f"""Map each XBRL concept to the best matching {statement_type} statement field name.
 
 VALID FIELD NAMES: {field_list}
 
-XBRL CONCEPTS TO CLASSIFY:
+CONCEPTS:
 {concept_list}
 
-MAPPING FILE FOR REFERENCE:
-{mapping_content}
-
-INSTRUCTIONS:
-1. For each concept, find the best matching field name from the valid field names list above
-2. If a concept has no good match, map it to "no_match"
-3. Return ONLY a JSON object mapping concept names to field names
-4. Do NOT include any explanation, just the JSON
-
-RESPONSE FORMAT (JSON only):
-{{"ConceptName1": "field_name1", "ConceptName2": "no_match", "ConceptName3": "field_name3"}}
-
-YOUR RESPONSE (JSON only):"""
+Rules: Return JSON only. Use "no_match" if no good match. No explanations.
+Format: {{"ConceptName": "field_name", ...}}"""
 
         try:
             response = await call_ollama(

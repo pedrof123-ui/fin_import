@@ -424,16 +424,16 @@ class XBRLMappingManager:
     def get_prior_discoveries(
         self,
         statement_type: StatementType,
-        min_occurrences: int = 2
+        min_occurrences: int = 1
     ) -> Dict[str, str]:
         """
-        Query ai_discovery_queue for concept→field pairs seen across multiple tickers.
+        Query ai_discovery_queue for concept→field pairs from prior AI classifications.
 
-        When a concept maps to multiple fields, takes the one with the most ticker occurrences.
+        When a concept maps to multiple fields, takes the one with the most occurrences.
 
         Args:
             statement_type: 'income', 'balance', or 'cashflow'
-            min_occurrences: Minimum number of distinct tickers for a mapping to qualify
+            min_occurrences: Minimum number of prior occurrences for a mapping to qualify
 
         Returns:
             Dict of {concept: field_name} for trusted prior discoveries
@@ -443,15 +443,15 @@ class XBRLMappingManager:
                 SELECT
                     concept,
                     field_name,
-                    COUNT(DISTINCT ticker) as ticker_count,
+                    COUNT(*) as occurrence_count,
                     ROW_NUMBER() OVER (
                         PARTITION BY concept
-                        ORDER BY COUNT(DISTINCT ticker) DESC
+                        ORDER BY COUNT(*) DESC
                     ) as rn
                 FROM ai_discovery_queue
                 WHERE statement_type = ?
                 GROUP BY concept, field_name
-                HAVING COUNT(DISTINCT ticker) >= ?
+                HAVING COUNT(*) >= ?
             )
             SELECT concept, field_name
             FROM ranked
