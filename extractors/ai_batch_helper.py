@@ -9,7 +9,11 @@ Replaces the O(fields x concepts) per-concept AI loop with:
 import pandas as pd
 from typing import Optional, Dict, Set
 
-from xbrl_concept_mapper_ollama import batch_classify_concepts, StatementType
+## USE FOR OLLAMA
+# from xbrl_concept_mapper_ollama import batch_classify_concepts, StatementType
+
+## USE FOR OPENROUTER OR CLOUD LLM
+from xbrl_concept_mapper import batch_classify_concepts, StatementType
 
 
 async def batch_ai_resolve_unfound_fields(

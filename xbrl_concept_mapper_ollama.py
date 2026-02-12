@@ -319,7 +319,7 @@ def _get_valid_field_names(statement_type: StatementType) -> set:
 async def batch_classify_concepts(
     concepts: list,
     statement_type: StatementType,
-    chunk_size: int = 20
+    chunk_size: int = 8
 ) -> dict:
     """
     Classify a list of XBRL concepts in batch using Ollama.

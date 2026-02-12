@@ -33,7 +33,7 @@ import re
 from pathlib import Path
 from typing import Literal, Optional
 from dotenv import load_dotenv
-from agents import Agent, Runner
+from agents import Agent, Runner, OpenAIChatCompletionsModel, ModelSettings, RunConfig
 from agents.mcp import MCPServerStdio
 from openai import AsyncOpenAI
 
@@ -58,8 +58,22 @@ async def _initialize_agent():
     
     # Get API keys
     api_key = os.getenv('OPENAI_API_KEY')
+    openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
     if not api_key:
         raise ValueError("OPENAI_API_KEY not found in environment variables")
+    if not openrouter_api_key:
+        raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+
+    openrouter_extra_body={
+        "provider": {
+            "only": ["cerebras"],        # restrict to Cerebras
+            "allow_fallbacks": False,    # fail instead of switching providers
+        },
+    }    
+    
+    openrouter_client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_api_key)
+    openrouter_model = OpenAIChatCompletionsModel(model="openai/gpt-oss-120b", openai_client=openrouter_client)
+
     
     # Setup MCP filesystem server
     # IMPORTANT: Restrict to only xbrl_mappings directory for security
@@ -104,11 +118,18 @@ async def _initialize_agent():
     """
     
     # Create agent
+    # _agent = Agent(
+    #     name="XBRL Concept Mapping Agent",
+    #     instructions=instructions,
+    #     mcp_servers=[_file_server],
+    #     model="gpt-4o-mini"
+    # )
     _agent = Agent(
         name="XBRL Concept Mapping Agent",
         instructions=instructions,
         mcp_servers=[_file_server],
-        model="gpt-4o-mini"
+        model=openrouter_model,
+        model_settings=ModelSettings(extra_body=openrouter_extra_body)
     )
     
     # Connect MCP server
@@ -176,8 +197,8 @@ async def get_statement_mapping(
     """
     
     try:
-        # Run agent
-        result = await Runner.run(_agent, user_instructions)
+    # Run agent - TRACING DISABLED FOR OPENROUTER
+        result = await Runner.run(_agent, user_instructions, run_config=RunConfig(tracing_disabled=True))
         
         # Extract and clean the response
         response = result.final_output.strip().lower()
@@ -295,7 +316,7 @@ async def batch_classify_concepts(
     """
 
         try:
-            result = await Runner.run(_agent, user_instructions)
+            result = await Runner.run(_agent, user_instructions, run_config=RunConfig(tracing_disabled=True))
             response = result.final_output.strip()
 
             if not response:
