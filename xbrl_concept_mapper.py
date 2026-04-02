@@ -381,7 +381,7 @@ async def cleanup():
     if _file_server and _initialized:
         try:
             await _file_server.disconnect()
-        except:
+        except Exception:
             pass
         _initialized = False
 
@@ -476,7 +476,7 @@ async def map_and_log_to_db(
         try:
             from xbrl_mapping_manager_multi_statement import XBRLMappingManager
             
-            mapper = XBRLMappingManager('xbrl_mappings_multi.duckdb')
+            mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
             
             # Convert dates if provided
             filing_date_obj = date.fromisoformat(filing_date) if filing_date else None
@@ -494,10 +494,10 @@ async def map_and_log_to_db(
             
             mapper.close()
             
-            print(f"  ✓ Logged AI discovery to database: {concept} → {field_name}")
+            print(f"  Logged AI discovery to database: {concept} → {field_name}")
             
         except Exception as e:
-            print(f"  ⚠ Failed to log to database: {e}")
+            print(f"  Failed to log to database: {e}")
     
     return field_name
 

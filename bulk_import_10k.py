@@ -16,7 +16,7 @@ Usage:
     bulk_import_10k(
         ticker_csv='tickers.csv',
         periods=20,
-        db_path='financial_statements.duckdb'
+        db_path='data/financial_statements.duckdb'
     )
 """
 
@@ -166,7 +166,7 @@ async def extract_and_insert_filing(
         )
         
         # Calculate coverage
-        fields_found = len(income_df[income_df['Status'] == '✓'])
+        fields_found = len(income_df['Value'].notna())
         coverage = (fields_found / len(income_df)) * 100
         
         # Insert to database
@@ -193,7 +193,7 @@ async def extract_and_insert_filing(
             filing, ticker, '10-K', year, use_ai_fallback=use_ai_fallback
         )
         
-        fields_found = len(balance_df[balance_df['Status'] == '✓'])
+        fields_found = len(balance_df['Value'].notna())
         coverage = (fields_found / len(balance_df)) * 100
         
         success = db.insert_balance_sheet(balance_df)
@@ -219,7 +219,7 @@ async def extract_and_insert_filing(
             filing, ticker, '10-K', year, use_ai_fallback=use_ai_fallback
         )
         
-        fields_found = len(cashflow_df[cashflow_df['Status'] == '✓'])
+        fields_found = len(cashflow_df['Value'].notna())
         coverage = (fields_found / len(cashflow_df)) * 100
         
         success = db.insert_cash_flow(cashflow_df)
@@ -353,7 +353,7 @@ async def process_ticker(
 async def bulk_import_10k(
     ticker_csv: str,
     periods: int = 20,
-    db_path: str = 'financial_statements.duckdb',
+    db_path: str = 'data/financial_statements.duckdb',
     log_file: str = 'bulk_import.log',
     output_dir: str = './bulk_import_results',
     use_ai_fallback: bool = False,

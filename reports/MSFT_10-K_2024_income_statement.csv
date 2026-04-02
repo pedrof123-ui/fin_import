@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,revenue,245122000000.0,RevenueFromContractWithCustomerExcludingAssessedTax
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,cost_of_revenue,74114000000.0,CostOfGoodsAndServicesSold
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,gross_profit,171008000000.0,GrossProfit
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,research_development,29510000000.0,ResearchAndDevelopmentExpense
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,selling_general_admin,32065000000.0,GeneralAndAdministrativeExpense + SellingAndMarketingExpense
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,depreciation_amortization,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,restructuring_charges,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,other_operating_expenses,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,total_operating_expenses,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,operating_income,109433000000.0,OperatingIncomeLoss
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,interest_income,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,interest_expense,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,equity_method_investments,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,investment_gains_losses,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,other_nonoperating_income,-1646000000.0,NonoperatingIncomeExpense
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,pretax_income,107787000000.0,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,income_tax_expense,19651000000.0,IncomeTaxExpenseBenefit
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,net_income_continuing_ops,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,discontinued_operations,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,net_income,88136000000.0,NetIncomeLoss
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,net_income_attributable_to_nci,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,net_income_attributable_to_parent,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,basic_eps,11.86,EarningsPerShareBasic
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,diluted_eps,11.8,EarningsPerShareDiluted
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,basic_shares,7431000000.0,WeightedAverageNumberOfSharesOutstandingBasic
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✓,diluted_shares,7469000000.0,WeightedAverageNumberOfDilutedSharesOutstanding
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,antidilutive_securities,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,comprehensive_income,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,other_comprehensive_income,,Not Found
+MSFT,2024,2024-06-30,2024-07-30,10-K,Annual,,✗,dividends_per_share,,Not Found

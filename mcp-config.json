@@ -1,0 +1,8 @@
+{
+    "filesystem": {
+      "allowedDirectories": [
+        "/home/pedro/projects/fin_import2",
+        "/home/pedro/projects/fin_import2/sandbox"
+      ]
+    }
+  }

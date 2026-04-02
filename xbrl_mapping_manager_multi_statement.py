@@ -5,7 +5,7 @@ Handles: Income Statement, Balance Sheet, Cash Flow Statement
 Hybrid approach: Python files for core mappings + DuckDB for AI discoveries and analytics
 
 Usage:
-    mapper = XBRLMappingManager('xbrl_mappings.duckdb')
+    mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
     
     # Get concepts for any statement
     concepts = await mapper.get_concepts_for_field('AAPL', 'income', 'revenue')
@@ -66,7 +66,7 @@ class XBRLMappingManager:
     - Auto-promotion of successful AI discoveries
     """
     
-    def __init__(self, db_path: str = 'xbrl_mappings.duckdb'):
+    def __init__(self, db_path: str = 'data/xbrl_mappings_multi.duckdb'):
         """Initialize the mapping manager"""
         self.db_path = db_path
         self.conn = None
@@ -728,7 +728,7 @@ async def example_usage():
     """Example of how to use the multi-statement mapping manager"""
     
     # Initialize manager
-    mapper = XBRLMappingManager('xbrl_mappings_multi.duckdb')
+    mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
     
     print("\n" + "="*80)
     print("MULTI-STATEMENT XBRL MAPPING MANAGER")

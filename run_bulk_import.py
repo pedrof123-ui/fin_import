@@ -51,7 +51,7 @@ Examples:
     
     parser.add_argument(
         '--db',
-        default='financial_statements.duckdb',
+        default='data/financial_statements.duckdb',
         help='Database file path (default: financial_statements.duckdb)'
     )
     

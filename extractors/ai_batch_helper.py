@@ -52,13 +52,20 @@ async def batch_ai_resolve_unfound_fields(
         (statement_df['abstract'] == False)
     ]
 
-    # Get all available concepts from the statement
-    available_concepts = main_items['concept'].unique().tolist()
+    # Get concepts that actually have a numeric value in the target period.
+    # Concepts present in the statement but with NaN for this period would
+    # never yield a value, so there is no point classifying them with AI.
+    if year_column in main_items.columns:
+        available_concepts = main_items.loc[
+            main_items[year_column].notna(), 'concept'
+        ].unique().tolist()
+    else:
+        available_concepts = main_items['concept'].unique().tolist()
 
-    # Strip us-gaap_ prefix for mapping
+    # Strip namespace prefix (e.g. us-gaap_, dei_, apo_) for mapping
     concept_name_map = {}  # clean_name -> full_concept
     for c in available_concepts:
-        clean = c.replace('us-gaap_', '') if c.startswith('us-gaap_') else c
+        clean = c.split('_', 1)[1] if '_' in c else c
         concept_name_map[clean] = c
 
     # Get all concepts already in the static mapping file

@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,revenue,53803000000.0,RevenueFromContractWithCustomerExcludingAssessedTax
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,cost_of_revenue,18975000000.0,CostOfGoodsAndServicesSold
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,gross_profit,34828000000.0,GrossProfit
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,research_development,7983000000.0,ResearchAndDevelopmentExpense
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,selling_general_admin,13177000000.0,GeneralAndAdministrativeExpense + SellingAndMarketingExpense
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,depreciation_amortization,698000000.0,AmortizationOfIntangibleAssets
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,restructuring_charges,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,other_operating_expenses,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,total_operating_expenses,22647000000.0,OperatingExpenses
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,operating_income,12181000000.0,OperatingIncomeLoss
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,interest_income,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,interest_expense,1006000000.0,InterestExpenseNonoperating
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,equity_method_investments,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,investment_gains_losses,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,other_nonoperating_income,-306000000.0,OtherNonoperatingIncomeExpense
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,pretax_income,12234000000.0,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,income_tax_expense,1914000000.0,IncomeTaxExpenseBenefit
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,net_income_continuing_ops,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,discontinued_operations,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,net_income_attributable_to_nci,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,net_income,10320000000.0,NetIncomeLoss
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,net_income_attributable_to_parent,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,basic_eps,2.55,EarningsPerShareBasic
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,diluted_eps,2.54,EarningsPerShareDiluted
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,basic_shares,4043000000.0,WeightedAverageNumberOfSharesOutstandingBasic
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✓,diluted_shares,4062000000.0,WeightedAverageNumberOfDilutedSharesOutstanding
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,antidilutive_securities,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,comprehensive_income,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,other_comprehensive_income,,Not Found
+CSCO,2024,2024-07-27,2024-09-05,10-K,Annual,,✗,dividends_per_share,,Not Found

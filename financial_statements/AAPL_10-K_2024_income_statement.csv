@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,revenue,391035000000.0,RevenueFromContractWithCustomerExcludingAssessedTax
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,cost_of_revenue,210352000000.0,CostOfGoodsAndServicesSold
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,gross_profit,180683000000.0,GrossProfit
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,research_development,31370000000.0,ResearchAndDevelopmentExpense
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,selling_general_admin,26097000000.0,SellingGeneralAndAdministrativeExpense
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,depreciation_amortization,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,restructuring_charges,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,other_operating_expenses,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_operating_expenses,57467000000.0,OperatingExpenses
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,operating_income,123216000000.0,OperatingIncomeLoss
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,interest_income,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,interest_expense,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,equity_method_investments,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,investment_gains_losses,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_nonoperating_income,269000000.0,NonoperatingIncomeExpense
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,pretax_income,123485000000.0,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,income_tax_expense,29749000000.0,IncomeTaxExpenseBenefit
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,net_income_continuing_ops,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,discontinued_operations,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,net_income,93736000000.0,NetIncomeLoss
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,net_income_attributable_to_nci,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,net_income_attributable_to_parent,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,basic_eps,6.11,EarningsPerShareBasic
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,diluted_eps,6.08,EarningsPerShareDiluted
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,basic_shares,15343783000.0,WeightedAverageNumberOfSharesOutstandingBasic
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,diluted_shares,15408095000.0,WeightedAverageNumberOfDilutedSharesOutstanding
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,antidilutive_securities,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,comprehensive_income,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,other_comprehensive_income,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,dividends_per_share,,Not Found

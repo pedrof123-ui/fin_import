@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,revenue,152669000000.0,RevenueFromContractWithCustomerExcludingAssessedTax
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,cost_of_revenue,101709000000.0,CostOfRevenue
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,gross_profit,50960000000.0,GrossProfit
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,research_development,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,selling_general_admin,26598000000.0,SellingGeneralAndAdministrativeExpense
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,depreciation_amortization,2673000000.0,DepreciationAndAmortization
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,restructuring_charges,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,other_operating_expenses,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,total_operating_expenses,29271000000.0,OperatingExpenses
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,operating_income,21689000000.0,OperatingIncomeLoss
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,interest_income,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,interest_expense,1943000000.0,InterestExpense
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,equity_method_investments,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,investment_gains_losses,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,other_nonoperating_income,-1765000000.0,NonoperatingIncomeExpense
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,pretax_income,19924000000.0,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,income_tax_expense,4781000000.0,IncomeTaxExpenseBenefit
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,net_income_continuing_ops,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,discontinued_operations,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,net_income,15143000000.0,NetIncomeLoss
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,net_income_attributable_to_nci,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,net_income_attributable_to_parent,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,basic_eps,15.16,EarningsPerShareBasic
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,diluted_eps,15.11,EarningsPerShareDiluted
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,basic_shares,999000000.0,WeightedAverageNumberOfSharesOutstandingBasic
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✓,diluted_shares,1002000000.0,WeightedAverageNumberOfDilutedSharesOutstanding
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,antidilutive_securities,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,comprehensive_income,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,other_comprehensive_income,,Not Found
+HD,2024,2024-01-28,2024-03-13,10-K,Annual,,✗,dividends_per_share,,Not Found

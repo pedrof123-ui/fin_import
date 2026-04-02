@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,net_income_starting_point,93736000000.0,NetIncomeLoss
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,depreciation_amortization,11445000000.0,DepreciationDepletionAndAmortization
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,stock_based_compensation,11688000000.0,ShareBasedCompensation
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,deferred_income_taxes,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,change_accounts_receivable,3788000000.0,IncreaseDecreaseInAccountsReceivable
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,change_inventory,1046000000.0,IncreaseDecreaseInInventories
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,change_accounts_payable,6020000000.0,IncreaseDecreaseInAccountsPayable
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,change_accrued_expenses,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,other_operating_activities,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,net_cash_operating_activities,118254000000.0,NetCashProvidedByUsedInOperatingActivities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,capital_expenditures,9447000000.0,PaymentsToAcquirePropertyPlantAndEquipment
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,acquisitions,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,purchases_investments,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,sales_investments,51211000000.0,ProceedsFromMaturitiesPrepaymentsAndCallsOfAvailableForSaleSecurities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_investing_activities,1308000000.0,PaymentsForProceedsFromOtherInvestingActivities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,net_cash_investing_activities,2935000000.0,NetCashProvidedByUsedInInvestingActivities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,debt_issuance,0.0,ProceedsFromIssuanceOfLongTermDebt
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,debt_repayment,9958000000.0,RepaymentsOfLongTermDebt
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,stock_issuance,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,stock_repurchase,94949000000.0,PaymentsForRepurchaseOfCommonStock
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,dividends_paid,15234000000.0,PaymentsOfDividends
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_financing_activities,-361000000.0,ProceedsFromPaymentsForOtherFinancingActivities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,net_cash_financing_activities,-121983000000.0,NetCashProvidedByUsedInFinancingActivities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,effect_of_exchange_rate,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,net_change_in_cash,-794000000.0,CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,cash_beginning_of_period,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,cash_end_of_period,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,cash_paid_for_interest,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,cash_paid_for_taxes,26102000000.0,IncomeTaxesPaidNet
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,non_cash_stock_based_comp,11688000000.0,ShareBasedCompensation

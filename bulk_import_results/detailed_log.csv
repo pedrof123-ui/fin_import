@@ -1,0 +1,13 @@
+timestamp,level,ticker,year,message
+2026-02-12 10:09:47,INFO,SYSTEM,,"Starting bulk import: 1 tickers, 5 periods each"
+2026-02-12 10:09:47,INFO,DE,,Retrieved company: DEERE & CO
+2026-02-12 10:09:47,INFO,DE,,Found 5 10-K filings
+2026-02-12 10:09:48,INFO,DE,2025.0,"Already in database, skipping"
+2026-02-12 10:09:48,INFO,DE,2024.0,"Already in database, skipping"
+2026-02-12 10:09:48,INFO,DE,2023.0,"Already in database, skipping"
+2026-02-12 10:09:55,SUCCESS,DE,2022.0,Income statement: 53.3% coverage
+2026-02-12 10:10:05,SUCCESS,DE,2022.0,Balance sheet: 56.8% coverage
+2026-02-12 10:10:10,SUCCESS,DE,2022.0,Cash flow: 80.6% coverage
+2026-02-12 10:10:16,SUCCESS,DE,2021.0,Income statement: 50.0% coverage
+2026-02-12 10:10:22,SUCCESS,DE,2021.0,Balance sheet: 64.9% coverage
+2026-02-12 10:10:36,SUCCESS,DE,2021.0,Cash flow: 83.9% coverage

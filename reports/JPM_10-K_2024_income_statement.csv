@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,revenue,84973000000.0,NoninterestIncome
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,cost_of_revenue,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,gross_profit,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,research_development,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,selling_general_admin,82245000000.0,MarketingAndAdvertisingExpense + LaborAndRelatedExpense + OccupancyNet + CommunicationsAndInformationTechnology + ProfessionalAndContractServicesExpense
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,depreciation_amortization,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,restructuring_charges,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,other_operating_expenses,56383000000.0,LaborAndRelatedExpense + OccupancyNet
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,total_operating_expenses,91797000000.0,NoninterestExpense
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,operating_income,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,interest_income,92583000000.0,InterestIncomeExpenseNet
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,interest_expense,101350000000.0,InterestExpenseOperating
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,equity_method_investments,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,investment_gains_losses,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,other_nonoperating_income,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,pretax_income,75081000000.0,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,income_tax_expense,16610000000.0,IncomeTaxExpenseBenefit
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,net_income_continuing_ops,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,discontinued_operations,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,net_income,58471000000.0,NetIncomeLoss
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,net_income_attributable_to_nci,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,net_income_attributable_to_parent,56868000000.0,NetIncomeLossAvailableToCommonStockholdersBasic
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,basic_eps,19.79,EarningsPerShareBasic
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,diluted_eps,19.75,EarningsPerShareDiluted
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,basic_shares,2873900000.0,WeightedAverageNumberOfSharesOutstandingBasic
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✓,diluted_shares,2879000000.0,WeightedAverageNumberOfDilutedSharesOutstanding
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,antidilutive_securities,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,comprehensive_income,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,other_comprehensive_income,,Not Found
+JPM,2024,2024-12-31,2025-02-14,10-K,Annual,,✗,dividends_per_share,,Not Found

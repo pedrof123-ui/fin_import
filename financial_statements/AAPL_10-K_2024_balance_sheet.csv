@@ -1,0 +1,39 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,cash_and_equivalents,29943000000.0,CashAndCashEquivalentsAtCarryingValue
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,short_term_investments,35228000000.0,MarketableSecuritiesCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,accounts_receivable,33410000000.0,AccountsReceivableNetCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,inventory,7286000000.0,InventoryNet
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,prepaid_expenses,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_current_assets,14287000000.0,OtherAssetsCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_current_assets,152987000000.0,AssetsCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,ppe_gross,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,accumulated_depreciation,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,ppe_net,45680000000.0,PropertyPlantAndEquipmentNet
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,goodwill,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,intangible_assets,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,long_term_investments,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_noncurrent_assets,74834000000.0,OtherAssetsNoncurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_noncurrent_assets,211993000000.0,AssetsNoncurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_assets,364980000000.0,Assets
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,accounts_payable,68960000000.0,AccountsPayableCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,short_term_debt,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,current_portion_long_term_debt,10912000000.0,LongTermDebtCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,accrued_expenses,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,deferred_revenue_current,8249000000.0,ContractWithCustomerLiabilityCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_current_liabilities,78304000000.0,OtherLiabilitiesCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_current_liabilities,176392000000.0,LiabilitiesCurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,long_term_debt,85750000000.0,LongTermDebtNoncurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,deferred_tax_liabilities,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,deferred_revenue_noncurrent,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,other_noncurrent_liabilities,45888000000.0,OtherLiabilitiesNoncurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_noncurrent_liabilities,131638000000.0,LiabilitiesNoncurrent
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_liabilities,308030000000.0,Liabilities
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,common_stock,15116786000.0,CommonStockSharesOutstanding
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,additional_paid_in_capital,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,retained_earnings,-19154000000.0,RetainedEarningsAccumulatedDeficit
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,treasury_stock,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,accumulated_other_comprehensive_income,-7172000000.0,AccumulatedOtherComprehensiveIncomeLossNetOfTax
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_stockholders_equity,56950000000.0,StockholdersEquity
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✗,noncontrolling_interest,,Not Found
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_equity,56950000000.0,StockholdersEquity
+AAPL,2024,2024-09-28,2024-11-01,10-K,Annual,,✓,total_liabilities_and_equity,364980000000.0,LiabilitiesAndStockholdersEquity

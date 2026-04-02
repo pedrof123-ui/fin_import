@@ -1,0 +1,31 @@
+Ticker,Fiscal_Year,Period_End_Date,Filing_Date,Filing_Type,Period_Type,Quarter,Status,Field,Value,Concept
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,revenue,66517000000.0,Revenues
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,cost_of_revenue,68508000000.0,CostOfRevenue
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,gross_profit,-1991000000.0,GrossProfit
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,research_development,3812000000.0,ResearchAndDevelopmentExpense
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,selling_general_admin,5021000000.0,GeneralAndAdministrativeExpense
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,depreciation_amortization,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,restructuring_charges,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,other_operating_expenses,46000000.0,GainLossOnDispositionOfAssets (AI-discovered)
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,total_operating_expenses,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,operating_income,-10707000000.0,OperatingIncomeLoss
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,interest_income,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,interest_expense,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,equity_method_investments,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,investment_gains_losses,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,other_nonoperating_income,1222000000.0,OtherNonoperatingIncomeExpense
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,pretax_income,-12210000000.0,IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,income_tax_expense,-381000000.0,IncomeTaxExpenseBenefit
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,net_income_continuing_ops,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,discontinued_operations,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,net_income,-11817000000.0,NetIncomeLoss
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,net_income_attributable_to_nci,-12000000.0,NetIncomeLossAttributableToNoncontrollingInterest
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,net_income_attributable_to_parent,-11875000000.0,NetIncomeLossAvailableToCommonStockholdersBasic
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,basic_eps,-18.36,EarningsPerShareBasic
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✓,diluted_eps,-18.36,EarningsPerShareDiluted
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,basic_shares,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,diluted_shares,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,antidilutive_securities,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,comprehensive_income,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,other_comprehensive_income,,Not Found
+BA,2024,2024-12-31,2025-02-03,10-K,Annual,,✗,dividends_per_share,,Not Found

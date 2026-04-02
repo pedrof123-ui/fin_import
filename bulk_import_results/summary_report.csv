@@ -1,0 +1,2 @@
+ticker,filings_found,filings_processed,filings_skipped,filings_failed,statements_success,statements_failed,start_time,end_time,duration_seconds
+DE,5,2,3,0,6,0,1770908987.4257107,1770909037.0444279,49.618717193603516

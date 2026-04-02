@@ -1,0 +1,18 @@
+BULK IMPORT STATISTICS
+================================================================================
+
+Started:  2026-02-12T10:09:47.361380
+Finished: 2026-02-12T10:10:37.098318
+Duration: 49.7s (0.8 minutes)
+
+Tickers processed: 1
+Filings found:     5
+Filings processed: 2
+Filings skipped:   3
+Filings failed:    0
+
+Statements success: 6
+Statements failed:  0
+
+Average time per ticker: 49.7s
+Success rate: 40.0%

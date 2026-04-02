@@ -3,128 +3,20 @@ Balance Sheet Extractor
 Downloads and extracts balance sheets from SEC EDGAR using comprehensive XBRL mapping
 """
 
-import os
-from pathlib import Path
-from datetime import datetime
-from dotenv import load_dotenv
 import pandas as pd
-from edgar import Company, set_identity
 from typing import Optional, Literal
 import asyncio
 
-# Load environment variables
-load_dotenv()
+from .filing import get_filing, parse_date
 
-# Set SEC identity to avoid 403 blocks
-sec_identity = os.getenv("SEC_ID")
-if not sec_identity:
-    raise ValueError("SEC_ID not found in .env file")
-
-set_identity(sec_identity)
-
-# Import the balance sheet mapping
 try:
     from xbrl_mappings import BALANCE_SHEET_MAPPING
-    print(f"✓ Loaded balance sheet XBRL mapping ({sum(len(v) for v in BALANCE_SHEET_MAPPING.values())} concepts, {len(BALANCE_SHEET_MAPPING)} fields)")
+    print(f"Loaded balance sheet XBRL mapping ({sum(len(v) for v in BALANCE_SHEET_MAPPING.values())} concepts, {len(BALANCE_SHEET_MAPPING)} fields)")
 except ImportError as e:
     print("ERROR: Could not import from xbrl_mappings package")
     print("Please ensure xbrl_mappings/__init__.py exists and balance_sheet_xbrl_mapping.py is in the xbrl_mappings folder.")
     raise SystemExit(f"Import Error: {e}")
 
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-def parse_date(date_str):
-    """Parse a date string to datetime object."""
-    if isinstance(date_str, str):
-        try:
-            return pd.to_datetime(date_str)
-        except Exception:
-            return None
-    return date_str
-
-
-def get_filing(
-    ticker: str,
-    filing_type: Literal["10-K", "10-Q"],
-    year: Optional[int] = None,
-    quarter: Optional[int] = None
-):
-    """
-    Retrieve a specific SEC filing for a company.
-    
-    Args:
-        ticker: Company ticker symbol
-        filing_type: Either "10-K" (annual) or "10-Q" (quarterly)
-        year: Fiscal year (if None, gets the most recent)
-        quarter: Fiscal quarter (1-4, only for 10-Q)
-        
-    Returns:
-        Filing object from edgartools
-    """
-    if filing_type == "10-Q" and quarter is not None:
-        if not 1 <= quarter <= 4:
-            raise ValueError("Quarter must be between 1 and 4")
-    
-    # Get company
-    company = Company(ticker)
-    print(f"✓ Retrieved company: {company.name} ({ticker})")
-    
-    # Get filings of the specified type
-    filings = company.get_filings(form=filing_type)
-    
-    if filings.empty:
-        raise FileNotFoundError(f"No {filing_type} filings found for {ticker}")
-    
-    # Filter by year if specified
-    if year is not None:
-        filings_filtered = []
-        
-        for f in filings:
-            filing_date = parse_date(f.filing_date) if hasattr(f, 'filing_date') else None
-            period_date = parse_date(f.period_of_report) if hasattr(f, 'period_of_report') else None
-            
-            filing_year_match = filing_date and filing_date.year == year
-            period_year_match = period_date and period_date.year == year
-            
-            if filing_year_match or period_year_match:
-                f._parsed_filing_date = filing_date
-                f._parsed_period_date = period_date
-                filings_filtered.append(f)
-        
-        if not filings_filtered:
-            raise FileNotFoundError(f"No {filing_type} filings found for {ticker} in year {year}")
-        
-        # For 10-Q, filter by quarter
-        if filing_type == "10-Q" and quarter is not None:
-            quarter_filtered = []
-            
-            for f in filings_filtered:
-                period_date = f._parsed_period_date
-                if period_date:
-                    file_quarter = ((period_date.month - 1) // 3) + 1
-                    if file_quarter == quarter:
-                        quarter_filtered.append(f)
-            
-            if not quarter_filtered:
-                raise FileNotFoundError(f"No {filing_type} filings found for {ticker} in Q{quarter} {year}")
-            
-            filings_filtered = quarter_filtered
-        
-        filing = filings_filtered[0]
-    else:
-        filing = filings[0]
-    
-    filing_date = filing.filing_date if hasattr(filing, 'filing_date') else 'Unknown'
-    period = filing.period_of_report if hasattr(filing, 'period_of_report') else 'Unknown'
-    
-    print(f"✓ Retrieved {filing_type} filing")
-    print(f"  Filing Date: {filing_date}")
-    print(f"  Period of Report: {period}")
-    
-    return filing
 
 
 def extract_value_from_statement_df(
@@ -147,24 +39,22 @@ def extract_value_from_statement_df(
     concepts = BALANCE_SHEET_MAPPING.get(field_name)
 
     if concepts is None:
-        print(f"  ✗ ERROR: Field '{field_name}' not found in mapping!")
+        print(f"  ERROR: Field '{field_name}' not found in mapping!")
         return None, None
 
     # Filter to main items (no dimensional breakdowns)
     main_items = statement_df[
         (statement_df['dimension'] == False) &
         (statement_df['abstract'] == False)
-    ]
+    ].copy()
+
+    # Strip namespace prefix (e.g. us-gaap_, dei_, apo_) before matching
+    main_items['bare_concept'] = main_items['concept'].apply(
+        lambda c: c.split('_', 1)[1] if '_' in c else c
+    )
 
     for concept in concepts:
-        # Add us-gaap_ prefix if not company-specific
-        if '_' in concept and not concept.startswith('us-gaap'):
-            full_concept = concept
-        else:
-            full_concept = f"us-gaap_{concept}"
-
-        # Look for this concept in the statement
-        rows = main_items[main_items['concept'] == full_concept]
+        rows = main_items[main_items['bare_concept'] == concept]
 
         if not rows.empty and year_column in rows.columns:
             value = rows.iloc[0][year_column]
@@ -251,9 +141,9 @@ async def extract_balance_sheet(
                 try:
                     balance_sheet = xbrl.get_statement(name)
                     if balance_sheet is not None:
-                        print(f"✓ Found balance sheet using alternative name: {name}")
+                        print(f"Found balance sheet using alternative name: {name}")
                         break
-                except:
+                except Exception:
                     continue
 
         if balance_sheet is None:
@@ -278,11 +168,11 @@ async def extract_balance_sheet(
 
     most_recent_period = sorted(date_columns, reverse=True)[0]
 
-    print(f"\n✓ Available periods: {', '.join(date_columns)}")
-    print(f"✓ Using most recent period: {most_recent_period}")
+    print(f"\nAvailable periods: {', '.join(date_columns)}")
+    print(f"Using most recent period: {most_recent_period}")
 
     if use_ai_fallback:
-        print(f"✓ AI fallback enabled (batch mode)")
+        print(f"AI fallback enabled (batch mode)")
 
     print(f"\nExtracting {len(BALANCE_SHEET_MAPPING)} line items...")
 
@@ -303,7 +193,7 @@ async def extract_balance_sheet(
         if value is not None:
             found_count += 1
             results.append({
-                'Status': '✓',
+                'Status': 'found',
                 'Field': field_name,
                 'Value': value,
                 'Concept': concept_used
@@ -311,7 +201,7 @@ async def extract_balance_sheet(
         else:
             unfound_fields.append(field_name)
             results.append({
-                'Status': '✗',
+                'Status': 'not_found',
                 'Field': field_name,
                 'Value': None,
                 'Concept': 'Not Found'
@@ -330,9 +220,9 @@ async def extract_balance_sheet(
         mapping_manager = None
         try:
             from xbrl_mapping_manager_multi_statement import XBRLMappingManager
-            mapping_manager = XBRLMappingManager('xbrl_mappings_multi.duckdb')
+            mapping_manager = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
         except Exception as e:
-            print(f"  ⚠ DB lookup unavailable: {e}")
+            print(f"  DB lookup unavailable: {e}")
 
         try:
             from extractors.ai_batch_helper import batch_ai_resolve_unfound_fields
@@ -350,7 +240,7 @@ async def extract_balance_sheet(
             for r in results:
                 if r['Field'] in ai_results:
                     value, concept_used = ai_results[r['Field']]
-                    r['Status'] = '✓'
+                    r['Status'] = 'found'
                     r['Value'] = value
                     r['Concept'] = concept_used
                     found_count += 1
@@ -361,7 +251,7 @@ async def extract_balance_sheet(
                         'concept': clean_concept
                     })
         except Exception as e:
-            print(f"  ⚠ Pass 2 failed: {e}")
+            print(f"  Pass 2 failed: {e}")
 
         if mapping_manager:
             mapping_manager.close()
@@ -379,13 +269,13 @@ async def extract_balance_sheet(
 
     data_quality = found_count / len(BALANCE_SHEET_MAPPING)
 
-    print(f"\n✓ Extraction complete!")
+    print(f"\nExtraction complete!")
     print(f"  Fields found: {found_count}/{len(BALANCE_SHEET_MAPPING)}")
     print(f"  Data quality score: {data_quality:.1%}")
 
     # Report AI-discovered concepts
     if ai_discovered:
-        print(f"\n✓ AI discovered {len(ai_discovered)} new concept(s)!")
+        print(f"\nAI discovered {len(ai_discovered)} new concept(s)!")
         print("\n" + "="*80)
         print("NEW CONCEPTS DISCOVERED BY AI")
         print("="*80)
@@ -398,7 +288,7 @@ async def extract_balance_sheet(
             from xbrl_mapping_manager_multi_statement import XBRLMappingManager
             from datetime import date as date_type
 
-            mapper = XBRLMappingManager('xbrl_mappings_multi.duckdb')
+            mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
 
             filing_date_obj = date_type.fromisoformat(str(filing_date)) if filing_date else None
             period_date_obj = date_type.fromisoformat(str(most_recent_period)) if most_recent_period else None
@@ -418,19 +308,19 @@ async def extract_balance_sheet(
                               filing_date_obj, period_date_obj])
                         logged_count += 1
                     except Exception as e:
-                        print(f"    ⚠ Failed to log {item['concept']}: {e}")
+                        print(f"    Failed to log {item['concept']}: {e}")
 
             if logged_count > 0:
-                print(f"  ✓ Logged {logged_count} AI discoveries to database")
+                print(f"  Logged {logged_count} AI discoveries to database")
 
             mapper.close()
 
         except Exception as e:
-            print(f"  ⚠ Failed to log to database: {e}")
+            print(f"  Failed to log to database: {e}")
             print(f"     (Discoveries still captured in output)")
 
     if data_quality < 0.5:
-        print(f"  ⚠ WARNING: Low data quality (<50%). Check if correct filing was retrieved.")
+        print(f"  WARNING: Low data quality (<50%). Check if correct filing was retrieved.")
 
     return result_df
 
