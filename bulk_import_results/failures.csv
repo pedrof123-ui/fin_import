@@ -1,4 +1,0 @@
-timestamp,level,ticker,year,message
-2026-02-10 14:24:18,ERROR,CERS,2016,Income statement extraction failed: Error accessing XBRL data: Unable to extract XBRL data from filing
-2026-02-10 14:24:18,ERROR,CERS,2016,Balance sheet extraction failed: Error accessing XBRL data: Unable to extract XBRL data from filing
-2026-02-10 14:24:18,ERROR,CERS,2016,Cash flow extraction failed: Error accessing XBRL data: Unable to extract XBRL data from filing
