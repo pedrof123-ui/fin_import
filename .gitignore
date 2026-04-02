@@ -28,6 +28,10 @@ reports/
 financial_statements/
 sandbox/
 
+# Runtime PID files
+.backend.pid
+.frontend.pid
+
 # Generated data files (keep input CSVs and schema)
 data/*.duckdb
 data/*.log

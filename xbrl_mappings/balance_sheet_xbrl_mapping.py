@@ -18,8 +18,9 @@ BALANCE_SHEET_MAPPING = {
     # CURRENT ASSETS
     # ============================================================================
     
-    "cash": [
+    "cash_and_equivalents": [
         "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsAndShortTermInvestments",
         "Cash",
         "CashAndDueFromBanks",
     ],
