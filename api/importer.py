@@ -21,7 +21,6 @@ async def import_ticker(
     db: FinancialStatementsDB,
 ) -> dict:
     form = "10-K" if period_type == "FY" else "10-Q"
-    db_period_type = "Annual" if period_type == "FY" else "Quarterly"
 
     company = await asyncio.to_thread(lambda: Company(ticker))
     filings_obj = await asyncio.to_thread(lambda: company.get_filings(form=form))
@@ -37,24 +36,18 @@ async def import_ticker(
 
     for filing in filings_list:
         try:
-            year = pd.to_datetime(filing.period_of_report).year
+            period_date = pd.to_datetime(filing.period_of_report)
+            year = period_date.year
+            quarter = ((period_date.month - 1) // 3 + 1) if form == "10-Q" else None
+            period_end = period_date.date()
         except Exception:
             failed += 1
             continue
 
-        # Skip if already in DB
-        count = db.conn.execute(
-            """
-            SELECT COUNT(*) FROM income_statements
-            WHERE ticker = ? AND fiscal_year = ? AND period_type = ?
-            """,
-            [ticker, year, db_period_type],
-        ).fetchone()[0]
-
-        if count > 0:
+        if db.filing_exists(ticker, period_end):
             continue
 
-        n_ok, errs = await _extract_and_insert(filing, ticker, year, form, db)
+        n_ok, errs = await _extract_and_insert(filing, ticker, year, form, db, quarter=quarter)
         errors.extend(errs)
 
         if n_ok > 0:
@@ -79,6 +72,7 @@ async def _extract_and_insert(
     year: int,
     form: str,
     db: FinancialStatementsDB,
+    quarter: int | None = None,
 ) -> tuple[int, list[str]]:
     n_ok = 0
     errors: list[str] = []
@@ -89,7 +83,7 @@ async def _extract_and_insert(
         ("cashflow", extract_cash_flow, db.insert_cash_flow),
     ]:
         try:
-            df = await extractor(filing, ticker, form, year, use_ai_fallback=False)
+            df = await extractor(filing, ticker, form, year, quarter=quarter, use_ai_fallback=False)
             inserter(df)
             n_ok += 1
         except Exception as e:

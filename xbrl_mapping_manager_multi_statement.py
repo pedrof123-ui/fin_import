@@ -40,13 +40,13 @@ except ImportError:
     try:
         from balance_sheet_xbrl_mapping import BALANCE_SHEET_MAPPING
     except ImportError:
-        print("⚠ balance_sheet_xbrl_mapping.py not found")
+        print("balance_sheet_xbrl_mapping.py not found")
         BALANCE_SHEET_MAPPING = None
-    
+
     try:
         from cash_flow_xbrl_mapping import CASH_FLOW_MAPPING
     except ImportError:
-        print("⚠ cash_flow_xbrl_mapping.py not found")
+        print("cash_flow_xbrl_mapping.py not found")
         CASH_FLOW_MAPPING = None
 
 
@@ -218,7 +218,7 @@ class XBRLMappingManager:
         self.conn.execute("CREATE INDEX idx_ai_statement_field ON ai_discovered_mappings(statement_type, field_name)")
         self.conn.execute("CREATE INDEX idx_log_ticker_statement ON extraction_log(ticker, statement_type, extraction_date)")
         
-        print("✓ Database schema created successfully")
+        print("Database schema created successfully")
     
     def _sync_core_mappings(self):
         """Sync Python mapping files to database"""
@@ -231,44 +231,47 @@ class XBRLMappingManager:
             for field_name, concepts in INCOME_STATEMENT_MAPPING.items():
                 for priority, concept in enumerate(concepts, start=1):
                     self.conn.execute("""
-                        INSERT OR IGNORE INTO core_concept_mappings 
+                        INSERT INTO core_concept_mappings
                         (statement_type, field_name, concept, priority, source)
                         VALUES ('income', ?, ?, ?, 'manual')
+                        ON CONFLICT (statement_type, field_name, concept) DO NOTHING
                     """, [field_name, concept, priority])
                     count += 1
-            print(f"  ✓ Synced income statement: {len(INCOME_STATEMENT_MAPPING)} fields")
-        
+            print(f"  Synced income statement: {len(INCOME_STATEMENT_MAPPING)} fields")
+
         # Sync Balance Sheet (if available)
         if BALANCE_SHEET_MAPPING:
             for field_name, concepts in BALANCE_SHEET_MAPPING.items():
                 for priority, concept in enumerate(concepts, start=1):
                     self.conn.execute("""
-                        INSERT OR IGNORE INTO core_concept_mappings 
+                        INSERT INTO core_concept_mappings
                         (statement_type, field_name, concept, priority, source)
                         VALUES ('balance', ?, ?, ?, 'manual')
+                        ON CONFLICT (statement_type, field_name, concept) DO NOTHING
                     """, [field_name, concept, priority])
                     count += 1
-            print(f"  ✓ Synced balance sheet: {len(BALANCE_SHEET_MAPPING)} fields")
+            print(f"  Synced balance sheet: {len(BALANCE_SHEET_MAPPING)} fields")
         else:
-            print("  ⊘ Balance sheet mapping not available yet")
-        
+            print("  Balance sheet mapping not available yet")
+
         # Sync Cash Flow (if available)
         if CASH_FLOW_MAPPING:
             for field_name, concepts in CASH_FLOW_MAPPING.items():
                 for priority, concept in enumerate(concepts, start=1):
                     self.conn.execute("""
-                        INSERT OR IGNORE INTO core_concept_mappings 
+                        INSERT INTO core_concept_mappings
                         (statement_type, field_name, concept, priority, source)
                         VALUES ('cashflow', ?, ?, ?, 'manual')
+                        ON CONFLICT (statement_type, field_name, concept) DO NOTHING
                     """, [field_name, concept, priority])
                     count += 1
-            print(f"  ✓ Synced cash flow: {len(CASH_FLOW_MAPPING)} fields")
+            print(f"  Synced cash flow: {len(CASH_FLOW_MAPPING)} fields")
         else:
-            print("  ⊘ Cash flow mapping not available yet")
+            print("  Cash flow mapping not available yet")
         
         self.conn.commit()
         
-        print(f"✓ Total: {count} core concept mappings synced")
+        print(f"Total: {count} core concept mappings synced")
         
         # Show what's available
         summary = self.conn.execute("""
@@ -280,7 +283,7 @@ class XBRLMappingManager:
         if summary:
             print("\nAvailable statements:")
             for stmt_type, fields, concepts in summary:
-                print(f"  • {stmt_type}: {fields} fields, {concepts} concepts")
+                print(f"  {stmt_type}: {fields} fields, {concepts} concepts")
     
     async def get_concepts_for_field(
         self, 
@@ -419,7 +422,7 @@ class XBRLMappingManager:
         
         self.conn.commit()
         
-        print(f"  ✓ AI discovery logged: {concept} → {statement_type}.{field_name}")
+        print(f"  AI discovery logged: {concept} -> {statement_type}.{field_name}")
 
     def get_prior_discoveries(
         self,
@@ -475,9 +478,14 @@ class XBRLMappingManager:
         """Update coverage statistics for a statement"""
         
         self.conn.execute("""
-            INSERT OR REPLACE INTO statement_coverage_stats
+            INSERT INTO statement_coverage_stats
             (ticker, filing_date, filing_type, statement_type, total_fields, fields_found)
             VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ticker, filing_date, statement_type) DO UPDATE SET
+                filing_type = excluded.filing_type,
+                total_fields = excluded.total_fields,
+                fields_found = excluded.fields_found,
+                extraction_date = CURRENT_TIMESTAMP
         """, [ticker, filing_date, filing_type, statement_type, total_fields, fields_found])
         
         self.conn.commit()
@@ -600,9 +608,10 @@ class XBRLMappingManager:
         
         # Add to core mappings
         self.conn.execute("""
-            INSERT OR IGNORE INTO core_concept_mappings
+            INSERT INTO core_concept_mappings
             (statement_type, field_name, concept, priority, source)
             VALUES (?, ?, ?, ?, 'promoted_from_ai')
+            ON CONFLICT (statement_type, field_name, concept) DO NOTHING
         """, [statement_type, field_name, concept, max_priority])
         
         # Mark as promoted
@@ -614,7 +623,7 @@ class XBRLMappingManager:
         
         self.conn.commit()
         
-        print(f"✓ Promoted: {concept} → {statement_type}.{field_name} (priority {max_priority})")
+        print(f"Promoted: {concept} -> {statement_type}.{field_name} (priority {max_priority})")
     
     async def get_statement_health(self) -> Dict:
         """Get system-wide health metrics across all statements"""
@@ -656,14 +665,15 @@ class XBRLMappingManager:
         """Add a company-specific mapping override"""
         
         self.conn.execute("""
-            INSERT OR IGNORE INTO company_specific_mappings
+            INSERT INTO company_specific_mappings
             (ticker, statement_type, field_name, concept, added_by, reason)
             VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ticker, statement_type, field_name, concept) DO NOTHING
         """, [ticker, statement_type, field_name, concept, added_by, reason])
         
         self.conn.commit()
         
-        print(f"✓ Added company override: {ticker} - {concept} → {statement_type}.{field_name}")
+        print(f"Added company override: {ticker} - {concept} -> {statement_type}.{field_name}")
     
     async def get_difficult_fields(
         self,

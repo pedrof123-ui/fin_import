@@ -1,12 +1,12 @@
 # Multi-Statement Extractor System - Complete Guide
 
-## 🎯 What We Built
+## What We Built
 
 Created **3 complete financial statement extractors** with AI-powered concept mapping:
 
-1. ✅ **Income Statement Extractor** - `income_statement_extractor.py`
-2. ✅ **Balance Sheet Extractor** - `balance_sheet_extractor.py` (NEW)
-3. ✅ **Cash Flow Extractor** - `cash_flow_extractor.py` (NEW)
+1. **Income Statement Extractor** - `income_statement_extractor.py`
+2. **Balance Sheet Extractor** - `balance_sheet_extractor.py` (NEW)
+3. **Cash Flow Extractor** - `cash_flow_extractor.py` (NEW)
 
 All integrated with:
 - `xbrl_concept_mapper.py` (multi-statement AI mapper)
@@ -15,14 +15,14 @@ All integrated with:
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 your_project/
 ├── extractors/
-│   ├── income_statement_extractor.py    # ✅ Updated
-│   ├── balance_sheet_extractor.py       # ✅ NEW
-│   └── cash_flow_extractor.py           # ✅ NEW
+│   ├── income_statement_extractor.py    # Updated
+│   ├── balance_sheet_extractor.py       # NEW
+│   └── cash_flow_extractor.py           # NEW
 │
 ├── xbrl_mappings/
 │   ├── __init__.py
@@ -30,14 +30,14 @@ your_project/
 │   ├── balance_sheet_xbrl_mapping.py    (38 fields, 61 concepts)
 │   └── cash_flow_xbrl_mapping.py        (30 fields, 50 concepts)
 │
-├── xbrl_concept_mapper.py               # ✅ Multi-statement AI mapper
+├── xbrl_concept_mapper.py               # Multi-statement AI mapper
 ├── xbrl_mapping_manager_multi_statement.py
 └── xbrl_mappings_multi.duckdb
 ```
 
 ---
 
-## 🔑 Key Features
+## Key Features
 
 ### **Balance Sheet Extractor**
 
@@ -84,7 +84,7 @@ your_project/
 
 ---
 
-## 🚀 Usage Examples
+## Usage Examples
 
 ### **Extract All 3 Statements for One Company**
 
@@ -145,7 +145,7 @@ async def batch_extract(tickers, year):
                 'cashflow': await extract_cash_flow(filing, ticker, '10-K')
             }
             
-            print(f"✓ {ticker} complete!")
+            print(f"- {ticker} complete!")
             
         except Exception as e:
             print(f"✗ {ticker} failed: {e}")
@@ -205,7 +205,7 @@ df = asyncio.run(extract_and_log('AAPL', 2024))
 
 ---
 
-## 🔄 AI Mapper Integration
+## AI Mapper Integration
 
 All 3 extractors use the **same AI mapper** with different statement types:
 
@@ -221,14 +221,14 @@ ai_field = await get_statement_mapping(concept_name, 'cashflow')
 ```
 
 The AI mapper:
-- ✅ Reads ONLY the relevant mapping file
-- ✅ Returns the field name or "already_mapped" or "no_match"
-- ✅ Has retry logic for transient failures
-- ✅ Tracks discovered concepts to avoid re-checking
+- Reads ONLY the relevant mapping file
+- Returns the field name or "already_mapped" or "no_match"
+- Has retry logic for transient failures
+- Tracks discovered concepts to avoid re-checking
 
 ---
 
-## 📊 Expected Output
+## Expected Output
 
 ### **Income Statement (30 fields)**
 ```
@@ -253,7 +253,7 @@ Extracting 30 line items...
 
 ---
 
-## 🎯 Data Quality by Statement Type
+## Data Quality by Statement Type
 
 Typical coverage rates (based on testing):
 
@@ -265,7 +265,7 @@ Typical coverage rates (based on testing):
 
 ---
 
-## 🔧 Customization
+## Customization
 
 ### **Adjust Aggregation Fields**
 
@@ -341,7 +341,7 @@ async def test_all():
     balance = await extract_balance_sheet(filing, 'AAPL', '10-K')
     cashflow = await extract_cash_flow(filing, 'AAPL', '10-K')
     
-    print("\n✓ All extractors working!")
+    print("\n- All extractors working!")
     print(f"  Income: {len(income[income['Status'] == '✓'])}/30 fields")
     print(f"  Balance: {len(balance[balance['Status'] == '✓'])}/38 fields")
     print(f"  Cash Flow: {len(cashflow[cashflow['Status'] == '✓'])}/30 fields")
@@ -351,7 +351,7 @@ asyncio.run(test_all())
 
 ---
 
-## 📈 Performance
+## Performance
 
 **Expected extraction times (per company):**
 
@@ -369,27 +369,27 @@ asyncio.run(test_all())
 
 ---
 
-## ✅ Summary
+## Summary
 
 **What You Have:**
-- ✅ 3 complete financial statement extractors
-- ✅ Multi-statement AI concept mapper
-- ✅ DuckDB integration for tracking
-- ✅ Organized mapping package
-- ✅ AI discovery with auto-promotion
-- ✅ Comprehensive error handling
-- ✅ Retry logic for robustness
+- 3 complete financial statement extractors
+- Multi-statement AI concept mapper
+- DuckDB integration for tracking
+- Organized mapping package
+- AI discovery with auto-promotion
+- Comprehensive error handling
+- Retry logic for robustness
 
 **Total Coverage:**
 - **98 fields** across all 3 statements
 - **~235 concepts** in core mappings
 - **Unlimited** AI-discoverable concepts
 
-**Ready for Production!** 🚀
+**Ready for Production!** 
 
 ---
 
-## 🔜 Next Steps
+## Next Steps
 
 1. **Test the extractors** on 10 companies
 2. **Monitor AI discoveries** in DuckDB

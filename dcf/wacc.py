@@ -1,0 +1,106 @@
+import numpy as np
+import pandas as pd
+
+
+def _coerce(val) -> float:
+    if val is None:
+        return 0.0
+    f = float(val)
+    return 0.0 if np.isnan(f) else f
+
+DEFAULT_MRP = 0.055  # 5.5% Damodaran estimate
+DEFAULT_RF = 0.045   # fallback if fred.duckdb unavailable
+
+
+def get_beta(ticker: str) -> float | None:
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info
+        return info.get("beta")
+    except Exception:
+        return None
+
+
+def compute_effective_tax_rate(income_df: pd.DataFrame) -> float:
+    """5-year average effective tax rate, clamped [15%, 40%]."""
+    pretax = income_df["pretax_income"].replace(0, np.nan)
+    tax = income_df["income_tax_expense"]
+    rates = (tax / pretax).dropna()
+    rates = rates[rates > 0]
+    if rates.empty:
+        return 0.21
+    return float(np.clip(rates.mean(), 0.15, 0.40))
+
+
+def compute_cost_of_debt(income_df: pd.DataFrame, balance_df: pd.DataFrame) -> float:
+    """Estimate kd = avg_interest_expense / avg_total_debt. Clamped [2%, 15%]."""
+    ie = income_df["interest_expense"].dropna().abs()
+    debt = sum(
+        balance_df[col].fillna(0)
+        for col in ("short_term_debt", "current_portion_long_term_debt", "long_term_debt")
+        if col in balance_df.columns
+    )
+    avg_debt = debt.mean() if hasattr(debt, "mean") else 0
+    if ie.empty or avg_debt < 1e6:
+        return 0.05
+    return float(np.clip(ie.mean() / avg_debt, 0.02, 0.15))
+
+
+def _relever_beta(beta_raw: float, tax_rate: float, de_hist: float, de_forecast: float) -> float:
+    if de_hist <= 0:
+        return beta_raw
+    beta_u = beta_raw / (1 + (1 - tax_rate) * de_hist)
+    return beta_u * (1 + (1 - tax_rate) * de_forecast)
+
+
+def compute_wacc(
+    ticker: str,
+    income_df: pd.DataFrame,
+    balance_df: pd.DataFrame,
+    current_price: float,
+    risk_free_rate: float,
+    market_risk_premium: float = DEFAULT_MRP,
+    beta_override: float | None = None,
+) -> "WaccDetail":
+    from dcf.assumptions import WaccDetail
+
+    beta_raw = beta_override if beta_override is not None else (get_beta(ticker) or 1.0)
+    tax_rate = compute_effective_tax_rate(income_df)
+    kd = compute_cost_of_debt(income_df, balance_df)
+
+    latest = balance_df.iloc[-1] if not balance_df.empty else pd.Series(dtype=float)
+    total_debt = (
+        _coerce(latest.get("short_term_debt"))
+        + _coerce(latest.get("current_portion_long_term_debt"))
+        + _coerce(latest.get("long_term_debt"))
+    )
+    diluted_shares = float(
+        income_df["diluted_shares"].dropna().iloc[-1]
+        if not income_df["diluted_shares"].dropna().empty
+        else 0
+    )
+    market_cap = current_price * diluted_shares
+
+    de_hist = total_debt / market_cap if market_cap > 0 else 0
+    beta_rel = _relever_beta(beta_raw, tax_rate, de_hist, de_hist)  # stable leverage assumption
+
+    ke = risk_free_rate + beta_rel * market_risk_premium
+    V = total_debt + market_cap
+    D_w = total_debt / V if V > 0 else 0
+    E_w = market_cap / V if V > 0 else 1.0
+    wacc = ke * E_w + kd * (1 - tax_rate) * D_w
+
+    return WaccDetail(
+        beta_raw=beta_raw,
+        beta_relevered=beta_rel,
+        risk_free_rate=risk_free_rate,
+        market_risk_premium=market_risk_premium,
+        cost_of_equity=ke,
+        cost_of_debt=kd,
+        tax_rate=tax_rate,
+        debt_weight=D_w,
+        equity_weight=E_w,
+        wacc=wacc,
+        total_debt=total_debt,
+        market_cap=market_cap,
+    )

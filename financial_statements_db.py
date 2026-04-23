@@ -315,249 +315,189 @@ class FinancialStatementsDB:
     # ========================================================================
     
     def insert_income_statement(self, df: pd.DataFrame) -> bool:
-        """
-        Insert or update income statement data
-        
-        Args:
-            df: DataFrame from extract_income_statement()
-        
-        Returns:
-            True if successful
-        """
-        try:
-            # Extract metadata
-            ticker = df.iloc[0]['Ticker']
-            filing_date = pd.to_datetime(df.iloc[0]['Filing_Date']).date()
-            period_end_date = pd.to_datetime(df.iloc[0]['Period_End_Date']).date()
-            filing_type = df.iloc[0]['Filing_Type']
-            fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
-            fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
-            period_type = df.iloc[0]['Period_Type']
-            
-            # Calculate data quality
-            fields_extracted = int(df['Value'].notna().sum())
-            total_fields = len(df)
-            coverage_pct = (fields_extracted / total_fields) * 100
-            
-            # Convert DataFrame to dict for easier access
-            data_dict = dict(zip(df['Field'], df['Value']))
-            
-            # Delete existing record if it exists
-            self.conn.execute("""
-                DELETE FROM income_statements 
-                WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
-            """, [ticker, filing_date, period_end_date])
-            
-            # Insert new record
-            self.conn.execute("""
-                INSERT INTO income_statements (
-                    ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
-                    period_type, fields_extracted, total_fields, coverage_pct,
-                    revenue, cost_of_revenue, gross_profit,
-                    research_development, selling_general_admin, depreciation_amortization,
-                    restructuring_charges, other_operating_expenses, total_operating_expenses, operating_income,
-                    interest_income, interest_expense, equity_method_investments, investment_gains_losses,
-                    other_nonoperating_income, pretax_income, income_tax_expense, tax_rate,
-                    net_income_continuing_ops, discontinued_operations, net_income,
-                    net_income_attributable_to_nci, net_income_attributable_to_parent,
-                    other_comprehensive_income, comprehensive_income,
-                    basic_eps, diluted_eps, basic_shares, diluted_shares
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
+        """Insert or update income statement data. Raises on failure."""
+        ticker = df.iloc[0]['Ticker']
+        filing_date = pd.to_datetime(df.iloc[0]['Filing_Date']).date()
+        period_end_date = pd.to_datetime(df.iloc[0]['Period_End_Date']).date()
+        filing_type = df.iloc[0]['Filing_Type']
+        fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
+        fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
+        period_type = df.iloc[0]['Period_Type']
+
+        fields_extracted = int(df['Value'].notna().sum())
+        total_fields = len(df)
+        coverage_pct = (fields_extracted / total_fields) * 100
+
+        data_dict = dict(zip(df['Field'], df['Value']))
+
+        self.conn.execute("""
+            DELETE FROM income_statements
+            WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
+        """, [ticker, filing_date, period_end_date])
+
+        self.conn.execute("""
+            INSERT INTO income_statements (
                 ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
                 period_type, fields_extracted, total_fields, coverage_pct,
-                data_dict.get('revenue'), data_dict.get('cost_of_revenue'), data_dict.get('gross_profit'),
-                data_dict.get('research_development'), data_dict.get('selling_general_admin'),
-                data_dict.get('depreciation_amortization'), data_dict.get('restructuring_charges'),
-                data_dict.get('other_operating_expenses'), data_dict.get('total_operating_expenses'),
-                data_dict.get('operating_income'), data_dict.get('interest_income'),
-                data_dict.get('interest_expense'), data_dict.get('equity_method_investments'),
-                data_dict.get('investment_gains_losses'), data_dict.get('other_nonoperating_income'),
-                data_dict.get('pretax_income'), data_dict.get('income_tax_expense'),
-                data_dict.get('tax_rate'), data_dict.get('net_income_continuing_ops'),
-                data_dict.get('discontinued_operations'), data_dict.get('net_income'),
-                data_dict.get('net_income_attributable_to_nci'),
-                data_dict.get('net_income_attributable_to_parent'),
-                data_dict.get('other_comprehensive_income'), data_dict.get('comprehensive_income'),
-                data_dict.get('basic_eps'), data_dict.get('diluted_eps'),
-                data_dict.get('basic_shares'), data_dict.get('diluted_shares')
-            ])
-            
-            # Update company record
-            self._update_company(ticker, filing_date)
-            
-            print(f"Inserted income statement: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
-            return True
-            
-        except Exception as e:
-            print(f"Failed to insert income statement: {e}")
-            return False
+                revenue, cost_of_revenue, gross_profit,
+                research_development, selling_general_admin, depreciation_amortization,
+                restructuring_charges, other_operating_expenses, total_operating_expenses, operating_income,
+                interest_income, interest_expense, equity_method_investments, investment_gains_losses,
+                other_nonoperating_income, pretax_income, income_tax_expense, tax_rate,
+                net_income_continuing_ops, discontinued_operations, net_income,
+                net_income_attributable_to_nci, net_income_attributable_to_parent,
+                other_comprehensive_income, comprehensive_income,
+                basic_eps, diluted_eps, basic_shares, diluted_shares
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
+            period_type, fields_extracted, total_fields, coverage_pct,
+            data_dict.get('revenue'), data_dict.get('cost_of_revenue'), data_dict.get('gross_profit'),
+            data_dict.get('research_development'), data_dict.get('selling_general_admin'),
+            data_dict.get('depreciation_amortization'), data_dict.get('restructuring_charges'),
+            data_dict.get('other_operating_expenses'), data_dict.get('total_operating_expenses'),
+            data_dict.get('operating_income'), data_dict.get('interest_income'),
+            data_dict.get('interest_expense'), data_dict.get('equity_method_investments'),
+            data_dict.get('investment_gains_losses'), data_dict.get('other_nonoperating_income'),
+            data_dict.get('pretax_income'), data_dict.get('income_tax_expense'),
+            data_dict.get('tax_rate'), data_dict.get('net_income_continuing_ops'),
+            data_dict.get('discontinued_operations'), data_dict.get('net_income'),
+            data_dict.get('net_income_attributable_to_nci'),
+            data_dict.get('net_income_attributable_to_parent'),
+            data_dict.get('other_comprehensive_income'), data_dict.get('comprehensive_income'),
+            data_dict.get('basic_eps'), data_dict.get('diluted_eps'),
+            data_dict.get('basic_shares'), data_dict.get('diluted_shares')
+        ])
+
+        self._update_company(ticker, filing_date)
+        print(f"Inserted income statement: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
+        return True
     
     def insert_balance_sheet(self, df: pd.DataFrame) -> bool:
-        """
-        Insert or update balance sheet data
-        
-        Args:
-            df: DataFrame from extract_balance_sheet()
-        
-        Returns:
-            True if successful
-        """
-        try:
-            # Extract metadata
-            ticker = df.iloc[0]['Ticker']
-            filing_date = pd.to_datetime(df.iloc[0]['Filing_Date']).date()
-            period_end_date = pd.to_datetime(df.iloc[0]['Period_End_Date']).date()
-            filing_type = df.iloc[0]['Filing_Type']
-            fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
-            fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
-            period_type = df.iloc[0]['Period_Type']
-            
-            # Calculate data quality
-            fields_extracted = int(df['Value'].notna().sum())
-            total_fields = len(df)
-            coverage_pct = (fields_extracted / total_fields) * 100
-            
-            # Convert DataFrame to dict
-            data_dict = dict(zip(df['Field'], df['Value']))
-            
-            # Delete existing record
-            self.conn.execute("""
-                DELETE FROM balance_sheets 
-                WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
-            """, [ticker, filing_date, period_end_date])
-            
-            # Insert new record
-            self.conn.execute("""
-                INSERT INTO balance_sheets (
-                    ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
-                    period_type, fields_extracted, total_fields, coverage_pct,
-                    cash_and_equivalents, short_term_investments, accounts_receivable, inventory,
-                    prepaid_expenses, other_current_assets, total_current_assets,
-                    ppe_gross, accumulated_depreciation, ppe_net, goodwill, intangible_assets,
-                    long_term_investments, deferred_tax_assets, other_noncurrent_assets,
-                    total_noncurrent_assets, total_assets,
-                    accounts_payable, accrued_expenses, short_term_debt, current_portion_long_term_debt,
-                    deferred_revenue_current, other_current_liabilities, total_current_liabilities,
-                    long_term_debt, deferred_tax_liabilities, deferred_revenue_noncurrent,
-                    other_noncurrent_liabilities, total_noncurrent_liabilities, total_liabilities,
-                    common_stock, additional_paid_in_capital, retained_earnings, treasury_stock,
-                    accumulated_other_comprehensive_income, total_stockholders_equity,
-                    noncontrolling_interest, total_equity, total_liabilities_and_equity
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
+        """Insert or update balance sheet data. Raises on failure."""
+        ticker = df.iloc[0]['Ticker']
+        filing_date = pd.to_datetime(df.iloc[0]['Filing_Date']).date()
+        period_end_date = pd.to_datetime(df.iloc[0]['Period_End_Date']).date()
+        filing_type = df.iloc[0]['Filing_Type']
+        fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
+        fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
+        period_type = df.iloc[0]['Period_Type']
+
+        fields_extracted = int(df['Value'].notna().sum())
+        total_fields = len(df)
+        coverage_pct = (fields_extracted / total_fields) * 100
+
+        data_dict = dict(zip(df['Field'], df['Value']))
+
+        self.conn.execute("""
+            DELETE FROM balance_sheets
+            WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
+        """, [ticker, filing_date, period_end_date])
+
+        self.conn.execute("""
+            INSERT INTO balance_sheets (
                 ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
                 period_type, fields_extracted, total_fields, coverage_pct,
-                data_dict.get('cash_and_equivalents'), data_dict.get('short_term_investments'),
-                data_dict.get('accounts_receivable'), data_dict.get('inventory'),
-                data_dict.get('prepaid_expenses'), data_dict.get('other_current_assets'),
-                data_dict.get('total_current_assets'), data_dict.get('ppe_gross'),
-                data_dict.get('accumulated_depreciation'), data_dict.get('ppe_net'),
-                data_dict.get('goodwill'), data_dict.get('intangible_assets'),
-                data_dict.get('long_term_investments'), data_dict.get('deferred_tax_assets'),
-                data_dict.get('other_noncurrent_assets'), data_dict.get('total_noncurrent_assets'),
-                data_dict.get('total_assets'), data_dict.get('accounts_payable'),
-                data_dict.get('accrued_expenses'), data_dict.get('short_term_debt'),
-                data_dict.get('current_portion_long_term_debt'), data_dict.get('deferred_revenue_current'),
-                data_dict.get('other_current_liabilities'), data_dict.get('total_current_liabilities'),
-                data_dict.get('long_term_debt'), data_dict.get('deferred_tax_liabilities'),
-                data_dict.get('deferred_revenue_noncurrent'), data_dict.get('other_noncurrent_liabilities'),
-                data_dict.get('total_noncurrent_liabilities'), data_dict.get('total_liabilities'),
-                data_dict.get('common_stock'), data_dict.get('additional_paid_in_capital'),
-                data_dict.get('retained_earnings'), data_dict.get('treasury_stock'),
-                data_dict.get('accumulated_other_comprehensive_income'),
-                data_dict.get('total_stockholders_equity'), data_dict.get('noncontrolling_interest'),
-                data_dict.get('total_equity'), data_dict.get('total_liabilities_and_equity')
-            ])
-            
-            # Update company record
-            self._update_company(ticker, filing_date)
-            
-            print(f"Inserted balance sheet: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
-            return True
-            
-        except Exception as e:
-            print(f"Failed to insert balance sheet: {e}")
-            return False
+                cash_and_equivalents, short_term_investments, accounts_receivable, inventory,
+                prepaid_expenses, other_current_assets, total_current_assets,
+                ppe_gross, accumulated_depreciation, ppe_net, goodwill, intangible_assets,
+                long_term_investments, deferred_tax_assets, other_noncurrent_assets,
+                total_noncurrent_assets, total_assets,
+                accounts_payable, accrued_expenses, short_term_debt, current_portion_long_term_debt,
+                deferred_revenue_current, other_current_liabilities, total_current_liabilities,
+                long_term_debt, deferred_tax_liabilities, deferred_revenue_noncurrent,
+                other_noncurrent_liabilities, total_noncurrent_liabilities, total_liabilities,
+                common_stock, additional_paid_in_capital, retained_earnings, treasury_stock,
+                accumulated_other_comprehensive_income, total_stockholders_equity,
+                noncontrolling_interest, total_equity, total_liabilities_and_equity
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
+            period_type, fields_extracted, total_fields, coverage_pct,
+            data_dict.get('cash_and_equivalents'), data_dict.get('short_term_investments'),
+            data_dict.get('accounts_receivable'), data_dict.get('inventory'),
+            data_dict.get('prepaid_expenses'), data_dict.get('other_current_assets'),
+            data_dict.get('total_current_assets'), data_dict.get('ppe_gross'),
+            data_dict.get('accumulated_depreciation'), data_dict.get('ppe_net'),
+            data_dict.get('goodwill'), data_dict.get('intangible_assets'),
+            data_dict.get('long_term_investments'), data_dict.get('deferred_tax_assets'),
+            data_dict.get('other_noncurrent_assets'), data_dict.get('total_noncurrent_assets'),
+            data_dict.get('total_assets'), data_dict.get('accounts_payable'),
+            data_dict.get('accrued_expenses'), data_dict.get('short_term_debt'),
+            data_dict.get('current_portion_long_term_debt'), data_dict.get('deferred_revenue_current'),
+            data_dict.get('other_current_liabilities'), data_dict.get('total_current_liabilities'),
+            data_dict.get('long_term_debt'), data_dict.get('deferred_tax_liabilities'),
+            data_dict.get('deferred_revenue_noncurrent'), data_dict.get('other_noncurrent_liabilities'),
+            data_dict.get('total_noncurrent_liabilities'), data_dict.get('total_liabilities'),
+            data_dict.get('common_stock'), data_dict.get('additional_paid_in_capital'),
+            data_dict.get('retained_earnings'), data_dict.get('treasury_stock'),
+            data_dict.get('accumulated_other_comprehensive_income'),
+            data_dict.get('total_stockholders_equity'), data_dict.get('noncontrolling_interest'),
+            data_dict.get('total_equity'), data_dict.get('total_liabilities_and_equity')
+        ])
+
+        self._update_company(ticker, filing_date)
+        print(f"Inserted balance sheet: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
+        return True
     
     def insert_cash_flow(self, df: pd.DataFrame) -> bool:
-        """
-        Insert or update cash flow statement data
-        
-        Args:
-            df: DataFrame from extract_cash_flow()
-        
-        Returns:
-            True if successful
-        """
-        try:
-            # Extract metadata
-            ticker = df.iloc[0]['Ticker']
-            filing_date = pd.to_datetime(df.iloc[0]['Filing_Date']).date()
-            period_end_date = pd.to_datetime(df.iloc[0]['Period_End_Date']).date()
-            filing_type = df.iloc[0]['Filing_Type']
-            fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
-            fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
-            period_type = df.iloc[0]['Period_Type']
-            
-            # Calculate data quality
-            fields_extracted = int(df['Value'].notna().sum())
-            total_fields = len(df)
-            coverage_pct = (fields_extracted / total_fields) * 100
-            
-            # Convert DataFrame to dict
-            data_dict = dict(zip(df['Field'], df['Value']))
-            
-            # Delete existing record
-            self.conn.execute("""
-                DELETE FROM cash_flow_statements 
-                WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
-            """, [ticker, filing_date, period_end_date])
-            
-            # Insert new record
-            self.conn.execute("""
-                INSERT INTO cash_flow_statements (
-                    ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
-                    period_type, fields_extracted, total_fields, coverage_pct,
-                    net_income_starting_point, depreciation_amortization, stock_based_compensation,
-                    deferred_taxes, change_accounts_receivable, change_inventory, change_accounts_payable,
-                    change_accrued_expenses, change_deferred_revenue, other_operating_activities,
-                    net_cash_operating_activities, capital_expenditures, acquisitions,
-                    purchase_investments, sale_investments, other_investing_activities,
-                    net_cash_investing_activities, debt_issuance, debt_repayment,
-                    common_stock_issuance, stock_repurchase, dividends_paid, other_financing_activities,
-                    net_cash_financing_activities, effect_of_exchange_rate, net_change_in_cash,
-                    cash_beginning_of_period, cash_end_of_period, cash_paid_for_interest, cash_paid_for_taxes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
+        """Insert or update cash flow statement data. Raises on failure."""
+        ticker = df.iloc[0]['Ticker']
+        filing_date = pd.to_datetime(df.iloc[0]['Filing_Date']).date()
+        period_end_date = pd.to_datetime(df.iloc[0]['Period_End_Date']).date()
+        filing_type = df.iloc[0]['Filing_Type']
+        fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
+        fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
+        period_type = df.iloc[0]['Period_Type']
+
+        fields_extracted = int(df['Value'].notna().sum())
+        total_fields = len(df)
+        coverage_pct = (fields_extracted / total_fields) * 100
+
+        data_dict = dict(zip(df['Field'], df['Value']))
+
+        self.conn.execute("""
+            DELETE FROM cash_flow_statements
+            WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
+        """, [ticker, filing_date, period_end_date])
+
+        self.conn.execute("""
+            INSERT INTO cash_flow_statements (
                 ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
                 period_type, fields_extracted, total_fields, coverage_pct,
-                data_dict.get('net_income_starting_point'), data_dict.get('depreciation_amortization'),
-                data_dict.get('stock_based_compensation'), data_dict.get('deferred_taxes'),
-                data_dict.get('change_accounts_receivable'), data_dict.get('change_inventory'),
-                data_dict.get('change_accounts_payable'), data_dict.get('change_accrued_expenses'),
-                data_dict.get('change_deferred_revenue'), data_dict.get('other_operating_activities'),
-                data_dict.get('net_cash_operating_activities'), data_dict.get('capital_expenditures'),
-                data_dict.get('acquisitions'), data_dict.get('purchase_investments'),
-                data_dict.get('sale_investments'), data_dict.get('other_investing_activities'),
-                data_dict.get('net_cash_investing_activities'), data_dict.get('debt_issuance'),
-                data_dict.get('debt_repayment'), data_dict.get('common_stock_issuance'),
-                data_dict.get('stock_repurchase'), data_dict.get('dividends_paid'),
-                data_dict.get('other_financing_activities'), data_dict.get('net_cash_financing_activities'),
-                data_dict.get('effect_of_exchange_rate'), data_dict.get('net_change_in_cash'),
-                data_dict.get('cash_beginning_of_period'), data_dict.get('cash_end_of_period'),
-                data_dict.get('cash_paid_for_interest'), data_dict.get('cash_paid_for_taxes')
-            ])
-            
-            # Update company record
-            self._update_company(ticker, filing_date)
-            
-            print(f"Inserted cash flow: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
-            return True
-            
-        except Exception as e:
-            print(f"Failed to insert cash flow: {e}")
-            return False
+                net_income_starting_point, depreciation_amortization, stock_based_compensation,
+                deferred_taxes, change_accounts_receivable, change_inventory, change_accounts_payable,
+                change_accrued_expenses, change_deferred_revenue, other_operating_activities,
+                net_cash_operating_activities, capital_expenditures, acquisitions,
+                purchase_investments, sale_investments, other_investing_activities,
+                net_cash_investing_activities, debt_issuance, debt_repayment,
+                common_stock_issuance, stock_repurchase, dividends_paid, other_financing_activities,
+                net_cash_financing_activities, effect_of_exchange_rate, net_change_in_cash,
+                cash_beginning_of_period, cash_end_of_period, cash_paid_for_interest, cash_paid_for_taxes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
+            period_type, fields_extracted, total_fields, coverage_pct,
+            data_dict.get('net_income_starting_point'), data_dict.get('depreciation_amortization'),
+            data_dict.get('stock_based_compensation'), data_dict.get('deferred_taxes'),
+            data_dict.get('change_accounts_receivable'), data_dict.get('change_inventory'),
+            data_dict.get('change_accounts_payable'), data_dict.get('change_accrued_expenses'),
+            data_dict.get('change_deferred_revenue'), data_dict.get('other_operating_activities'),
+            data_dict.get('net_cash_operating_activities'), data_dict.get('capital_expenditures'),
+            data_dict.get('acquisitions'), data_dict.get('purchase_investments'),
+            data_dict.get('sale_investments'), data_dict.get('other_investing_activities'),
+            data_dict.get('net_cash_investing_activities'), data_dict.get('debt_issuance'),
+            data_dict.get('debt_repayment'), data_dict.get('common_stock_issuance'),
+            data_dict.get('stock_repurchase'), data_dict.get('dividends_paid'),
+            data_dict.get('other_financing_activities'), data_dict.get('net_cash_financing_activities'),
+            data_dict.get('effect_of_exchange_rate'), data_dict.get('net_change_in_cash'),
+            data_dict.get('cash_beginning_of_period'), data_dict.get('cash_end_of_period'),
+            data_dict.get('cash_paid_for_interest'), data_dict.get('cash_paid_for_taxes')
+        ])
+
+        self._update_company(ticker, filing_date)
+        print(f"Inserted cash flow: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
+        return True
     
     def insert_all_statements(
         self, 
@@ -590,28 +530,44 @@ class FinancialStatementsDB:
         return results
     
     def _update_company(self, ticker: str, filing_date: date):
-        """Update or create company record"""
-        # Check if company exists
-        existing = self.conn.execute("""
-            SELECT ticker FROM companies WHERE ticker = ?
-        """, [ticker]).fetchone()
-        
+        """Update or create company record. total_filings is derived from actual rows."""
+        total = self.conn.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT period_end_date FROM income_statements WHERE ticker = ?
+                UNION
+                SELECT period_end_date FROM balance_sheets WHERE ticker = ?
+                UNION
+                SELECT period_end_date FROM cash_flow_statements WHERE ticker = ?
+            )
+        """, [ticker, ticker, ticker]).fetchone()[0]
+
+        existing = self.conn.execute(
+            "SELECT ticker FROM companies WHERE ticker = ?", [ticker]
+        ).fetchone()
+
         if existing:
-            # Update existing
             self.conn.execute("""
-                UPDATE companies 
-                SET last_filing_date = ?,
-                    total_filings = total_filings + 1,
+                UPDATE companies
+                SET last_filing_date = GREATEST(last_filing_date, ?),
+                    total_filings = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE ticker = ?
-            """, [filing_date, ticker])
+            """, [filing_date, total, ticker])
         else:
-            # Create new
             self.conn.execute("""
                 INSERT INTO companies (ticker, first_filing_date, last_filing_date, total_filings)
-                VALUES (?, ?, ?, 1)
-            """, [ticker, filing_date, filing_date])
+                VALUES (?, ?, ?, ?)
+            """, [ticker, filing_date, filing_date, total])
     
+    def filing_exists(self, ticker: str, period_end) -> bool:
+        """Return True if all 3 statements are already stored for this ticker + period."""
+        def _has(table: str) -> bool:
+            return self.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE ticker = ? AND period_end_date = ?",
+                [ticker, period_end],
+            ).fetchone()[0] > 0
+        return _has("income_statements") and _has("balance_sheets") and _has("cash_flow_statements")
+
     # ========================================================================
     # QUERY METHODS
     # ========================================================================

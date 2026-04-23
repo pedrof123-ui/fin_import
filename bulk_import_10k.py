@@ -137,7 +137,9 @@ async def extract_and_insert_filing(
     year: int,
     db: FinancialStatementsDB,
     logger: BulkImportLogger,
-    use_ai_fallback: bool = False
+    use_ai_fallback: bool = False,
+    form: str = '10-K',
+    quarter: int = None,
 ) -> Dict[str, Any]:
     """
     Extract all 3 statements and insert into database
@@ -162,11 +164,11 @@ async def extract_and_insert_filing(
     # Extract income statement
     try:
         income_df = await extract_income_statement(
-            filing, ticker, '10-K', year, use_ai_fallback=use_ai_fallback
+            filing, ticker, form, year, quarter=quarter, use_ai_fallback=use_ai_fallback
         )
         
         # Calculate coverage
-        fields_found = len(income_df['Value'].notna())
+        fields_found = income_df['Value'].notna().sum()
         coverage = (fields_found / len(income_df)) * 100
         
         # Insert to database
@@ -190,10 +192,10 @@ async def extract_and_insert_filing(
     # Extract balance sheet
     try:
         balance_df = await extract_balance_sheet(
-            filing, ticker, '10-K', year, use_ai_fallback=use_ai_fallback
+            filing, ticker, form, year, quarter=quarter, use_ai_fallback=use_ai_fallback
         )
         
-        fields_found = len(balance_df['Value'].notna())
+        fields_found = balance_df['Value'].notna().sum()
         coverage = (fields_found / len(balance_df)) * 100
         
         success = db.insert_balance_sheet(balance_df)
@@ -216,10 +218,10 @@ async def extract_and_insert_filing(
     # Extract cash flow
     try:
         cashflow_df = await extract_cash_flow(
-            filing, ticker, '10-K', year, use_ai_fallback=use_ai_fallback
+            filing, ticker, form, year, quarter=quarter, use_ai_fallback=use_ai_fallback
         )
         
-        fields_found = len(cashflow_df['Value'].notna())
+        fields_found = cashflow_df['Value'].notna().sum()
         coverage = (fields_found / len(cashflow_df)) * 100
         
         success = db.insert_cash_flow(cashflow_df)
@@ -249,7 +251,8 @@ async def process_ticker(
     logger: BulkImportLogger,
     use_ai_fallback: bool = False,
     skip_existing: bool = True,
-    rate_limit_delay: float = 1.0
+    rate_limit_delay: float = 1.0,
+    form: str = '10-K',
 ) -> Dict[str, Any]:
     """
     Process all 10-K filings for a single ticker
@@ -282,8 +285,7 @@ async def process_ticker(
         company = Company(ticker)
         logger.log('INFO', ticker, f"Retrieved company: {company.name}")
         
-        # Get all 10-K filings
-        filings = company.get_filings(form='10-K')
+        filings = company.get_filings(form=form)
         
         if filings.empty:
             logger.log('WARNING', ticker, "No 10-K filings found")
@@ -297,23 +299,20 @@ async def process_ticker(
         
         # Process each filing
         for filing in filings_list:
-            # Extract year from filing
+            # Extract year (and quarter for 10-Q) from filing
             try:
                 period_date = pd.to_datetime(filing.period_of_report)
                 year = period_date.year
-            except:
+                quarter = ((period_date.month - 1) // 3 + 1) if form == '10-Q' else None
+            except Exception:
                 logger.log('WARNING', ticker, f"Could not parse period date: {filing.period_of_report}")
                 ticker_results['filings_skipped'] += 1
                 continue
             
-            # Check if already in database
+            # Check if already in database (match on period_end_date across all 3 tables)
             if skip_existing:
-                existing = db.conn.execute("""
-                    SELECT COUNT(*) as count FROM income_statements 
-                    WHERE ticker = ? AND fiscal_year = ?
-                """, [ticker, year]).fetchone()
-                
-                if existing and existing[0] > 0:
+                period_end = pd.to_datetime(filing.period_of_report).date()
+                if db.filing_exists(ticker, period_end):
                     logger.log('INFO', ticker, f"Already in database, skipping", year)
                     ticker_results['filings_skipped'] += 1
                     continue
@@ -321,7 +320,7 @@ async def process_ticker(
             # Extract and insert
             try:
                 results = await extract_and_insert_filing(
-                    filing, ticker, year, db, logger, use_ai_fallback
+                    filing, ticker, year, db, logger, use_ai_fallback, form=form, quarter=quarter
                 )
                 
                 # Count successes
@@ -358,7 +357,8 @@ async def bulk_import_10k(
     output_dir: str = './bulk_import_results',
     use_ai_fallback: bool = False,
     skip_existing: bool = True,
-    rate_limit_delay: float = 1.0
+    rate_limit_delay: float = 1.0,
+    form: str = '10-K',
 ) -> Dict[str, Any]:
     """
     Bulk import 10-K statements for multiple companies
@@ -385,7 +385,7 @@ async def bulk_import_10k(
     """
     
     print("="*80)
-    print("BULK 10-K IMPORT")
+    print(f"BULK {form} IMPORT")
     print("="*80)
     
     start_time = time.time()
@@ -397,17 +397,17 @@ async def bulk_import_10k(
     logger = BulkImportLogger(log_file)
     
     # Read tickers
-    print(f"\n📋 Reading tickers from {ticker_csv}...")
+    print(f"\nReading tickers from {ticker_csv}...")
     tickers = read_ticker_csv(ticker_csv)
-    print(f"✓ Found {len(tickers)} tickers")
+    print(f"Found {len(tickers)} tickers")
     logger.log('INFO', 'SYSTEM', f"Starting bulk import: {len(tickers)} tickers, {periods} periods each")
     
     # Initialize database
-    print(f"\n💾 Connecting to database: {db_path}...")
+    print(f"\nConnecting to database: {db_path}...")
     db = FinancialStatementsDB(db_path)
     
     # Process each ticker
-    print(f"\n🚀 Starting bulk extraction...")
+    print(f"\nStarting bulk extraction...")
     print(f"   Rate limit: {rate_limit_delay}s between requests")
     print(f"   AI fallback: {'Enabled' if use_ai_fallback else 'Disabled'}")
     print(f"   Skip existing: {'Yes' if skip_existing else 'No'}")
@@ -426,13 +426,14 @@ async def bulk_import_10k(
             logger=logger,
             use_ai_fallback=use_ai_fallback,
             skip_existing=skip_existing,
-            rate_limit_delay=rate_limit_delay
+            rate_limit_delay=rate_limit_delay,
+            form=form,
         )
         
         all_results.append(ticker_results)
         
         # Print ticker summary
-        print(f"\n✓ {ticker} complete:")
+        print(f"\n{ticker} complete:")
         print(f"  Filings found: {ticker_results['filings_found']}")
         print(f"  Filings processed: {ticker_results['filings_processed']}")
         print(f"  Filings skipped: {ticker_results['filings_skipped']}")
@@ -471,12 +472,12 @@ async def bulk_import_10k(
     summary_df = pd.DataFrame(all_results)
     summary_path = f"{output_dir}/summary_report.csv"
     summary_df.to_csv(summary_path, index=False)
-    print(f"✓ Summary report: {summary_path}")
-    
+    print(f"Summary report: {summary_path}")
+
     # 2. Export log to CSV
     log_csv_path = f"{output_dir}/detailed_log.csv"
     logger.export_to_csv(log_csv_path)
-    print(f"✓ Detailed log: {log_csv_path}")
+    print(f"Detailed log: {log_csv_path}")
     
     # 3. Failed filings report
     failures = []
@@ -488,7 +489,7 @@ async def bulk_import_10k(
         failures_df = pd.DataFrame(failures)
         failures_path = f"{output_dir}/failures.csv"
         failures_df.to_csv(failures_path, index=False)
-        print(f"✓ Failures report: {failures_path}")
+        print(f"Failures report: {failures_path}")
     
     # 4. Overall statistics
     stats_path = f"{output_dir}/overall_statistics.txt"
@@ -515,13 +516,13 @@ async def bulk_import_10k(
             success_rate = (overall_results['total_filings_processed'] / overall_results['total_filings_found']) * 100
             f.write(f"Success rate: {success_rate:.1f}%\n")
     
-    print(f"✓ Statistics: {stats_path}")
+    print(f"Statistics: {stats_path}")
     
     # Print final summary
     print("\n" + "="*80)
     print("BULK IMPORT COMPLETE")
     print("="*80)
-    print(f"\n📊 Overall Statistics:")
+    print(f"\nOverall Statistics:")
     print(f"   Tickers processed:  {overall_results['total_tickers']}")
     print(f"   Filings found:      {overall_results['total_filings_found']}")
     print(f"   Filings processed:  {overall_results['total_filings_processed']}")
@@ -529,31 +530,14 @@ async def bulk_import_10k(
     print(f"   Filings failed:     {overall_results['total_filings_failed']}")
     print(f"   Statements success: {overall_results['total_statements_success']}")
     print(f"   Statements failed:  {overall_results['total_statements_failed']}")
-    print(f"\n⏱️  Duration: {overall_results['total_duration_seconds']:.1f}s ({overall_results['total_duration_seconds']/60:.1f} minutes)")
+    print(f"\nDuration: {overall_results['total_duration_seconds']:.1f}s ({overall_results['total_duration_seconds']/60:.1f} minutes)")
     print(f"   Average per ticker: {overall_results['average_time_per_ticker']:.1f}s")
-    
+
     if overall_results['total_filings_found'] > 0:
         success_rate = (overall_results['total_filings_processed'] / overall_results['total_filings_found']) * 100
         print(f"   Success rate: {success_rate:.1f}%")
-    
-    print(f"\n📁 Reports saved to: {output_dir}/")
+
+    print(f"\nReports saved to: {output_dir}/")
     print()
     
     return overall_results
-
-
-# ============================================================================
-# USAGE EXAMPLE
-# ============================================================================
-
-if __name__ == "__main__":
-    import asyncio
-    
-    # Example usage
-    results = asyncio.run(bulk_import_10k(
-        ticker_csv='tickers.csv',
-        periods=20,
-        use_ai_fallback=False,  # Set to True for better coverage
-        skip_existing=True,
-        rate_limit_delay=1.0
-    ))

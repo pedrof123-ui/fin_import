@@ -1,21 +1,21 @@
 # Financial Statements Database - Usage Guide
 
-## 🎯 Overview
+## Overview
 
 A comprehensive DuckDB database for storing and analyzing 10-K and 10-Q financial statements.
 
 **Features:**
-- ✅ Stores all 3 financial statements (Income, Balance Sheet, Cash Flow)
-- ✅ Tracks filing dates (published date) and period end dates
-- ✅ Supports both annual (10-K) and quarterly (10-Q) filings
-- ✅ Data quality metrics
-- ✅ Time series analysis
-- ✅ Company master data
-- ✅ Easy querying and export
+- Stores all 3 financial statements (Income, Balance Sheet, Cash Flow)
+- Tracks filing dates (published date) and period end dates
+- Supports both annual (10-K) and quarterly (10-Q) filings
+- Data quality metrics
+- Time series analysis
+- Company master data
+- Easy querying and export
 
 ---
 
-## 📁 Database Schema
+## Database Schema
 
 ### **Tables Created:**
 
@@ -47,7 +47,7 @@ A comprehensive DuckDB database for storing and analyzing 10-K and 10-Q financia
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### **1. Initialize Database**
 
@@ -60,8 +60,8 @@ db = FinancialStatementsDB('financial_statements.duckdb')
 
 **Output:**
 ```
-✓ Connected to financial statements database: financial_statements.duckdb
-✓ Database schema created/verified
+- Connected to financial statements database: financial_statements.duckdb
+- Database schema created/verified
 ```
 
 ---
@@ -90,9 +90,9 @@ results = db.insert_all_statements(income_df, balance_df, cashflow_df)
 
 **Output:**
 ```
-✓ Inserted income statement: AAPL 10-K 2024-09-28 (86.7% coverage)
-✓ Inserted balance sheet: AAPL 10-K 2024-09-28 (92.1% coverage)
-✓ Inserted cash flow: AAPL 10-K 2024-09-28 (90.0% coverage)
+- Inserted income statement: AAPL 10-K 2024-09-28 (86.7% coverage)
+- Inserted balance sheet: AAPL 10-K 2024-09-28 (92.1% coverage)
+- Inserted cash flow: AAPL 10-K 2024-09-28 (90.0% coverage)
 ```
 
 ---
@@ -187,7 +187,7 @@ db.export_to_excel('AAPL', 'AAPL_financial_statements.xlsx')
 
 **Output:**
 ```
-✓ Exported AAPL to AAPL_financial_statements.xlsx
+- Exported AAPL to AAPL_financial_statements.xlsx
 ```
 
 **Excel file contains:**
@@ -197,7 +197,7 @@ db.export_to_excel('AAPL', 'AAPL_financial_statements.xlsx')
 
 ---
 
-## 📊 Advanced Queries
+## Advanced Queries
 
 ### **Query 1: Revenue Growth Analysis**
 
@@ -294,7 +294,7 @@ print(fcf)
 
 ---
 
-## 🔄 Batch Processing
+## Batch Processing
 
 ### **Insert Multiple Companies:**
 
@@ -314,12 +314,12 @@ for ticker in tickers:
         # Insert
         db.insert_all_statements(income, balance, cashflow)
         
-        print(f"✓ {ticker} complete")
+        print(f"- {ticker} complete")
         
     except Exception as e:
         print(f"✗ {ticker} failed: {e}")
 
-print("\n✓ Batch processing complete!")
+print("\n- Batch processing complete!")
 ```
 
 ---
@@ -344,12 +344,12 @@ for year in years:
     except Exception as e:
         print(f"✗ {year} failed: {e}")
 
-print(f"\n✓ All years for {ticker} complete!")
+print(f"\n- All years for {ticker} complete!")
 ```
 
 ---
 
-## 📈 Integration with Notebook
+## Integration with Notebook
 
 Add this cell to your notebook after Section 8 (Export):
 
@@ -377,15 +377,15 @@ print(f"  Cash Flow: {'✓' if results.get('cashflow') else '✗'}")
 
 # Show what's in database
 companies = db.query_companies()
-print(f"\n✓ Total companies in database: {len(companies)}")
-print(f"✓ Total filings: {companies['total_filings'].sum()}")
+print(f"\n- Total companies in database: {len(companies)}")
+print(f"- Total filings: {companies['total_filings'].sum()}")
 
 db.close()
 ```
 
 ---
 
-## 🔍 Key Features
+## Key Features
 
 ### **1. Filing Date vs Period End Date:**
 - **`filing_date`** = When the filing was **published/filed** with SEC
@@ -409,7 +409,7 @@ db.close()
 
 ---
 
-## ⚠️ Important Notes
+## Important Notes
 
 1. **Date Format:** All dates stored as DATE type (YYYY-MM-DD)
 2. **NULL Values:** Missing fields stored as NULL (not 0)
@@ -419,7 +419,7 @@ db.close()
 
 ---
 
-## 🎯 Common Use Cases
+## Common Use Cases
 
 ### **Use Case 1: Build Time Series Dataset**
 ```python
@@ -457,15 +457,15 @@ quarterly = db.get_time_series('AAPL', 'income', 'revenue', annual_only=False)
 
 ---
 
-## ✅ Summary
+## Summary
 
 **What You Have:**
-- ✅ Complete financial statements database
-- ✅ Filing dates (published dates) tracked
-- ✅ Time series analysis ready
-- ✅ Multi-company support
-- ✅ Data quality tracking
-- ✅ Easy querying and export
+- Complete financial statements database
+- Filing dates (published dates) tracked
+- Time series analysis ready
+- Multi-company support
+- Data quality tracking
+- Easy querying and export
 
 **Next Steps:**
 1. Run your notebook to extract statements

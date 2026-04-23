@@ -27,13 +27,18 @@ Usage:
     print(line_item)  # "capital_expenditures"
 """
 
+import asyncio
 import os
 import json
 import re
 from pathlib import Path
 from typing import Literal, Optional
 from dotenv import load_dotenv
-from agents import Agent, Runner, OpenAIChatCompletionsModel, ModelSettings, RunConfig
+from agents.agent import Agent
+from agents.run import Runner
+from agents.run_config import RunConfig
+from agents.model_settings import ModelSettings
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.mcp import MCPServerStdio
 from openai import AsyncOpenAI
 
@@ -47,65 +52,57 @@ StatementType = Literal['income', 'balance', 'cashflow']
 _agent = None
 _file_server = None
 _initialized = False
+_init_lock = asyncio.Lock()
 
 
 async def _initialize_agent():
     """Initialize the AI agent and MCP server (called once)"""
     global _agent, _file_server, _initialized
-    
-    if _initialized:
-        return
-    
-    # Get API keys
-    api_key = os.getenv('OPENAI_API_KEY')
-    openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY not found in environment variables")
-    if not openrouter_api_key:
-        raise ValueError("OPENROUTER_API_KEY not found in environment variables")
 
-    openrouter_extra_body={
-        "provider": {
-            "only": ["cerebras"],        # restrict to Cerebras
-            "allow_fallbacks": False,    # fail instead of switching providers
-        },
-    }    
-    
-    openrouter_client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_api_key)
-    openrouter_model = OpenAIChatCompletionsModel(model="openai/gpt-oss-120b", openai_client=openrouter_client)
+    async with _init_lock:
+        if _initialized:
+            return
 
-    
-    # Setup MCP filesystem server
-    # IMPORTANT: Restrict to only xbrl_mappings directory for security
-    project_path = os.path.abspath(os.path.join(os.getcwd()))
-    mappings_path = os.path.join(project_path, "xbrl_mappings")
-    
-    # Verify the directory exists
-    if not os.path.exists(mappings_path):
-        raise ValueError(f"xbrl_mappings directory not found at {mappings_path}")
-    
-    files_params = {
-        "command": "npx",
-        "args": [
-            "-y",
-            "@modelcontextprotocol/server-filesystem",
-            mappings_path  # RESTRICTED: Only access xbrl_mappings folder
-        ]
-    }
-    
-    _file_server = MCPServerStdio(params=files_params, client_session_timeout_seconds=60)
-    
-    # Agent instructions
-    instructions = """
+        api_key = os.getenv('OPENAI_API_KEY')
+        openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
+        if not openrouter_api_key:
+            raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+
+        openrouter_extra_body = {
+            "provider": {
+                "only": ["cerebras"],
+                "allow_fallbacks": False,
+            },
+        }
+
+        openrouter_client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_api_key)
+        openrouter_model = OpenAIChatCompletionsModel(model="openai/gpt-oss-120b", openai_client=openrouter_client)
+
+        project_path = os.path.abspath(os.getcwd())
+        mappings_path = os.path.join(project_path, "xbrl_mappings")
+
+        if not os.path.exists(mappings_path):
+            raise ValueError(f"xbrl_mappings directory not found at {mappings_path}")
+
+        files_params = {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", mappings_path]
+        }
+
+        _file_server = MCPServerStdio(params=files_params, client_session_timeout_seconds=60)
+
+        instructions = """
     You are a certified financial analyst and expert in SEC EDGAR filings and XBRL concepts.
-    
+
     Your task: Map XBRL concepts to the correct financial statement line items.
-    
+
     You have access to THREE mapping files in the xbrl_mappings directory:
     1. income_statement_xbrl_mapping.py - Income statement fields
     2. balance_sheet_xbrl_mapping.py - Balance sheet fields
     3. cash_flow_xbrl_mapping.py - Cash flow statement fields
-    
+
     CRITICAL RULES:
     - You will be told which statement type to search (income, balance, or cashflow)
     - Search ONLY the relevant mapping file for that statement type
@@ -113,29 +110,20 @@ async def _initialize_agent():
     - If the concept is already in the mapping file, return "already_mapped"
     - If you cannot find a good match, return "no_match"
     - DO NOT return explanations, just the field name
-    
+
     Use the MCP Server tools to read the mapping files.
     """
-    
-    # Create agent
-    # _agent = Agent(
-    #     name="XBRL Concept Mapping Agent",
-    #     instructions=instructions,
-    #     mcp_servers=[_file_server],
-    #     model="gpt-4o-mini"
-    # )
-    _agent = Agent(
-        name="XBRL Concept Mapping Agent",
-        instructions=instructions,
-        mcp_servers=[_file_server],
-        model=openrouter_model,
-        model_settings=ModelSettings(extra_body=openrouter_extra_body)
-    )
-    
-    # Connect MCP server
-    await _file_server.connect()
-    
-    _initialized = True
+
+        _agent = Agent(
+            name="XBRL Concept Mapping Agent",
+            instructions=instructions,
+            mcp_servers=[_file_server],
+            model=openrouter_model,
+            model_settings=ModelSettings(extra_body=openrouter_extra_body)
+        )
+
+        await _file_server.connect()
+        _initialized = True
 
 
 async def get_statement_mapping(
@@ -388,30 +376,8 @@ async def cleanup():
 
 # Synchronous wrappers for non-async contexts
 def get_statement_mapping_sync(concept: str, statement_type: StatementType) -> Optional[str]:
-    """
-    Synchronous wrapper for get_statement_mapping
-    
-    Args:
-        concept: XBRL concept name
-        statement_type: 'income', 'balance', or 'cashflow'
-    
-    Returns:
-        Financial statement line item or None
-    
-    Example:
-        >>> line_item = get_statement_mapping_sync("PropertyPlantAndEquipmentNet", "balance")
-        >>> print(line_item)
-        'ppe_net'
-    """
-    import asyncio
-    
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(get_statement_mapping(concept, statement_type))
+    """Synchronous wrapper for get_statement_mapping."""
+    return asyncio.run(get_statement_mapping(concept, statement_type))
 
 
 def get_income_statement_mapping_sync(concept: str) -> Optional[str]:

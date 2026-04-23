@@ -1,23 +1,17 @@
 """
-Unit tests for prefix stripping in extractor lookup functions.
-Tests the extract_value_from_statement_df logic in all three extractors
-using mock DataFrames — no SEC/API connection needed.
+Unit tests for XBRL prefix stripping in extractor lookup logic.
+No network or SEC connection needed — uses mock DataFrames.
 """
 
 import pandas as pd
-import sys
-import os
+import pytest
 
-# Add project root to path so imports resolve
-sys.path.insert(0, os.path.dirname(__file__))
 
-# ─── Minimal mock mappings (no need to import full xbrl_mappings) ─────────────
-
+# Minimal mock mappings
 MOCK_BALANCE = {
     'total_assets': ['Assets'],
     'cash': ['CashAndCashEquivalentsAtCarryingValue', 'Cash'],
 }
-
 MOCK_CASHFLOW = {
     'net_cash_operating': ['NetCashProvidedByUsedInOperatingActivities'],
     'other_operating_activities': [
@@ -25,17 +19,14 @@ MOCK_CASHFLOW = {
         'IncreaseDecreaseInInventories',
     ],
 }
-
 MOCK_INCOME = {
     'revenue': ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues'],
     'selling_general_admin': ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense'],
 }
 
 
-# ─── Replicate the new extract logic (isolated, no import side-effects) ───────
-
 def _extract(mapping_dict, field_name, statement_df, year_column, aggregation_fields=None):
-    """Replicate new extract_value_from_statement_df logic."""
+    """Replicate extract_value_from_statement_df logic in isolation."""
     concepts = mapping_dict.get(field_name)
     if concepts is None:
         return None, None
@@ -44,15 +35,12 @@ def _extract(mapping_dict, field_name, statement_df, year_column, aggregation_fi
         (statement_df['dimension'] == False) &
         (statement_df['abstract'] == False)
     ].copy()
-
-    # Key change: strip namespace prefix before matching
     main_items['bare_concept'] = main_items['concept'].apply(
         lambda c: c.split('_', 1)[1] if '_' in c else c
     )
 
     aggregation_fields = aggregation_fields or set()
     should_aggregate = field_name in aggregation_fields
-
     found_values, found_concepts = [], []
 
     for concept in concepts:
@@ -69,16 +57,12 @@ def _extract(mapping_dict, field_name, statement_df, year_column, aggregation_fi
     if should_aggregate and found_values:
         if len(found_values) == 1:
             return found_values[0], found_concepts[0]
-        total = sum(found_values)
-        return total, ' + '.join(found_concepts)
+        return sum(found_values), ' + '.join(found_concepts)
 
     return None, None
 
 
-# ─── Build mock DataFrames ─────────────────────────────────────────────────────
-
 def make_df(rows):
-    """rows: list of (concept, value). Returns mock statement DataFrame."""
     data = [
         {'concept': concept, '2024-12-31': value, 'dimension': False, 'abstract': False}
         for concept, value in rows
@@ -95,105 +79,87 @@ BALANCE_DF = make_df([
     ('us-gaap_CashAndCashEquivalentsAtCarryingValue', 100_000),
     ('us-gaap_Liabilities', 300_000),
 ])
-
 CASHFLOW_DF = make_df([
     ('us-gaap_NetCashProvidedByUsedInOperatingActivities', 80_000),
     ('us-gaap_IncreaseDecreaseInAccountsReceivable', -5_000),
     ('us-gaap_IncreaseDecreaseInInventories', -3_000),
-    ('dei_EntityCommonStockSharesOutstanding', 999),   # non-us-gaap prefix
+    ('dei_EntityCommonStockSharesOutstanding', 999),
 ])
-
 INCOME_DF = make_df([
     ('us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax', 1_000_000),
     ('us-gaap_SellingGeneralAndAdministrativeExpense', 200_000),
     ('us-gaap_GeneralAndAdministrativeExpense', 50_000),
-    ('apo_ProprietaryConcept', 42),   # company-specific prefix
+    ('apo_ProprietaryConcept', 42),
 ])
 
 
-# ─── Tests ─────────────────────────────────────────────────────────────────────
+# --- Balance sheet ---
 
-passed = 0
-failed = 0
+def test_bs_prefix_stripped():
+    v, c = _extract(MOCK_BALANCE, 'total_assets', BALANCE_DF, YEAR)
+    assert v == 500_000
+    assert 'Assets' in c
 
-def check(name, got_value, got_concept, exp_value, exp_concept_contains=None):
-    global passed, failed
-    ok = True
-    if got_value != exp_value:
-        print(f"  FAIL [{name}] value: expected {exp_value}, got {got_value}")
-        ok = False
-    if exp_concept_contains and (got_concept is None or exp_concept_contains not in got_concept):
-        print(f"  FAIL [{name}] concept: expected to contain {exp_concept_contains!r}, got {got_concept!r}")
-        ok = False
-    if ok:
-        print(f"  PASS [{name}]  value={got_value}, concept={got_concept!r}")
-        passed += 1
-    else:
-        failed += 1
+def test_bs_first_matching_concept():
+    v, c = _extract(MOCK_BALANCE, 'cash', BALANCE_DF, YEAR)
+    assert v == 100_000
+    assert 'CashAndCashEquivalentsAtCarryingValue' in c
+
+def test_bs_missing_concept_returns_none():
+    v, c = _extract(MOCK_BALANCE, 'total_assets', make_df([]), YEAR)
+    assert v is None
+    assert c is None
 
 
-print("=== Balance Sheet ===")
-v, c = _extract(MOCK_BALANCE, 'total_assets', BALANCE_DF, YEAR)
-check('bs: us-gaap_ prefix stripped', v, c, 500_000, 'Assets')
+# --- Cash flow ---
 
-v, c = _extract(MOCK_BALANCE, 'cash', BALANCE_DF, YEAR)
-check('bs: first matching concept', v, c, 100_000, 'CashAndCashEquivalentsAtCarryingValue')
+def test_cf_prefix_stripped():
+    v, c = _extract(MOCK_CASHFLOW, 'net_cash_operating', CASHFLOW_DF, YEAR)
+    assert v == 80_000
+    assert 'NetCashProvidedByUsedInOperatingActivities' in c
 
-v, c = _extract(MOCK_BALANCE, 'total_assets', make_df([]), YEAR)
-check('bs: missing concept returns None', v, c, None)
+def test_cf_aggregation_sums_components():
+    v, c = _extract(MOCK_CASHFLOW, 'other_operating_activities', CASHFLOW_DF, YEAR,
+                    aggregation_fields={'other_operating_activities'})
+    assert v == -8_000.0
+    assert '+' in c
 
-print("\n=== Cash Flow ===")
-v, c = _extract(MOCK_CASHFLOW, 'net_cash_operating', CASHFLOW_DF, YEAR)
-check('cf: us-gaap_ prefix stripped', v, c, 80_000, 'NetCashProvidedByUsedInOperatingActivities')
+def test_cf_dei_prefix_stripped():
+    mapping = {'shares_outstanding': ['EntityCommonStockSharesOutstanding']}
+    v, c = _extract(mapping, 'shares_outstanding', CASHFLOW_DF, YEAR)
+    assert v == 999
+    assert 'EntityCommonStockSharesOutstanding' in c
 
-# Aggregation field: should sum both component concepts
-v, c = _extract(MOCK_CASHFLOW, 'other_operating_activities', CASHFLOW_DF, YEAR,
-                aggregation_fields={'other_operating_activities'})
-check('cf: aggregation sums components', v, c, -8_000.0)
-if c is not None and '+' in c:
-    print(f"        (concepts: {c!r})")
 
-# DEI prefix stripped
-DEI_MAPPING = {'shares_outstanding': ['EntityCommonStockSharesOutstanding']}
-v, c = _extract(DEI_MAPPING, 'shares_outstanding', CASHFLOW_DF, YEAR)
-check('cf: dei_ prefix stripped', v, c, 999, 'EntityCommonStockSharesOutstanding')
+# --- Income statement ---
 
-print("\n=== Income Statement ===")
-v, c = _extract(MOCK_INCOME, 'revenue', INCOME_DF, YEAR)
-check('inc: us-gaap_ prefix stripped', v, c, 1_000_000, 'RevenueFromContractWithCustomerExcludingAssessedTax')
+def test_inc_prefix_stripped():
+    v, c = _extract(MOCK_INCOME, 'revenue', INCOME_DF, YEAR)
+    assert v == 1_000_000
+    assert 'RevenueFromContractWithCustomerExcludingAssessedTax' in c
 
-# Aggregation: SGA + GA summed
-v, c = _extract(MOCK_INCOME, 'selling_general_admin', INCOME_DF, YEAR,
-                aggregation_fields={'selling_general_admin'})
-check('inc: aggregation SG&A', v, c, 250_000.0)
-if c is not None and '+' in c:
-    print(f"        (concepts: {c!r})")
+def test_inc_aggregation():
+    v, c = _extract(MOCK_INCOME, 'selling_general_admin', INCOME_DF, YEAR,
+                    aggregation_fields={'selling_general_admin'})
+    assert v == 250_000.0
+    assert '+' in c
 
-# Company-specific (apo_) prefix stripped
-APO_MAPPING = {'proprietary': ['ProprietaryConcept']}
-v, c = _extract(APO_MAPPING, 'proprietary', INCOME_DF, YEAR)
-check('inc: company-specific apo_ prefix stripped', v, c, 42, 'ProprietaryConcept')
+def test_inc_company_specific_prefix_stripped():
+    mapping = {'proprietary': ['ProprietaryConcept']}
+    v, c = _extract(mapping, 'proprietary', INCOME_DF, YEAR)
+    assert v == 42
+    assert 'ProprietaryConcept' in c
 
-print("\n=== ai_batch_helper concept_name_map ===")
-# Verify the new split-based strip matches expected bare names
-test_concepts = [
+
+# --- Bare concept name stripping ---
+
+@pytest.mark.parametrize("full,expected", [
     ('us-gaap_NetIncomeLoss',    'NetIncomeLoss'),
     ('dei_EntityCIK',            'EntityCIK'),
     ('srt_ConsolidatedEntities', 'ConsolidatedEntities'),
     ('apo_FreeCashFlow',         'FreeCashFlow'),
     ('BareNoPrefixConcept',      'BareNoPrefixConcept'),
-]
-all_ok = True
-for full, expected_bare in test_concepts:
+])
+def test_strip_prefix(full, expected):
     bare = full.split('_', 1)[1] if '_' in full else full
-    if bare == expected_bare:
-        print(f"  PASS {full!r} -> {bare!r}")
-        passed += 1
-    else:
-        print(f"  FAIL {full!r}: expected {expected_bare!r}, got {bare!r}")
-        failed += 1
-
-print(f"\n{'='*40}")
-print(f"Results: {passed} passed, {failed} failed")
-if failed:
-    sys.exit(1)
+    assert bare == expected
