@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from financial_statements_db import FinancialStatementsDB
 from api.db import list_tickers, get_statements
 from api.importer import import_ticker
+from api.dcf_router import router as dcf_router, set_db as dcf_set_db
 
 DB_PATH = Path(__file__).parent.parent / "data" / "financial_statements.duckdb"
 
@@ -28,11 +29,13 @@ db: FinancialStatementsDB | None = None
 async def lifespan(app: FastAPI):
     global db
     db = FinancialStatementsDB(str(DB_PATH))
+    dcf_set_db(db)
     yield
     db.close()
 
 
 app = FastAPI(title="Financial Statements API", lifespan=lifespan)
+app.include_router(dcf_router)
 
 app.add_middleware(
     CORSMiddleware,

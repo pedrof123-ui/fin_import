@@ -39,3 +39,6 @@ data/*_response_dicts.txt
 data/*_response.txt
 data/*_concept_mappings.txt
 data/*_df.csv
+
+logs/
+edgartools/

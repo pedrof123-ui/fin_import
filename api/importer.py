@@ -23,12 +23,17 @@ async def import_ticker(
     form = "10-K" if period_type == "FY" else "10-Q"
 
     company = await asyncio.to_thread(lambda: Company(ticker))
-    filings_obj = await asyncio.to_thread(lambda: company.get_filings(form=form))
 
-    if filings_obj.empty:
-        raise HTTPException(status_code=404, detail=f"No {form} filings found for {ticker}")
-
-    filings_list = list(filings_obj)[:periods]
+    if periods == 1:
+        latest = await asyncio.to_thread(lambda: company.latest(form))
+        if latest is None:
+            raise HTTPException(status_code=404, detail=f"No {form} filings found for {ticker}")
+        filings_list = [latest]
+    else:
+        filings_obj = await asyncio.to_thread(lambda: company.get_filings(form=form))
+        if filings_obj.empty:
+            raise HTTPException(status_code=404, detail=f"No {form} filings found for {ticker}")
+        filings_list = list(filings_obj)[:periods]
 
     processed = 0
     failed = 0
@@ -36,7 +41,7 @@ async def import_ticker(
 
     for filing in filings_list:
         try:
-            period_date = pd.to_datetime(filing.period_of_report)
+            period_date = pd.to_datetime(getattr(filing, 'report_date', None) or filing.period_of_report)
             year = period_date.year
             quarter = ((period_date.month - 1) // 3 + 1) if form == "10-Q" else None
             period_end = period_date.date()
@@ -54,8 +59,6 @@ async def import_ticker(
             processed += 1
         else:
             failed += 1
-
-        await asyncio.sleep(1.0)
 
     return {
         "status": "ok",

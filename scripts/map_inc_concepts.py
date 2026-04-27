@@ -19,11 +19,6 @@ load_dotenv(override=True)
 # CHANGE TO FINANCIAL STATEMENT YOU WANT TO MAP
 from xbrl_mappings.income_statement_xbrl_mapping import INCOME_STATEMENT_MAPPING
 
-# OLLAMA SETTINGS
-# OLLAMA_BASE_URL = "http://172.17.112.1:11434/v1"
-# ollama = OpenAI(base_url=OLLAMA_BASE_URL, api_key='ollama')
-# ollama_model = "deepseek-r1:8b"
-
 google_api_key = os.getenv('GOOGLE_API_KEY')
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 

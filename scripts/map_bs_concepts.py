@@ -20,11 +20,6 @@ load_dotenv(override=True)
 from xbrl_mappings import balance_sheet_xbrl_mapping
 from xbrl_mappings.balance_sheet_xbrl_mapping import BALANCE_SHEET_MAPPING
 
-# OLLAMA SETTINGS
-# OLLAMA_BASE_URL = "http://172.17.112.1:11434/v1"
-# ollama = OpenAI(base_url=OLLAMA_BASE_URL, api_key='ollama')
-# ollama_model = "deepseek-r1:8b"
-
 google_api_key = os.getenv('GOOGLE_API_KEY')
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 

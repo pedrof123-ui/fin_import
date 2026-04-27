@@ -8,6 +8,17 @@ FRED_DB = Path("/home/pedro/projects/trade_systems/data/fred.duckdb")
 MIN_QUARTERLY_PERIODS = 8
 
 
+def _fill_gross_profit(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive gross_profit from revenue - cost_of_revenue when the field is missing."""
+    if "gross_profit" not in df.columns:
+        df = df.copy()
+        df["gross_profit"] = float("nan")
+    missing = df["gross_profit"].isna()
+    if missing.any() and "revenue" in df.columns and "cost_of_revenue" in df.columns:
+        df.loc[missing, "gross_profit"] = df.loc[missing, "revenue"] - df.loc[missing, "cost_of_revenue"]
+    return df
+
+
 def load_quarterly_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
     """Load quarterly financials sorted oldest→newest. Raises ValueError if insufficient."""
     stmts = {}
@@ -27,6 +38,7 @@ def load_quarterly_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
             f"{ticker} has only {n} quarterly period(s). "
             f"Re-import as quarterly (Q) with at least {MIN_QUARTERLY_PERIODS} periods."
         )
+    stmts["income"] = _fill_gross_profit(stmts["income"])
     return stmts
 
 
@@ -42,6 +54,7 @@ def load_annual_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
             f"SELECT * FROM {table} WHERE ticker = ? AND period_type = 'Annual' ORDER BY period_end_date DESC LIMIT 5",
             [ticker],
         ).df()
+    stmts["income"] = _fill_gross_profit(stmts["income"])
     return stmts
 
 

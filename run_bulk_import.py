@@ -17,7 +17,8 @@ Options:
     --db PATH           DuckDB database path (default: data/financial_statements.duckdb)
     --ai                Enable AI fallback for unmapped XBRL concepts (slower)
     --no-skip           Re-import filings already present in the database
-    --delay SECS        Seconds to wait between SEC requests (default: 1.0)
+    --delay SECS        Seconds to wait between SEC requests (default: 0; edgartools handles rate limiting)
+    --concurrency N     Number of tickers to process in parallel (default: 3)
     --output DIR        Directory for summary reports (default: ./bulk_import_results)
     --log FILE          Log file path (default: bulk_import.log)
 
@@ -122,10 +123,17 @@ Examples:
     parser.add_argument(
         '--delay',
         type=float,
-        default=1.0,
-        help='Delay between requests in seconds (default: 1.0)'
+        default=0.0,
+        help='Extra delay between SEC requests in seconds (default: 0; edgartools handles rate limiting)'
     )
-    
+
+    parser.add_argument(
+        '--concurrency',
+        type=int,
+        default=3,
+        help='Number of tickers to process in parallel (default: 3)'
+    )
+
     args = parser.parse_args()
     
     # Validate ticker CSV exists
@@ -144,7 +152,8 @@ Examples:
     print(f"Database:         {args.db}")
     print(f"AI Fallback:      {'Enabled' if args.ai else 'Disabled'}")
     print(f"Skip Existing:    {'No' if args.no_skip else 'Yes'}")
-    print(f"Rate Limit:       {args.delay}s")
+    print(f"Rate Limit:       {args.delay}s extra (edgartools has built-in limiter)")
+    print(f"Concurrency:      {args.concurrency} tickers in parallel")
     print(f"Output Dir:       {args.output}")
     print(f"Log File:         {args.log}")
     print("="*80)
@@ -174,6 +183,7 @@ Examples:
             skip_existing=not args.no_skip,
             rate_limit_delay=args.delay,
             form=form,
+            concurrency=args.concurrency,
         ))
         
         # Exit with appropriate code

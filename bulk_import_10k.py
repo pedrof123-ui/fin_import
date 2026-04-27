@@ -22,20 +22,18 @@ Usage:
 
 import pandas as pd
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import asyncio
 from tqdm import tqdm
 
-# Import extractors
-from extractors.income_statement_extractor import get_filing, extract_income_statement
+from extractors.income_statement_extractor import extract_income_statement
 from extractors.balance_sheet_extractor import extract_balance_sheet
 from extractors.cash_flow_extractor import extract_cash_flow
 from financial_statements_db import FinancialStatementsDB
-
-# Import edgar tools
 from edgar import Company
+from edgar.entity.entity_facts import clear_company_facts_cache
 
 
 class BulkImportLogger:
@@ -251,7 +249,7 @@ async def process_ticker(
     logger: BulkImportLogger,
     use_ai_fallback: bool = False,
     skip_existing: bool = True,
-    rate_limit_delay: float = 1.0,
+    rate_limit_delay: float = 0.0,
     form: str = '10-K',
 ) -> Dict[str, Any]:
     """
@@ -301,17 +299,18 @@ async def process_ticker(
         for filing in filings_list:
             # Extract year (and quarter for 10-Q) from filing
             try:
-                period_date = pd.to_datetime(filing.period_of_report)
+                raw_period = getattr(filing, 'report_date', None) or filing.period_of_report
+                period_date = pd.to_datetime(raw_period)
                 year = period_date.year
                 quarter = ((period_date.month - 1) // 3 + 1) if form == '10-Q' else None
             except Exception:
-                logger.log('WARNING', ticker, f"Could not parse period date: {filing.period_of_report}")
+                logger.log('WARNING', ticker, f"Could not parse period date: {raw_period}")
                 ticker_results['filings_skipped'] += 1
                 continue
-            
+
             # Check if already in database (match on period_end_date across all 3 tables)
             if skip_existing:
-                period_end = pd.to_datetime(filing.period_of_report).date()
+                period_end = period_date.date()
                 if db.filing_exists(ticker, period_end):
                     logger.log('INFO', ticker, f"Already in database, skipping", year)
                     ticker_results['filings_skipped'] += 1
@@ -333,19 +332,18 @@ async def process_ticker(
                 else:
                     ticker_results['filings_failed'] += 1
                 
-                # Rate limiting
-                await asyncio.sleep(rate_limit_delay)
-                
             except Exception as e:
                 logger.log('ERROR', ticker, f"Filing processing failed: {e}", year)
                 ticker_results['filings_failed'] += 1
-        
+
     except Exception as e:
         logger.log('ERROR', ticker, f"Ticker processing failed: {e}")
-    
+    finally:
+        clear_company_facts_cache()
+
     ticker_results['end_time'] = time.time()
     ticker_results['duration_seconds'] = ticker_results['end_time'] - ticker_results['start_time']
-    
+
     return ticker_results
 
 
@@ -357,8 +355,9 @@ async def bulk_import_10k(
     output_dir: str = './bulk_import_results',
     use_ai_fallback: bool = False,
     skip_existing: bool = True,
-    rate_limit_delay: float = 1.0,
+    rate_limit_delay: float = 0.0,
     form: str = '10-K',
+    concurrency: int = 3,
 ) -> Dict[str, Any]:
     """
     Bulk import 10-K statements for multiple companies
@@ -406,41 +405,50 @@ async def bulk_import_10k(
     print(f"\nConnecting to database: {db_path}...")
     db = FinancialStatementsDB(db_path)
     
-    # Process each ticker
+    # Process tickers concurrently (edgartools handles per-request SEC rate limiting)
     print(f"\nStarting bulk extraction...")
-    print(f"   Rate limit: {rate_limit_delay}s between requests")
+    print(f"   Concurrency: {concurrency} tickers in parallel")
     print(f"   AI fallback: {'Enabled' if use_ai_fallback else 'Disabled'}")
     print(f"   Skip existing: {'Yes' if skip_existing else 'No'}")
     print()
-    
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def bounded_process(i: int, ticker: str) -> Dict[str, Any]:
+        async with sem:
+            print(f"\n[{i}/{len(tickers)}] Processing {ticker}...")
+            print("-" * 80)
+            result = await process_ticker(
+                ticker=ticker,
+                periods=periods,
+                db=db,
+                logger=logger,
+                use_ai_fallback=use_ai_fallback,
+                skip_existing=skip_existing,
+                form=form,
+            )
+            print(f"\n{ticker} complete: {result['filings_processed']} processed, "
+                  f"{result['filings_skipped']} skipped, {result['filings_failed']} failed, "
+                  f"{result['duration_seconds']:.1f}s")
+            return result
+
+    gathered = await asyncio.gather(
+        *[bounded_process(i, ticker) for i, ticker in enumerate(tickers, 1)],
+        return_exceptions=True,
+    )
+
     all_results = []
-    
-    for i, ticker in enumerate(tickers, 1):
-        print(f"\n[{i}/{len(tickers)}] Processing {ticker}...")
-        print("-" * 80)
-        
-        ticker_results = await process_ticker(
-            ticker=ticker,
-            periods=periods,
-            db=db,
-            logger=logger,
-            use_ai_fallback=use_ai_fallback,
-            skip_existing=skip_existing,
-            rate_limit_delay=rate_limit_delay,
-            form=form,
-        )
-        
-        all_results.append(ticker_results)
-        
-        # Print ticker summary
-        print(f"\n{ticker} complete:")
-        print(f"  Filings found: {ticker_results['filings_found']}")
-        print(f"  Filings processed: {ticker_results['filings_processed']}")
-        print(f"  Filings skipped: {ticker_results['filings_skipped']}")
-        print(f"  Filings failed: {ticker_results['filings_failed']}")
-        print(f"  Statements success: {ticker_results['statements_success']}")
-        print(f"  Statements failed: {ticker_results['statements_failed']}")
-        print(f"  Duration: {ticker_results['duration_seconds']:.1f}s")
+    for ticker, result in zip(tickers, gathered):
+        if isinstance(result, Exception):
+            logger.log('ERROR', ticker, f"Ticker task failed: {result}")
+            all_results.append({
+                'ticker': ticker, 'filings_found': 0, 'filings_processed': 0,
+                'filings_skipped': 0, 'filings_failed': 1,
+                'statements_success': 0, 'statements_failed': 0,
+                'duration_seconds': 0,
+            })
+        else:
+            all_results.append(result)
     
     # Close database
     db.close()

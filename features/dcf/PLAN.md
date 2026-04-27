@@ -3,9 +3,9 @@
 ## Status
 
 **Phase 1 — COMPLETE** (2026-04-23)
-**Phase 2 — not started**
-**Phase 3 — not started**
-**Phase 4 — not started**
+**Phase 2 — COMPLETE** (2026-04-23)
+**Phase 3 — COMPLETE** (2026-04-23)
+**Phase 4 — COMPLETE** (2026-04-23)
 
 ---
 
@@ -252,7 +252,7 @@ Each cell is a text input; on blur, re-POSTs to `/dcf/{ticker}/run` with overrid
 7. [x] Validate end-to-end on AAPL and NVDA; confirmed WACC, FCF series, sensitivity table all produce
        finite, plausible values. Override flow tested and working.
 
-### Phase 2 — API endpoints
+### Phase 2 — API endpoints — COMPLETE
 
 8. Create `api/dcf_router.py`:
    - `GET /dcf/{ticker}` — compute DCF with model defaults; returns full `DcfResult` as JSON.
@@ -260,7 +260,7 @@ Each cell is a text input; on blur, re-POSTs to `/dcf/{ticker}/run` with overrid
 9. Register router in `api/main.py` (one line: `app.include_router(dcf_router)`).
 10. Test both endpoints manually (curl or httpie).
 
-### Phase 3 — Frontend
+### Phase 3 — Frontend — COMPLETE
 
 11. Add `recharts` to `web/package.json` via `npm install recharts`.
 12. Add tab bar to `web/app/page.tsx` — two-button toggle: "Financials" | "DCF Valuation".
@@ -274,11 +274,11 @@ Each cell is a text input; on blur, re-POSTs to `/dcf/{ticker}/run` with overrid
     calls `GET /dcf/{ticker}` on load and `POST /dcf/{ticker}/run` on any assumption change.
 18. Wire `DcfViewer` into `page.tsx` under the DCF tab.
 
-### Phase 4 — Polish
+### Phase 4 — Polish — COMPLETE
 
-19. Add Recharts stacked bar chart inside `DcfViewer` for PV(FCFF) by year + PV(TV).
-20. Loading states (skeleton/opacity) and error display for insufficient quarterly data.
-21. Test full flow end-to-end in browser across AAPL and NVDA.
+19. [x] Recharts bar chart in `DcfViewer` for PV(FCFF) by year + PV(TV) — done in Phase 3.
+20. [x] Loading states (opacity 0.6 while loading, "Recalculating..." in Assumptions) — done in Phase 3.
+21. [x] Full end-to-end browser verification on AAPL — all sections render correctly.
 
 ---
 
@@ -304,12 +304,12 @@ Node (not yet installed):
 | `dcf/forecaster.py` | done |
 | `dcf/model.py` | done |
 | `pyproject.toml` | done — statsmodels + yfinance added |
-| `api/dcf_router.py` | **TODO** |
-| `api/main.py` | **TODO** — register router |
-| `web/app/page.tsx` | **TODO** — add tab bar |
-| `web/components/DcfViewer.tsx` | **TODO** |
-| `web/components/DcfStatements.tsx` | **TODO** |
-| `web/components/DcfSummary.tsx` | **TODO** |
-| `web/components/DcfAssumptions.tsx` | **TODO** |
-| `web/components/DcfSensitivity.tsx` | **TODO** |
-| `web/package.json` | **TODO** — add recharts |
+| `api/dcf_router.py` | done |
+| `api/main.py` | done — router registered |
+| `web/app/page.tsx` | done — tab bar added |
+| `web/components/DcfViewer.tsx` | done |
+| `web/components/DcfStatements.tsx` | done |
+| `web/components/DcfSummary.tsx` | done |
+| `web/components/DcfAssumptions.tsx` | done |
+| `web/components/DcfSensitivity.tsx` | done |
+| `web/package.json` | done — recharts added |

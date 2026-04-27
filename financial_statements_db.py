@@ -331,12 +331,7 @@ class FinancialStatementsDB:
         data_dict = dict(zip(df['Field'], df['Value']))
 
         self.conn.execute("""
-            DELETE FROM income_statements
-            WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
-        """, [ticker, filing_date, period_end_date])
-
-        self.conn.execute("""
-            INSERT INTO income_statements (
+            INSERT OR REPLACE INTO income_statements (
                 ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
                 period_type, fields_extracted, total_fields, coverage_pct,
                 revenue, cost_of_revenue, gross_profit,
@@ -390,12 +385,7 @@ class FinancialStatementsDB:
         data_dict = dict(zip(df['Field'], df['Value']))
 
         self.conn.execute("""
-            DELETE FROM balance_sheets
-            WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
-        """, [ticker, filing_date, period_end_date])
-
-        self.conn.execute("""
-            INSERT INTO balance_sheets (
+            INSERT OR REPLACE INTO balance_sheets (
                 ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
                 period_type, fields_extracted, total_fields, coverage_pct,
                 cash_and_equivalents, short_term_investments, accounts_receivable, inventory,
@@ -457,12 +447,7 @@ class FinancialStatementsDB:
         data_dict = dict(zip(df['Field'], df['Value']))
 
         self.conn.execute("""
-            DELETE FROM cash_flow_statements
-            WHERE ticker = ? AND filing_date = ? AND period_end_date = ?
-        """, [ticker, filing_date, period_end_date])
-
-        self.conn.execute("""
-            INSERT INTO cash_flow_statements (
+            INSERT OR REPLACE INTO cash_flow_statements (
                 ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
                 period_type, fields_extracted, total_fields, coverage_pct,
                 net_income_starting_point, depreciation_amortization, stock_based_compensation,
