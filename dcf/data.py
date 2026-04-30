@@ -43,7 +43,7 @@ def load_quarterly_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
 
 
 def load_annual_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
-    """Load last 5 annual periods sorted newest→oldest."""
+    """Load last 10 annual periods sorted newest→oldest."""
     stmts = {}
     for key, table in [
         ("income", "income_statements"),
@@ -51,7 +51,7 @@ def load_annual_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
         ("cashflow", "cash_flow_statements"),
     ]:
         stmts[key] = db.conn.execute(
-            f"SELECT * FROM {table} WHERE ticker = ? AND period_type = 'Annual' ORDER BY period_end_date DESC LIMIT 5",
+            f"SELECT * FROM {table} WHERE ticker = ? AND period_type = 'Annual' ORDER BY period_end_date DESC LIMIT 10",
             [ticker],
         ).df()
     stmts["income"] = _fill_gross_profit(stmts["income"])

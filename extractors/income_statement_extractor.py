@@ -31,6 +31,16 @@ _AGG_FIELDS = {
     'interest_income',
 }
 
+# For total-line fields, take the maximum across all matching concepts.
+# When a company reports both a specific concept (e.g. RFCWCEA) and a broader
+# aggregate (e.g. Revenues), the larger value is the correct total figure.
+_MAX_FIELDS = {
+    'revenue',
+    'net_income',
+    'pretax_income',
+    'operating_income',
+}
+
 
 async def extract_income_statement(
     filing,
@@ -48,6 +58,7 @@ async def extract_income_statement(
         get_stmt_fn=lambda xbrl: xbrl.statements.income_statement(),
         alt_names=_ALT_NAMES,
         aggregation_fields=_AGG_FIELDS,
+        max_fields=_MAX_FIELDS,
         statement_type='income',
         label='INCOME STATEMENT',
         year=year,

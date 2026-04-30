@@ -3,19 +3,27 @@ from dataclasses import dataclass, field
 
 @dataclass
 class YearOverride:
-    revenue_growth: float | None = None    # e.g. 0.10 = 10%
-    gross_margin: float | None = None      # e.g. 0.40 = 40%
-    operating_margin: float | None = None  # e.g. 0.20 = 20%
-    capex_pct_revenue: float | None = None # e.g. 0.05 = 5%
+    revenue_growth: float | None = None
+    cogs_pct: float | None = None
+    sga_pct: float | None = None
+    rd_pct: float | None = None
+    interest_pct: float | None = None
+    other_pct: float | None = None
+    capex_pct_revenue: float | None = None
 
 
 @dataclass
 class UserOverrides:
-    years: dict[int, YearOverride] = field(default_factory=dict)  # keys 1-5
+    years: dict[int, YearOverride] = field(default_factory=dict)
     terminal_growth_rate: float | None = None
     risk_free_rate: float | None = None
     market_risk_premium: float | None = None
     beta: float | None = None
+    dso: float | None = None
+    dpo: float | None = None
+    dio: float | None = None
+    cost_of_debt_override: float | None = None
+    tax_rate_override: float | None = None
 
 
 @dataclass
@@ -23,9 +31,19 @@ class YearForecast:
     year: int
     revenue: float
     revenue_growth: float
-    gross_margin: float
-    operating_margin: float
+    cogs_pct: float
+    sga_pct: float
+    rd_pct: float | None      # None when company doesn't report R&D
+    interest_pct: float
+    other_pct: float
     capex_pct_revenue: float
+
+
+@dataclass
+class NwcAssumptions:
+    dso: float   # days sales outstanding
+    dpo: float   # days payable outstanding
+    dio: float   # days inventory outstanding
 
 
 @dataclass
@@ -67,7 +85,7 @@ class SensitivityCell:
 
 @dataclass
 class HistoricalRow:
-    period_label: str      # e.g. "FY 2024"
+    period_label: str
     revenue: float | None
     gross_profit: float | None
     operating_income: float | None
@@ -78,6 +96,12 @@ class HistoricalRow:
     total_debt: float | None
     cash_and_equivalents: float | None
     diluted_eps: float | None
+    # Granular P&L for ratio display
+    cost_of_revenue: float | None = None
+    selling_general_admin: float | None = None
+    research_development: float | None = None
+    interest_expense: float | None = None
+    period_end_date: str | None = None
 
 
 @dataclass
@@ -97,6 +121,11 @@ class DcfResult:
     year_forecasts: list[YearForecast]
     fcff_series: list[FcffYear]
     pv_terminal_value: float
+    terminal_fcff: float
+    terminal_value: float
+    tv_pct_enterprise_value: float
+
+    nwc_assumptions: NwcAssumptions
 
     historical: list[HistoricalRow]
     proforma: list[HistoricalRow]

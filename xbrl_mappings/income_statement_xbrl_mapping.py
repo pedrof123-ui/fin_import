@@ -24,10 +24,12 @@ INCOME_STATEMENT_MAPPING = {
     # =============================================================================
     
     "revenue": [
-        # Most common (245 occurrences)
-        "RevenueFromContractWithCustomerExcludingAssessedTax",
-        # Second most common (203 occurrences)
+        # Revenues is the US-GAAP aggregate concept (includes all income sources).
+        # Preferred over RFCWCEA because when both exist, RFCWCEA is a subtotal
+        # (e.g. WMT: RFCWCEA=$706B contract sales, Revenues=$713B incl. membership fees).
+        # Companies that only file RFCWCEA (AAPL, MSFT, AMZN) fall through correctly.
         "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
         # Alternative revenue concepts
         "SalesRevenueNet",
         "SalesRevenueGoodsNet",

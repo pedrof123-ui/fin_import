@@ -14,6 +14,7 @@ def _extract_value(
     year_column: str,
     mapping: dict,
     aggregation_fields: set,
+    max_fields: set = frozenset(),
 ) -> tuple[Optional[float], Optional[str]]:
     concepts = mapping.get(field_name)
     if concepts is None:
@@ -28,6 +29,10 @@ def _extract_value(
     )
 
     should_aggregate = field_name in aggregation_fields
+    # For total-line fields (revenue, total_assets, etc.) take the maximum across all
+    # matching concepts — a subtotal can never exceed the true total, so the largest
+    # value is the most complete figure (e.g. WMT Revenues > RFCWCEA).
+    should_max = field_name in max_fields
     found_values: list[float] = []
     found_concepts: list[str] = []
 
@@ -36,15 +41,18 @@ def _extract_value(
         if not rows.empty and year_column in rows.columns:
             value = rows.iloc[0][year_column]
             if pd.notna(value):
-                if should_aggregate:
+                if should_aggregate or should_max:
                     found_values.append(float(value))
                     found_concepts.append(concept)
                 else:
                     return float(value), concept
 
-    if should_aggregate and found_values:
+    if found_values:
         if len(found_values) == 1:
             return found_values[0], found_concepts[0]
+        if should_max:
+            idx = found_values.index(max(found_values))
+            return found_values[idx], found_concepts[idx]
         return sum(found_values), ' + '.join(found_concepts)
 
     return None, None
@@ -99,6 +107,7 @@ async def extract_statement(
     year: Optional[int] = None,
     quarter: Optional[int] = None,
     use_ai_fallback: bool = True,
+    max_fields: set = frozenset(),
 ) -> pd.DataFrame:
     print(f"\n{'='*80}\nEXTRACTING {label}\n{'='*80}")
 
@@ -168,7 +177,7 @@ async def extract_statement(
     unfound_fields = []
 
     for field_name in mapping:
-        value, concept_used = _extract_value(stmt_df, field_name, most_recent_period, mapping, aggregation_fields)
+        value, concept_used = _extract_value(stmt_df, field_name, most_recent_period, mapping, aggregation_fields, max_fields)
         if value is not None:
             found_count += 1
             results.append({'Status': 'found', 'Field': field_name, 'Value': value, 'Concept': concept_used})

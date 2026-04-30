@@ -13,6 +13,9 @@ uv run run_bulk_import.py tickers.csv --quarterly --periods 8
 
 # Annual, 10 years, AI fallback
 uv run run_bulk_import.py tickers.csv --periods 10 --ai
+
+# 5 tickers processed in parallel
+uv run run_bulk_import.py tickers.csv --concurrency 5
 ```
 
 The script prompts for confirmation before starting, then prints progress and writes reports to `./bulk_import_results/`.
@@ -34,17 +37,20 @@ GOOGL
 uv run run_bulk_import.py tickers.csv [options]
 
 positional:
-  tickers.csv       CSV file with ticker list
+  tickers.csv         CSV file with ticker list
 
 options:
-  --periods N       Filings per ticker (default: 20)
-  --quarterly       Import 10-Q instead of 10-K
-  --db PATH         Database path (default: data/financial_statements.duckdb)
-  --ai              AI fallback for unmapped XBRL concepts (slower)
-  --no-skip         Re-import filings already in DB (default: skip existing)
-  --delay SECS      Seconds between SEC requests (default: 1.0)
-  --output DIR      Reports directory (default: ./bulk_import_results)
-  --log FILE        Log file (default: bulk_import.log)
+  --periods N         Filings per ticker (default: 20)
+  --quarterly         Import 10-Q instead of 10-K
+  --db PATH           Database path (default: data/financial_statements.duckdb)
+  --ai                AI fallback for unmapped XBRL concepts (slower)
+  --no-skip           Re-import filings already in DB (default: skip existing)
+  --delay SECS        Extra seconds between SEC requests (default: 0)
+                      edgartools has a built-in rate limiter; only set this if
+                      you're hitting 429s from the SEC.
+  --concurrency N     Tickers to process in parallel (default: 3)
+  --output DIR        Reports directory (default: ./bulk_import_results)
+  --log FILE          Log file (default: bulk_import.log)
 ```
 
 ## Output reports
@@ -60,12 +66,15 @@ Written to `--output` directory after each run:
 
 ## Time estimates
 
-| Tickers | Periods | AI | Approx time |
-|---------|---------|----|-------------|
-| 10 | 10 | No | 5-10 min |
-| 10 | 20 | No | 10-20 min |
-| 50 | 10 | No | 25-50 min |
-| 10 | 20 | Yes | 20-40 min |
+The pipeline processes tickers concurrently (default: 3 at a time). edgartools' built-in
+rate limiter handles SEC's 9 req/s cap, so per-request throttling is automatic.
+
+| Tickers | Periods | Concurrency | AI | Approx time |
+|---------|---------|-------------|----|-------------|
+| 10 | 10 | 3 | No | 2-4 min |
+| 10 | 20 | 3 | No | 4-8 min |
+| 50 | 10 | 3 | No | 10-20 min |
+| 10 | 20 | 3 | Yes | 8-16 min |
 
 ## Using the Python API directly
 
@@ -80,7 +89,8 @@ results = asyncio.run(bulk_import_10k(
     db_path='data/financial_statements.duckdb',
     use_ai_fallback=False,
     skip_existing=True,
-    rate_limit_delay=1.0,
+    rate_limit_delay=0.0,  # edgartools handles rate limiting internally
+    concurrency=3,
 ))
 ```
 

@@ -34,6 +34,7 @@ sandbox/
 
 # Generated data files (keep input CSVs and schema)
 data/*.duckdb
+data/*.wal
 data/*.log
 data/*_response_dicts.txt
 data/*_response.txt
@@ -42,3 +43,10 @@ data/*_df.csv
 
 logs/
 edgartools/
+
+# Playwright MCP browser session artifacts
+.playwright-mcp/
+
+# Temporary screenshots
+screenshot.png
+screenshots/

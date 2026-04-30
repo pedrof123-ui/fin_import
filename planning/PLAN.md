@@ -1,24 +1,23 @@
-# PLAN: Financial Statements Web App
+# PLAN: Financial Statements Import Pipeline
 
-## Overview
+## Status: Complete (as of 2026-04-30)
 
-A full-stack web app with a Next.js frontend and a FastAPI backend. The backend wraps the existing Python pipeline to import SEC filings into DuckDB and serve the stored data. The frontend lets the user trigger imports and view financial statements.
+All planned improvements have been implemented. This document reflects the current state.
 
 ---
 
 ## Architecture
 
 ```
-Browser (Next.js)
+Browser (Next.js :3000)
     ↕  HTTP (JSON)
-FastAPI backend (Python)
+FastAPI backend (Python :8000)
     ↕
-Existing pipeline (bulk_import_10k.py, extractors/, financial_statements_db.py)
+extractors/ + xbrl_mappings/ + financial_statements_db.py
+dcf/ (FCFF model, forecaster, WACC)
     ↕
 DuckDB (data/financial_statements.duckdb)
 ```
-
-The frontend and backend run as two separate processes in development. In production they can be co-located or deployed separately.
 
 ---
 
@@ -31,160 +30,129 @@ The frontend and backend run as two separate processes in development. In produc
 | POST | `/import` | Trigger import for a ticker |
 | GET | `/statements/{ticker}/{type}` | Retrieve stored statement |
 | GET | `/tickers` | List tickers already in DB |
-
-### POST `/import`
-
-Request body:
-```json
-{
-  "ticker": "AAPL",
-  "periods": 5,
-  "period_type": "FY"
-}
-```
-
-- `period_type` `"FY"` → fetches 10-K filings; `"Q"` → fetches 10-Q filings
-- Calls `process_ticker()` from `bulk_import_10k.py` (or the 10-Q equivalent)
-- Runs async; returns `{ "status": "ok", "filings_processed": N }` when complete
-- Returns HTTP 200 on success, 400 on bad ticker, 500 on extraction error
-
-### GET `/statements/{ticker}/{type}`
-
-- `type`: `income` | `balance` | `cashflow`
-- Query params: `period_type=FY|Q`, `periods=N` (number of most recent periods to return)
-- Calls `db.get_company_statements()` filtered by period_type and limited to N rows
-- Returns JSON array of records (one per period), columns = top-level DB fields only
-- 404 if ticker not found in DB
-
-### GET `/tickers`
-
-- Returns `["AAPL", "MSFT", ...]` from the `companies` table
-
-### File structure
-
-```
-api/
-  main.py          # FastAPI app, route definitions
-  schemas.py       # Pydantic request/response models
-  db.py            # Thin wrapper: opens FinancialStatementsDB, exposes query helpers
-  importer.py      # Wraps process_ticker(); handles FY vs Q, error handling
-requirements-api.txt  # fastapi, uvicorn, plus existing project deps
-```
+| GET | `/dcf/{ticker}` | DCF valuation with model defaults |
+| POST | `/dcf/{ticker}/run` | Re-run DCF with user overrides |
 
 ### Key implementation notes
 
-- Open a single `FinancialStatementsDB` instance at startup (app lifespan)
-- `process_ticker()` is async — run directly in the endpoint; no job queue needed for MVP
-- For 10-Q support: the existing `extract_and_insert_filing()` already handles quarterly filings; `process_ticker()` needs a `form_type` parameter passed through to filter Edgar filings by `'10-Q'` instead of `'10-K'`
-- CORS: allow `localhost:3000` in development
+- Single `FinancialStatementsDB` instance opened at app startup (lifespan)
+- `company.latest(form)` used for single-filing imports (zero extra network cost)
+- `period_type=FY` → 10-K, `period_type=Q` → 10-Q
+
+---
+
+## Extractor pipeline
+
+Consolidated from 3 near-duplicate files into a shared core + thin wrappers:
+
+```
+extractors/statement_extractor.py        ← shared core
+extractors/income_statement_extractor.py ← wrapper
+extractors/balance_sheet_extractor.py    ← wrapper
+extractors/cash_flow_extractor.py        ← wrapper
+```
+
+Key behaviors:
+- `stmt.to_dataframe(presentation=False)` — raw XBRL values, consistent signs
+- `max_fields` mechanism — takes the largest matching value for total-line fields
+  (prevents revenue understatement when e.g. `Revenues` and `RFCWCEA` both appear)
+- `filing.report_date` preferred over `filing.period_of_report` (avoids SGML download)
+- Date column detection handles `(FY)` / `(Q1)` / `(YTD)` suffixes from edgartools v5+
+- D&A sourced from cash flow statement (primary) with income statement as fallback
+
+---
+
+## Bulk import (`bulk_import_10k.py`)
+
+- Concurrent ticker processing via `asyncio.Semaphore(concurrency)` (default: 3)
+- edgartools built-in rate limiter handles SEC's 9 req/s; no sleep needed
+- `clear_company_facts_cache()` called after each ticker to prevent memory growth
+- `INSERT OR REPLACE INTO` for atomic upserts (no delete-then-insert race)
+
+---
+
+## DCF engine (`dcf/`)
+
+FCFF model using granular P&L ratios:
+
+```
+EBIT   = Revenue × (1 - cogs_pct - sga_pct - rd_pct)
+NOPAT  = EBIT × (1 - tax_rate)
+FCFF   = NOPAT + D&A - CapEx - ΔNWC
+ΔNWC   = Days-based working capital model (DSO, DPO, DIO)
+TV     = FCFF₅ × (1 + g) / (WACC - g)   [Gordon Growth]
+EV     = Σ PV(FCFF₁..₅) + PV(TV)
+```
+
+Revenue forecasting:
+- Y1-Y2: exponentially weighted mean of annual growth rates (EWM decay=0.5) blended with a quarterly momentum signal (EWM of last-4-quarter YoY + linear trend), 50%/25% blend
+- Y3-Y5: OLS slope anchored at Y2 level — avoids near-zero-growth stall when momentum boosts Y1/Y2 above trend
+- Quarterly YTD detection: identifies YTD-cumulative filers (AAPL pattern: 3 entries/year with resets > 35%) and groups by fiscal year before computing YoY comparisons
+
+P&L ratio forecasting: ARIMA(0,1,0) for Y1-Y2, OLS for Y3-Y5 (annual data only).
+
+WACC: Hamada equation; risk-free rate from FRED DGS10; yfinance beta; cost of debt from 5-yr average interest/debt.
+
+All WACC inputs, per-year P&L ratios, and working capital days are overridable in the UI. Reset button restores model defaults without re-fetching.
 
 ---
 
 ## Frontend: Next.js (`web/`)
 
-### Tech choices
+- Next.js 16 (App Router, Turbopack)
+- Tailwind CSS v4 dark mode
+- IBM Plex Mono / IBM Plex Sans fonts
+- Tabs: Financials (income / balance / cash flow table) + DCF Valuation
 
-- Next.js (App Router)
-- Tailwind CSS (dark mode via `darkMode: 'class'`, class set on `<html>`)
-- shadcn/ui components (Input, Select, Button, Table)
-- `fetch` for API calls (no extra client library needed)
+### Import defaults
 
-### Pages / Components
+- Default: 10 FY (annual) periods
+- On FY import: background async fetch of up to 20 quarterly filings (non-blocking)
+- Financials table has FY / Q display toggle; switching re-fetches appropriate period count
+
+### DCF UI layout (DcfViewer)
 
 ```
-web/
-  app/
-    layout.tsx          # Dark html root, global styles
-    page.tsx            # Single-page app
-  components/
-    ImportForm.tsx      # Ticker input, periods input, FY/Q dropdown, Submit button
-    StatementViewer.tsx # Statement type dropdown + data table
-    LoadingSpinner.tsx  # Simple spinner for import in progress
+[ Valuation Summary + editable WACC card ]
+
+[ Historical & Proforma statements table ]
+  (editable P&L ratios: cogs%, sga%, rd%, capex% per forecast year)
+
+[ NWC & CapEx table ]
+  (editable DSO / DPO / DIO; projected ΔNWC and CapEx per year)
+
+[ FCFF build-up table ]
+  (Revenue → EBIT → NOPAT → +D&A → -CapEx → -ΔNWC → FCFF → Discount → PV)
+  (Terminal value column; EV bridge below table)
+
+[ Terminal Value decomposition card ]
+
+[ Sensitivity table ] (WACC × terminal growth, 5×5)
+
+[ PV Breakdown bar chart ]
 ```
 
-### UI flow
-
-1. User fills `ImportForm`:
-   - Ticker: text input (uppercased automatically)
-   - Periods: number input (default 5, min 1 max 20)
-   - Period type: select FY | Q
-
-2. On submit: POST `/import` → show spinner while waiting
-
-3. On success: fetch GET `/statements/{ticker}/income` (default) → render table
-
-4. `StatementViewer` has a statement-type dropdown (Income Statement | Balance Sheet | Cash Flow). Changing it fetches the corresponding endpoint and re-renders the table.
-
-5. Table columns: Period End Date + all non-null top-level financial fields. Format numbers as `$X.XXB / $X.XXM` (billions/millions) depending on magnitude.
-
-### Top-level concepts displayed
-
-The DB already stores only top-level standardized fields — no raw XBRL sub-items. Display every DB column that is a financial value (i.e., exclude metadata columns: ticker, filing_date, extraction_date, fields_extracted, total_fields, coverage_pct, filing_type). This naturally satisfies "display revenue not revenue details".
-
-Suggested display order (Income Statement example):
-`period_end_date | revenue | gross_profit | operating_income | pretax_income | net_income | diluted_eps`
-
-Full column lists come from the DB schema — all columns in `income_statements`, `balance_sheets`, `cash_flow_statements` minus the 8 metadata columns.
+Keyboard navigation:
+- WACC card: up/down arrow between the 5 editable inputs
+- Proforma table: up/down/left/right across all editable cells; Enter blurs
+- Fields auto-format on blur: percentages show "%" suffix, betas show 2 decimal places, days show 1 decimal place
 
 ---
 
-## Implementation Order
+## UI improvements (2026-04-29)
 
-### Phase 1 — Backend foundation
-1. Create `api/` directory and `api/main.py` with FastAPI app skeleton
-2. Implement `api/db.py`: open DuckDB, expose `get_statements()` and `list_tickers()`
-3. Implement GET `/tickers` and GET `/statements/{ticker}/{type}`
-4. Test with existing DuckDB data using curl / httpie
+- **Period end dates**: shown in column headers in both Financials and DCF historical tables
+- **Shares formatting**: shares-outstanding fields in Financials table render without `$` prefix (e.g. `15.2B` not `$15.2B`)
+- **Full equity bridge**: DcfFcffTable now shows `∑PV FCFFs + PV Terminal = EV − Net Debt = Equity ÷ Diluted Shares = Intrinsic Value/Share`
+- **DCF "as of" date**: header shows the most recent historical period end date
 
-### Phase 2 — Import endpoint
-5. Implement `api/importer.py`: wrap `process_ticker()`, handle FY vs Q (pass `form='10-K'` or `'10-Q'` to Edgar)
-6. Implement POST `/import`
-7. Test end-to-end import of a single ticker
+## XBRL mapping fixes (2026-04-30)
 
-### Phase 3 — Frontend scaffold
-8. `npx create-next-app web --typescript --tailwind --app`
-9. Install shadcn/ui: `npx shadcn@latest init`
-10. Set dark mode class on `<html>` in `layout.tsx`
-11. Build `ImportForm` component (static, no API calls yet)
-12. Build `StatementViewer` component (static mock data)
+- `PaymentsToAcquireProductiveAssets` added to `capital_expenditures` in `cash_flow_xbrl_mapping.py` — Amazon uses this concept instead of the standard `PaymentsToAcquirePropertyPlantAndEquipment`
+- Historical FCFF rows now joined by `period_end_date` (was positional index) — prevents silent null CapEx when income/balance/cashflow tables have different row counts
+- `HistoricalRow` dataclass and TypeScript interface extended with `period_end_date` field
 
-### Phase 4 — Wire frontend to backend
-13. Connect `ImportForm` submit → POST `/import`
-14. On success, trigger GET `/statements/{ticker}/{type}` → pass data to `StatementViewer`
-15. Wire statement-type dropdown to re-fetch correct endpoint
-16. Add number formatting (billions/millions)
-17. Add loading and error states
+## MCP integration
 
-### Phase 5 — Polish
-18. Responsive layout, spacing, typography
-19. Empty state when no data yet (prompt user to import)
-20. Show ticker list from GET `/tickers` as autocomplete or recent imports list
-
----
-
-## Development setup
-
-```bash
-# Backend
-cd api
-uv run uvicorn main:app --reload --port 8000
-
-# Frontend
-cd web
-npm run dev   # runs on :3000
-```
-
-Backend URL configured in `web/.env.local`:
-```
-NEXT_PUBLIC_API_URL=http://localhost:8000
-```
-
----
-
-## Out of scope (MVP)
-
-- Authentication
-- Background job queue / WebSocket progress streaming
-- Pagination of large tables
-- Chart/visualization of time series
-- Export to CSV
+edgartools MCP server configured in `~/.claude.json` with `EDGAR_IDENTITY` env var.
+Supports `edgar_company`, `edgar_filing`, `edgar_compare`, `edgar_trends`, and others.

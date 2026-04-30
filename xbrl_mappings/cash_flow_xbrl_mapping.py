@@ -30,8 +30,9 @@ CASH_FLOW_MAPPING = {
     
     "depreciation_amortization": [
         "DepreciationDepletionAndAmortization",
-        "Depreciation",
         "DepreciationAndAmortization",
+        "DepreciationAmortizationAndAccretionNet",
+        "Depreciation",
     ],
     
     "stock_based_compensation": [
@@ -78,6 +79,7 @@ CASH_FLOW_MAPPING = {
     
     "capital_expenditures": [
         "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
         "CapitalExpendituresIncurredButNotYetPaid",
     ],
     

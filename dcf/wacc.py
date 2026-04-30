@@ -8,6 +8,7 @@ def _coerce(val) -> float:
     f = float(val)
     return 0.0 if np.isnan(f) else f
 
+
 DEFAULT_MRP = 0.055  # 5.5% Damodaran estimate
 DEFAULT_RF = 0.045   # fallback if fred.duckdb unavailable
 
@@ -61,12 +62,14 @@ def compute_wacc(
     risk_free_rate: float,
     market_risk_premium: float = DEFAULT_MRP,
     beta_override: float | None = None,
+    cost_of_debt_override: float | None = None,
+    tax_rate_override: float | None = None,
 ) -> "WaccDetail":
     from dcf.assumptions import WaccDetail
 
     beta_raw = beta_override if beta_override is not None else (get_beta(ticker) or 1.0)
-    tax_rate = compute_effective_tax_rate(income_df)
-    kd = compute_cost_of_debt(income_df, balance_df)
+    tax_rate = tax_rate_override if tax_rate_override is not None else compute_effective_tax_rate(income_df)
+    kd = cost_of_debt_override if cost_of_debt_override is not None else compute_cost_of_debt(income_df, balance_df)
 
     latest = balance_df.iloc[-1] if not balance_df.empty else pd.Series(dtype=float)
     total_debt = (
@@ -82,7 +85,7 @@ def compute_wacc(
     market_cap = current_price * diluted_shares
 
     de_hist = total_debt / market_cap if market_cap > 0 else 0
-    beta_rel = _relever_beta(beta_raw, tax_rate, de_hist, de_hist)  # stable leverage assumption
+    beta_rel = _relever_beta(beta_raw, tax_rate, de_hist, de_hist)
 
     ke = risk_free_rate + beta_rel * market_risk_premium
     V = total_debt + market_cap

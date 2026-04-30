@@ -26,8 +26,11 @@ def set_db(db) -> None:
 
 class YearOverrideBody(BaseModel):
     revenue_growth: float | None = None
-    gross_margin: float | None = None
-    operating_margin: float | None = None
+    cogs_pct: float | None = None
+    sga_pct: float | None = None
+    rd_pct: float | None = None
+    interest_pct: float | None = None
+    other_pct: float | None = None
     capex_pct_revenue: float | None = None
 
 
@@ -37,6 +40,11 @@ class RunRequest(BaseModel):
     risk_free_rate: float | None = None
     market_risk_premium: float | None = None
     beta: float | None = None
+    dso: float | None = None
+    dpo: float | None = None
+    dio: float | None = None
+    cost_of_debt: float | None = None
+    tax_rate: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +66,11 @@ def _build_overrides(req: RunRequest) -> UserOverrides:
     year_map = {
         int(k): YearOverride(
             revenue_growth=v.revenue_growth,
-            gross_margin=v.gross_margin,
-            operating_margin=v.operating_margin,
+            cogs_pct=v.cogs_pct,
+            sga_pct=v.sga_pct,
+            rd_pct=v.rd_pct,
+            interest_pct=v.interest_pct,
+            other_pct=v.other_pct,
             capex_pct_revenue=v.capex_pct_revenue,
         )
         for k, v in req.years.items()
@@ -70,6 +81,11 @@ def _build_overrides(req: RunRequest) -> UserOverrides:
         risk_free_rate=req.risk_free_rate,
         market_risk_premium=req.market_risk_premium,
         beta=req.beta,
+        dso=req.dso,
+        dpo=req.dpo,
+        dio=req.dio,
+        cost_of_debt_override=req.cost_of_debt,
+        tax_rate_override=req.tax_rate,
     )
 
 
