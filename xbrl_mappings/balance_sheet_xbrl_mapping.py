@@ -88,6 +88,11 @@ BALANCE_SHEET_MAPPING = {
         "LongTermInvestments",
     ],
     
+    "deferred_tax_assets": [
+        "DeferredIncomeTaxAssetsNet",
+        "DeferredTaxAssetsNetNoncurrent",
+    ],
+
     "other_noncurrent_assets": [
         "OtherAssetsNoncurrent",
     ],

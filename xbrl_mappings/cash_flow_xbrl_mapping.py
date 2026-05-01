@@ -32,6 +32,9 @@ CASH_FLOW_MAPPING = {
         "DepreciationDepletionAndAmortization",
         "DepreciationAndAmortization",
         "DepreciationAmortizationAndAccretionNet",
+        "DepreciationAmortizationAndOther",      # MSFT and similar
+        "OtherDepreciationAndAmortization",
+        "AmortizationOfIntangibleAssets",
         "Depreciation",
     ],
     
@@ -40,8 +43,9 @@ CASH_FLOW_MAPPING = {
         "AllocatedShareBasedCompensationExpense",
     ],
     
-    "deferred_income_taxes": [
+    "deferred_taxes": [
         "DeferredIncomeTaxExpenseBenefit",
+        "DeferredIncomeTaxesAndTaxCredits",       # MSFT
         "IncreaseDecreaseInDeferredIncomeTaxes",
     ],
     
@@ -62,7 +66,12 @@ CASH_FLOW_MAPPING = {
         "IncreaseDecreaseInAccruedLiabilities",
         "IncreaseDecreaseInEmployeeRelatedLiabilities",
     ],
-    
+
+    "change_deferred_revenue": [
+        "IncreaseDecreaseInDeferredRevenue",
+        "IncreaseDecreaseInContractWithCustomerLiability",
+    ],
+
     "other_operating_activities": [
         "IncreaseDecreaseInOtherOperatingCapitalNet",
         "OtherOperatingActivitiesCashFlowStatement",
@@ -86,16 +95,18 @@ CASH_FLOW_MAPPING = {
     "acquisitions": [
         "PaymentsToAcquireBusinessesNetOfCashAcquired",
         "PaymentsToAcquireBusinessesGross",
+        "AcquisitionsNetOfCashAcquiredAndPurchasesOfIntangibleAndOtherAssets",  # MSFT
     ],
     
-    "purchases_investments": [
+    "purchase_investments": [
         "PaymentsToAcquireInvestments",
         "PaymentsToAcquireAvailableForSaleSecurities",
     ],
-    
-    "sales_investments": [
+
+    "sale_investments": [
         "ProceedsFromSaleOfAvailableForSaleSecurities",
         "ProceedsFromMaturitiesPrepaymentsAndCallsOfAvailableForSaleSecurities",
+        "ProceedsFromInvestments",                # MSFT and others
     ],
     
     "other_investing_activities": [
@@ -118,9 +129,11 @@ CASH_FLOW_MAPPING = {
     "debt_repayment": [
         "RepaymentsOfDebt",
         "RepaymentsOfLongTermDebt",
+        "RepaymentsOfDebtMaturingInMoreThanThreeMonths",       # MSFT
+        "RepaymentsOfShortTermDebtMaturingInThreeMonthsOrLess", # MSFT
     ],
     
-    "stock_issuance": [
+    "common_stock_issuance": [
         "ProceedsFromIssuanceOfCommonStock",
         "ProceedsFromStockOptionsExercised",
     ],

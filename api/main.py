@@ -49,6 +49,7 @@ class ImportRequest(BaseModel):
     ticker: str
     periods: int = 5
     period_type: Literal["FY", "Q"] = "FY"
+    force: bool = False
 
 
 @app.get("/tickers")
@@ -71,5 +72,5 @@ async def statements_endpoint(
 
 @app.post("/import")
 async def import_endpoint(req: ImportRequest):
-    result = await import_ticker(req.ticker.upper(), req.periods, req.period_type, db)
+    result = await import_ticker(req.ticker.upper(), req.periods, req.period_type, db, force=req.force)
     return result

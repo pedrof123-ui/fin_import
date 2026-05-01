@@ -19,6 +19,7 @@ async def import_ticker(
     periods: int,
     period_type: str,
     db: FinancialStatementsDB,
+    force: bool = False,
 ) -> dict:
     form = "10-K" if period_type == "FY" else "10-Q"
 
@@ -49,7 +50,7 @@ async def import_ticker(
             failed += 1
             continue
 
-        if db.filing_exists(ticker, period_end):
+        if not force and db.filing_exists(ticker, period_end):
             continue
 
         n_ok, errs = await _extract_and_insert(filing, ticker, year, form, db, quarter=quarter)

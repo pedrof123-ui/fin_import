@@ -170,6 +170,18 @@ async def extract_statement(
     print(f"Using most recent period: {most_recent_period}")
     if use_ai_fallback:
         print("AI fallback enabled (batch mode)")
+
+    # Enrich static mapping with previously AI-discovered concepts (free DB read, no AI call).
+    try:
+        from pathlib import Path as _Path
+        from xbrl_mapping_manager_multi_statement import XBRLMappingManager
+        _db = _Path(__file__).parent.parent / "data" / "xbrl_mappings_multi.duckdb"
+        _mgr = XBRLMappingManager(str(_db))
+        mapping = _mgr.get_enriched_mapping(statement_type, mapping)
+        _mgr.close()
+    except Exception as e:
+        print(f"  Warning: mapping enrichment skipped ({e})")
+
     print(f"\nExtracting {len(mapping)} line items...")
 
     results = []

@@ -424,6 +424,41 @@ class XBRLMappingManager:
         
         print(f"  AI discovery logged: {concept} -> {statement_type}.{field_name}")
 
+    def get_enriched_mapping(
+        self,
+        statement_type: StatementType,
+        static_mapping: dict,
+    ) -> dict:
+        """
+        Return a copy of static_mapping enriched with every concept previously
+        discovered by AI for this statement type. Concepts already in the static
+        list are not duplicated; newly discovered ones are appended.
+        """
+        enriched = {field: list(concepts) for field, concepts in static_mapping.items()}
+
+        rows = self.conn.execute("""
+            SELECT field_name, concept
+            FROM ai_discovered_mappings
+            WHERE statement_type = ?
+              AND confidence_score >= 0.8
+            ORDER BY times_used DESC, confidence_score DESC
+        """, [statement_type]).fetchall()
+
+        added = 0
+        for field_name, concept in rows:
+            if field_name in enriched:
+                if concept not in enriched[field_name]:
+                    enriched[field_name].append(concept)
+                    added += 1
+            else:
+                enriched[field_name] = [concept]
+                added += 1
+
+        if added:
+            print(f"  Enriched {statement_type} mapping with {added} AI-discovered concept(s)")
+
+        return enriched
+
     def get_prior_discoveries(
         self,
         statement_type: StatementType,

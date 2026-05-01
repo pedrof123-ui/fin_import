@@ -48,7 +48,7 @@ def _da_pct(income_df: pd.DataFrame, cashflow_df: pd.DataFrame | None = None) ->
 
     if cashflow_df is not None and not cashflow_df.empty:
         da_cf = _col(cashflow_df, "depreciation_amortization")
-        if da_cf.gt(0).any() and "period_end_date" in income_df.columns and "period_end_date" in cashflow_df.columns:
+        if da_cf.abs().gt(0).any() and "period_end_date" in income_df.columns and "period_end_date" in cashflow_df.columns:
             merged = pd.merge(
                 income_df[["period_end_date", "revenue"]],
                 cashflow_df[["period_end_date", "depreciation_amortization"]],
@@ -57,15 +57,15 @@ def _da_pct(income_df: pd.DataFrame, cashflow_df: pd.DataFrame | None = None) ->
             )
             if not merged.empty:
                 rev_m = merged["revenue"].replace(0, np.nan)
-                da_m = merged["depreciation_amortization"].fillna(0)
+                da_m = merged["depreciation_amortization"].fillna(0).abs()
                 ratio = (da_m / rev_m).dropna()
                 ratio = ratio[ratio > 0]
                 if not ratio.empty:
                     return float(ratio.mean())
 
-    da = _col(income_df, "depreciation_amortization")
+    da = _col(income_df, "depreciation_amortization").abs()
     ratio = pd.Series((da / rev).values).dropna()
-    ratio = ratio[ratio >= 0]
+    ratio = ratio[ratio > 0]
     return float(ratio.mean()) if len(ratio) > 0 else 0.03
 
 
