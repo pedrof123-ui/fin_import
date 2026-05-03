@@ -7,7 +7,7 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 - **FastAPI backend** (`api/`) — REST API for importing, querying statements, and running DCF valuations
 - **Next.js frontend** (`web/`) — UI to import a ticker, view all 3 statements, switch FY/Q, DCF valuation tab
 - **DuckDB** (`data/financial_statements.duckdb`) — stores income, balance sheet, and cash flow tables
-- **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, ARIMA+OLS ratio forecasting, WACC via Hamada, Gordon Growth terminal value
+- **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, ARIMA+OLS ratio forecasting, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 
 ## Quick Start
@@ -100,7 +100,13 @@ Forecasting:
 - **P&L ratios** (cogs_pct, sga_pct, rd_pct, interest_pct, other_pct): ARIMA(0,1,0) for years 1-2, OLS for years 3-5
 - All forecasts use **annual** 10-K data; quarterly income data is used only for the momentum signal and is handled correctly for both standalone and YTD-cumulative filers
 
-WACC: Hamada equation to unlever/re-lever beta; risk-free rate from FRED DGS10; cost of debt from interest expense / average debt (5-yr avg).
+**WACC** (`dcf/wacc.py`):
+- Cost of equity: CAPM — `ke = rf + β × MRP`. Beta from yfinance; rf from FRED DGS10; MRP defaults to 5.5% (Damodaran).
+- Cost of debt: `kd = annual_interest_expense / avg_quarterly_debt`, clamped [2%, 15%]. Uses the **annual** income statement for interest expense so the full-year amount is divided by debt (not a quarterly fraction).
+- Capital structure weights: market-value based (`total_debt` from latest quarterly balance sheet; `market_cap = price × diluted_shares`).
+- Diluted shares: three-level fallback — quarterly income statement → annual income statement → derived from `net_income / diluted_eps`.
+- Hamada equation unlever/re-lever beta at the current D/E ratio.
+- `DcfResult.warnings` carries a list of data quality messages (e.g. zero market cap, WACC below 5%, terminal growth clamped). Shown as amber banners in the UI.
 
 ## Tests
 
@@ -137,7 +143,7 @@ api/
   db.py                DuckDB connection wrapper
   dcf_router.py        DCF endpoints (GET /dcf/{ticker}, POST /dcf/{ticker}/run)
 dcf/
-  assumptions.py       Dataclasses: YearForecast, UserOverrides, DcfResult, NwcAssumptions
+  assumptions.py       Dataclasses: YearForecast, UserOverrides, DcfResult, NwcAssumptions, HistoricalRow
   forecaster.py        ARIMA + OLS forecasting for P&L ratios; DSO/DPO/DIO computation
   model.py             FCFF construction, terminal value, equity bridge
   wacc.py              WACC, CAPM, cost of debt, Hamada beta re-levering
@@ -149,7 +155,7 @@ web/                   Next.js frontend (port 3000)
     StatementViewer.tsx  Financials table with FY/Q toggle
     DcfViewer.tsx        DCF container: state management, Reset/Update actions
     DcfSummary.tsx       Valuation summary + editable WACC inputs
-    DcfStatements.tsx    Historical & proforma P&L/BS/CF table with editable forecast rows
+    DcfStatements.tsx    Historical & proforma table: EBIT, EBITDA, income tax (effective rate), net income (margin), EPS; editable forecast ratios
     DcfNwcCapex.tsx      DSO/DPO/DIO inputs + projected NWC and CapEx per year
     DcfFcffTable.tsx     FCFF build-up table (Revenue→EBIT→NOPAT→FCFF→PV) + EV bridge
     DcfTerminalValue.tsx Terminal value decomposition card

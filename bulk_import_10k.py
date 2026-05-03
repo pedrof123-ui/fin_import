@@ -135,7 +135,7 @@ async def extract_and_insert_filing(
     year: int,
     db: FinancialStatementsDB,
     logger: BulkImportLogger,
-    use_ai_fallback: bool = False,
+    use_ai_fallback: bool = True,
     form: str = '10-K',
     quarter: int = None,
 ) -> Dict[str, Any]:
@@ -158,87 +158,78 @@ async def extract_and_insert_filing(
         'balance': {'success': False, 'coverage': 0.0, 'error': None},
         'cashflow': {'success': False, 'coverage': 0.0, 'error': None}
     }
-    
+
+    start_time = time.time()
+
     # Extract income statement
     try:
         income_df = await extract_income_statement(
             filing, ticker, form, year, quarter=quarter, use_ai_fallback=use_ai_fallback
         )
-        
-        # Calculate coverage
         fields_found = income_df['Value'].notna().sum()
         coverage = (fields_found / len(income_df)) * 100
-        
-        # Insert to database
         success = db.insert_income_statement(income_df)
-        
-        results['income'] = {
-            'success': success,
-            'coverage': coverage,
-            'error': None
-        }
-        
+        results['income'] = {'success': success, 'coverage': coverage, 'error': None}
         if success:
             logger.log('SUCCESS', ticker, f"Income statement: {coverage:.1f}% coverage", year)
         else:
-            logger.log('ERROR', ticker, f"Failed to insert income statement", year)
-        
+            logger.log('ERROR', ticker, "Failed to insert income statement", year)
     except Exception as e:
         results['income']['error'] = str(e)
         logger.log('ERROR', ticker, f"Income statement extraction failed: {e}", year)
-    
+
     # Extract balance sheet
     try:
         balance_df = await extract_balance_sheet(
             filing, ticker, form, year, quarter=quarter, use_ai_fallback=use_ai_fallback
         )
-        
         fields_found = balance_df['Value'].notna().sum()
         coverage = (fields_found / len(balance_df)) * 100
-        
         success = db.insert_balance_sheet(balance_df)
-        
-        results['balance'] = {
-            'success': success,
-            'coverage': coverage,
-            'error': None
-        }
-        
+        results['balance'] = {'success': success, 'coverage': coverage, 'error': None}
         if success:
             logger.log('SUCCESS', ticker, f"Balance sheet: {coverage:.1f}% coverage", year)
         else:
-            logger.log('ERROR', ticker, f"Failed to insert balance sheet", year)
-        
+            logger.log('ERROR', ticker, "Failed to insert balance sheet", year)
     except Exception as e:
         results['balance']['error'] = str(e)
         logger.log('ERROR', ticker, f"Balance sheet extraction failed: {e}", year)
-    
+
     # Extract cash flow
     try:
         cashflow_df = await extract_cash_flow(
             filing, ticker, form, year, quarter=quarter, use_ai_fallback=use_ai_fallback
         )
-        
         fields_found = cashflow_df['Value'].notna().sum()
         coverage = (fields_found / len(cashflow_df)) * 100
-        
         success = db.insert_cash_flow(cashflow_df)
-        
-        results['cashflow'] = {
-            'success': success,
-            'coverage': coverage,
-            'error': None
-        }
-        
+        results['cashflow'] = {'success': success, 'coverage': coverage, 'error': None}
         if success:
             logger.log('SUCCESS', ticker, f"Cash flow: {coverage:.1f}% coverage", year)
         else:
-            logger.log('ERROR', ticker, f"Failed to insert cash flow", year)
-        
+            logger.log('ERROR', ticker, "Failed to insert cash flow", year)
     except Exception as e:
         results['cashflow']['error'] = str(e)
         logger.log('ERROR', ticker, f"Cash flow extraction failed: {e}", year)
-    
+
+    # Write extraction log entry
+    elapsed = time.time() - start_time
+    statements_ok = [k for k, v in results.items() if v['success']]
+    coverages = [v['coverage'] for v in results.values() if v['success']]
+    overall_coverage = sum(coverages) / len(coverages) if coverages else 0.0
+    errors = [v['error'] for v in results.values() if v['error']]
+    db.log_extraction(
+        ticker=ticker,
+        filing_type=form,
+        fiscal_year=year,
+        fiscal_quarter=quarter,
+        statements_extracted=','.join(statements_ok),
+        overall_coverage_pct=overall_coverage,
+        success=bool(statements_ok),
+        error_message='; '.join(errors) if errors else None,
+        execution_time_seconds=elapsed,
+    )
+
     return results
 
 
@@ -247,7 +238,7 @@ async def process_ticker(
     periods: int,
     db: FinancialStatementsDB,
     logger: BulkImportLogger,
-    use_ai_fallback: bool = False,
+    use_ai_fallback: bool = True,
     skip_existing: bool = True,
     rate_limit_delay: float = 0.0,
     form: str = '10-K',
@@ -279,25 +270,20 @@ async def process_ticker(
     }
     
     try:
-        # Get company
-        company = Company(ticker)
+        company = await asyncio.to_thread(Company, ticker)
         logger.log('INFO', ticker, f"Retrieved company: {company.name}")
-        
-        filings = company.get_filings(form=form)
-        
+
+        filings = await asyncio.to_thread(lambda: company.get_filings(form=form))
+
         if filings.empty:
-            logger.log('WARNING', ticker, "No 10-K filings found")
+            logger.log('WARNING', ticker, f"No {form} filings found")
             return ticker_results
-        
-        # Limit to requested number of periods
-        filings_list = list(filings)[:periods]
+
+        filings_list = await asyncio.to_thread(lambda: list(filings)[:periods])
         ticker_results['filings_found'] = len(filings_list)
-        
-        logger.log('INFO', ticker, f"Found {len(filings_list)} 10-K filings")
-        
-        # Process each filing
+        logger.log('INFO', ticker, f"Found {len(filings_list)} {form} filings")
+
         for filing in filings_list:
-            # Extract year (and quarter for 10-Q) from filing
             try:
                 raw_period = getattr(filing, 'report_date', None) or filing.period_of_report
                 period_date = pd.to_datetime(raw_period)
@@ -308,38 +294,35 @@ async def process_ticker(
                 ticker_results['filings_skipped'] += 1
                 continue
 
-            # Check if already in database (match on period_end_date across all 3 tables)
             if skip_existing:
                 period_end = period_date.date()
                 if db.filing_exists(ticker, period_end):
-                    logger.log('INFO', ticker, f"Already in database, skipping", year)
+                    logger.log('INFO', ticker, "Already in database, skipping", year)
                     ticker_results['filings_skipped'] += 1
                     continue
-            
-            # Extract and insert
+
             try:
                 results = await extract_and_insert_filing(
                     filing, ticker, year, db, logger, use_ai_fallback, form=form, quarter=quarter
                 )
-                
-                # Count successes
                 success_count = sum(1 for r in results.values() if r['success'])
                 ticker_results['statements_success'] += success_count
                 ticker_results['statements_failed'] += (3 - success_count)
-                
                 if success_count > 0:
                     ticker_results['filings_processed'] += 1
                 else:
                     ticker_results['filings_failed'] += 1
-                
             except Exception as e:
                 logger.log('ERROR', ticker, f"Filing processing failed: {e}", year)
                 ticker_results['filings_failed'] += 1
 
+            if rate_limit_delay > 0:
+                await asyncio.sleep(rate_limit_delay)
+
     except Exception as e:
         logger.log('ERROR', ticker, f"Ticker processing failed: {e}")
     finally:
-        clear_company_facts_cache()
+        await asyncio.to_thread(clear_company_facts_cache)
 
     ticker_results['end_time'] = time.time()
     ticker_results['duration_seconds'] = ticker_results['end_time'] - ticker_results['start_time']
@@ -353,7 +336,7 @@ async def bulk_import_10k(
     db_path: str = 'data/financial_statements.duckdb',
     log_file: str = 'bulk_import.log',
     output_dir: str = './bulk_import_results',
-    use_ai_fallback: bool = False,
+    use_ai_fallback: bool = True,
     skip_existing: bool = True,
     rate_limit_delay: float = 0.0,
     form: str = '10-K',

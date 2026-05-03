@@ -21,7 +21,14 @@ xbrl_mappings/
 
 ## Extraction pipeline
 
-Each call to `extract_statement()` runs two passes:
+Each call to `extract_statement()` opens a single `XBRLMappingManager` connection for the
+duration of the call, then runs:
+
+**Mapping enrichment (before Pass 1)**
+
+`get_enriched_mapping()` reads `ai_discovery_queue` in `data/xbrl_mappings_multi.duckdb` and
+appends any concept seen **2 or more times** to the in-memory mapping dict. These enriched
+concepts resolve in Pass 1 at zero API cost — no AI call needed.
 
 **Pass 1 — static mapping**
 
@@ -39,11 +46,23 @@ The `max_fields` mode prevents understatement when a company reports both a spec
 The larger value is always the correct total line — verified against WMT (Walmart), which splits
 contract revenue ($706B) from membership/other income ($6.75B), summing to `Revenues` ($713B).
 
-**Pass 2 — AI fallback (optional, `--ai` flag)**
+**Pass 2 — AI fallback (on by default, disable with `--no-ai`)**
 
-Unfound fields are resolved via `extractors/ai_batch_helper.py`, which calls an LLM to
-identify the correct XBRL concept. Newly discovered mappings are queued in
-`data/xbrl_mappings_multi.duckdb` for future static use.
+Unfound fields are resolved via `extractors/ai_batch_helper.py`:
+
+- **Phase A** — free DB lookup: checks `ai_discovery_queue` for prior AI classifications
+- **Phase B** — batch API call: sends remaining unmapped concepts to Claude Haiku via OpenRouter
+  in chunks of 20; requires `OPENROUTER_API_KEY` in `.env`
+
+Newly discovered mappings are logged to `ai_discovery_queue`. Every concept or field that
+remains unresolved after all passes is logged to `missed_concepts` with a reason code
+(`ai_disabled`, `no_match`, `api_failure`). See `docs/AI_DISCOVERY_DATABASE_LOGGING.md`.
+
+**Async design**
+
+`extract_statement()` is fully async. The blocking SEC network call (`filing.xbrl()`) is
+wrapped in `asyncio.to_thread()` so it does not hold the event loop during concurrent
+bulk imports.
 
 ## edgartools compatibility
 
@@ -104,9 +123,10 @@ async def extract_all(ticker: str):
     c = Company(ticker)
     filing = c.latest('10-K')
 
-    income_df  = await extract_income_statement(filing, ticker, '10-K', use_ai_fallback=False)
-    balance_df = await extract_balance_sheet(filing, ticker, '10-K', use_ai_fallback=False)
-    cf_df      = await extract_cash_flow(filing, ticker, '10-K', use_ai_fallback=False)
+    # AI fallback is on by default; pass use_ai_fallback=False to skip
+    income_df  = await extract_income_statement(filing, ticker, '10-K')
+    balance_df = await extract_balance_sheet(filing, ticker, '10-K')
+    cf_df      = await extract_cash_flow(filing, ticker, '10-K')
     return income_df, balance_df, cf_df
 
 income, balance, cashflow = asyncio.run(extract_all('AAPL'))

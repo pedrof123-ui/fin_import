@@ -10,7 +10,7 @@ fin_import2/
 │
 ├── dcf/
 │   ├── __init__.py
-│   ├── assumptions.py                   Dataclasses: YearForecast, UserOverrides, NwcAssumptions, DcfResult
+│   ├── assumptions.py                   Dataclasses: YearForecast, UserOverrides, NwcAssumptions, DcfResult, HistoricalRow
 │   ├── forecaster.py                    ARIMA(0,1,0) + OLS forecasting for P&L ratios; DSO/DPO/DIO
 │   ├── model.py                         FCFF build-up, terminal value, equity bridge, historical rows
 │   ├── wacc.py                          WACC, CAPM, cost of debt, Hamada beta re-levering
@@ -25,7 +25,7 @@ fin_import2/
 │   │   ├── StatementViewer.tsx          Financials table with FY/Q display toggle
 │   │   ├── DcfViewer.tsx                DCF container: state, Reset/Update buttons, layout
 │   │   ├── DcfSummary.tsx               Valuation summary card + editable WACC inputs (rf, mrp, beta, cod, tax)
-│   │   ├── DcfStatements.tsx            Historical & proforma P&L/BS/CF table; editable forecast ratios
+│   │   ├── DcfStatements.tsx            Historical & proforma P&L/BS/CF table; EBIT, EBITDA, Income Tax, Net Income rows with margins; editable forecast ratios
 │   │   ├── DcfNwcCapex.tsx              Editable DSO/DPO/DIO inputs; projected ΔNWC and CapEx per year
 │   │   ├── DcfFcffTable.tsx             FCFF build-up (Revenue→EBIT→NOPAT→+D&A→-CapEx→-ΔNWC→FCFF→PV)
 │   │   ├── DcfTerminalValue.tsx         Terminal value decomposition: FCFF₅, TV, PV(TV), TV% of EV
@@ -69,9 +69,9 @@ fin_import2/
 ├── planning/
 │   └── PLAN.md                          Overall project plan
 │
-├── financial_statements_db.py           DuckDB schema definition and insert helpers
-├── xbrl_concept_mapper.py               AI fallback mapper (openai-agents)
-├── xbrl_mapping_manager_multi_statement.py  XBRL mapping persistence
+├── financial_statements_db.py           DuckDB schema, insert helpers, log_extraction()
+├── xbrl_concept_mapper.py               AI fallback mapper via OpenRouter (Claude Haiku)
+├── xbrl_mapping_manager_multi_statement.py  XBRL mapping persistence, missed_concepts logging
 ├── bulk_import_10k.py                   Core async bulk import logic (concurrent tickers)
 ├── run_bulk_import.py                   CLI entry point for bulk imports
 ├── pyproject.toml                       Dependencies and pytest config
@@ -100,9 +100,9 @@ fin_import2/
 1. `GET /dcf/{ticker}` → `api/dcf_router.py`
 2. `dcf/data.py` loads last 10 annual + 20 quarterly rows from all 3 statement tables; fetches current price; loads DGS10 from fred.duckdb
 3. `dcf/forecaster.py` forecasts revenue (EWM annual growth blended with quarterly momentum signal for Y1-Y2; OLS slope anchored at Y2 for Y3-Y5) and 5 P&L ratios (ARIMA(0,1,0) Y1-Y2, OLS Y3-Y5); computes DSO/DPO/DIO from historical balance sheets
-4. `dcf/wacc.py` downloads beta via yfinance; Hamada unlever/re-lever; computes ke, kd, WACC
+4. `dcf/wacc.py` downloads beta via yfinance; computes ke (CAPM), kd (annual IE / avg debt), WACC with market-value weights. Diluted shares: quarterly → annual → derived from net_income/EPS. Emits `warnings` for zero market cap, D_w > 80%, WACC < 5%, or terminal growth clamped.
 5. `dcf/model.py` builds FCFF series: EBIT → NOPAT → +D&A → -CapEx → -ΔNWC (days-based); discounts; Gordon Growth terminal value; equity bridge
-6. Returns `DcfResult` with historical rows, proforma rows, FCFF series, WACC detail, sensitivity grid, terminal value decomposition
+6. Returns `DcfResult` with historical rows, proforma rows, FCFF series, WACC detail, sensitivity grid, terminal value decomposition. `HistoricalRow` fields: revenue, gross profit, EBIT, EBITDA, income tax expense, net income, D&A, CapEx, total assets, total debt, cash, diluted EPS, plus granular P&L components and pretax income for ratio display
 7. `POST /dcf/{ticker}/run` accepts per-year and global overrides, re-runs from step 5
 
 ### Bulk import (CLI)
@@ -110,22 +110,32 @@ fin_import2/
 1. `run_bulk_import.py` parses CLI args, prompts for confirmation
 2. Calls `bulk_import_10k.bulk_import_10k()` with form=10-K or 10-Q
 3. Processes up to N tickers concurrently (default 3) via `asyncio.Semaphore`
-4. edgartools' built-in rate limiter handles SEC's 9 req/s limit per-request
-5. Writes summary reports to `bulk_import_results/`
+4. `Company()` and `get_filings()` run in `asyncio.to_thread()` — true parallelism during SEC I/O
+5. AI fallback is on by default; disable with `--no-ai`
+6. edgartools' built-in rate limiter handles SEC's 9 req/s limit; `--delay` adds extra sleep between filings
+7. Each filing writes one row to `extraction_log` in `financial_statements.duckdb`
+8. Unresolved concepts logged to `missed_concepts` in `xbrl_mappings_multi.duckdb`
+9. Writes summary reports to `bulk_import_results/`
 
 ## Extractor architecture
 
 All three extractors share a single core in `extractors/statement_extractor.py`:
 
 ```
-extract_statement()          ← shared core
-├── get XBRL from filing     (presentation=False for raw values)
-├── detect date columns      (handles "(FY)"/"(Q1)"/"(YTD)" suffixes)
-├── Pass 1: _extract_value() for each field in mapping
+extract_statement()                    ← shared core (async)
+├── open XBRLMappingManager            (single connection for entire call)
+├── get_enriched_mapping()             (inject AI discoveries seen >= 2x, free)
+├── await asyncio.to_thread(xbrl())    (non-blocking SEC network call)
+├── detect date columns                (handles "(FY)"/"(Q1)"/"(YTD)" suffixes)
+├── Pass 1: _extract_value() per field
 │   ├── aggregation_fields   → sum multiple matching concepts (e.g. SG&A components)
 │   ├── max_fields           → take max across matches (e.g. Revenues vs RFCWCEA)
 │   └── default              → first match wins
-└── Pass 2: AI batch fallback (optional)
+├── Pass 2: AI batch fallback (on by default, disable with --no-ai)
+│   ├── Phase A: prior discoveries from ai_discovery_queue (free DB lookup)
+│   └── Phase B: Claude Haiku via OpenRouter, chunks of 20 concepts
+├── log AI discoveries → ai_discovery_queue
+└── log unresolved fields/concepts → missed_concepts
 
 extract_income_statement()   ← thin wrapper, defines _AGG_FIELDS, _MAX_FIELDS, _ALT_NAMES
 extract_balance_sheet()      ← thin wrapper
@@ -170,6 +180,27 @@ Price  = Equity / diluted_shares
 
 R&D: if a company never reports R&D, `rd_pct` stays `None` throughout (shown as blank in UI).
 
+**WACC computation** (`dcf/wacc.py`)
+
+| Input | Source | Notes |
+|-------|--------|-------|
+| Beta | yfinance `Ticker.info["beta"]` | Falls back to 1.0; Hamada unlever/re-lever at current D/E |
+| Risk-free rate | FRED `DGS10` from fred.duckdb | Falls back to 4.5% |
+| Market risk premium | Constant 5.5% | Damodaran estimate; user-overridable |
+| Cost of equity | `ke = rf + β × MRP` | CAPM |
+| Cost of debt | `annual_IE / avg_quarterly_debt` | Uses annual income statement for IE (full-year amount); clamped [2%, 15%] |
+| Tax rate | 5-yr average effective rate from annual income | Clamped [15%, 40%]; falls back to 21% |
+| Diluted shares | Quarterly → annual → `net_income / diluted_eps` | Three-level fallback; market cap = price × shares |
+| Capital structure | Market-value weights from latest quarterly balance sheet + current price | D_w = debt / (debt + market_cap) |
+
+`DcfResult.warnings` is a `list[str]` populated when:
+- Market cap is zero after all share fallbacks
+- Debt weight exceeds 80%
+- WACC falls below 5%
+- Terminal growth is clamped because WACC ≤ default terminal growth rate
+
+Warnings are displayed as amber banners in `DcfViewer.tsx`.
+
 **Editable assumptions (UI)**
 
 Global: risk-free rate, market risk premium, beta, cost of debt, tax rate, terminal growth rate, DSO, DPO, DIO
@@ -180,10 +211,25 @@ Reset button restores all inputs to model-computed defaults without re-fetching.
 
 ## Database tables
 
+### `data/financial_statements.duckdb`
+
 | Table | Key columns |
 |-------|-------------|
 | `income_statements` | ticker, period_end_date, fiscal_year, period_type, revenue, gross_profit, net_income, ... |
 | `balance_sheets` | ticker, period_end_date, fiscal_year, period_type, total_assets, total_debt, ... |
 | `cash_flow_statements` | ticker, period_end_date, fiscal_year, period_type, operating_cash_flow, capital_expenditures, depreciation_amortization, ... |
+| `extraction_log` | ticker, filing_type, fiscal_year, statements_extracted, overall_coverage_pct, success, execution_time_seconds |
+| `companies` | ticker, first_filing_date, last_filing_date, total_filings |
 
-All tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filing_date, period_end_date)` for atomic upserts.
+All three statement tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filing_date, period_end_date)` for atomic upserts.
+
+### `data/xbrl_mappings_multi.duckdb`
+
+| Table | Purpose |
+|-------|---------|
+| `ai_discovery_queue` | Per-filing log of AI-discovered concept→field mappings |
+| `missed_concepts` | Every unresolved field/concept with reason code (`ai_disabled`, `no_match`, `api_failure`) |
+| `ai_discovered_mappings` | Aggregated discovery stats (times_used, confidence) |
+| `core_concept_mappings` | Snapshot of static `.py` mapping files |
+| `company_specific_mappings` | Ticker-level overrides |
+| `statement_coverage_stats` | Per-filing field coverage percentages |

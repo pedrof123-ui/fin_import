@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import List
 
 
 @dataclass
@@ -102,6 +103,9 @@ class HistoricalRow:
     research_development: float | None = None
     interest_expense: float | None = None
     period_end_date: str | None = None
+    ebitda: float | None = None
+    income_tax_expense: float | None = None
+    pretax_income: float | None = None
 
 
 @dataclass
@@ -131,3 +135,5 @@ class DcfResult:
     proforma: list[HistoricalRow]
 
     sensitivity: list[SensitivityCell]
+
+    warnings: List[str] = field(default_factory=list)

@@ -177,10 +177,16 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
         bs_row = bs_by_date.loc[date] if date and date in bs_by_date.index else pd.Series(dtype=float)
         cf_row = cf_by_date.loc[date] if date and date in cf_by_date.index else pd.Series(dtype=float)
 
-        # Prefer CF statement D&A since most companies report it there
-        da_cf = _val(cf_row, "depreciation_amortization")
-        da_inc = _val(row, "depreciation_amortization")
-        da = da_cf if da_cf is not None else da_inc
+        # Prefer CF statement D&A since most companies report it there.
+        # Normalize to absolute value — providers vary on sign convention.
+        da_raw = _val(cf_row, "depreciation_amortization") or _val(row, "depreciation_amortization")
+        da = abs(da_raw) if da_raw is not None else None
+
+        op_income = _val(row, "operating_income")
+        ebitda = (op_income + da) if op_income is not None and da is not None else op_income
+
+        tax_raw = _val(row, "income_tax_expense")
+        income_tax = abs(tax_raw) if tax_raw is not None else None
 
         rows.append(
             HistoricalRow(
@@ -188,7 +194,7 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
                 period_end_date=date,
                 revenue=_val(row, "revenue"),
                 gross_profit=_val(row, "gross_profit"),
-                operating_income=_val(row, "operating_income"),
+                operating_income=op_income,
                 net_income=_val(row, "net_income"),
                 depreciation_amortization=da,
                 capital_expenditures=_val(cf_row, "capital_expenditures"),
@@ -200,12 +206,15 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
                 selling_general_admin=_val(row, "selling_general_admin"),
                 research_development=_val(row, "research_development"),
                 interest_expense=_val(row, "interest_expense"),
+                ebitda=ebitda,
+                income_tax_expense=income_tax,
+                pretax_income=_val(row, "pretax_income"),
             )
         )
     return rows
 
 
-def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: float) -> list:
+def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: float, shares: float | None = None) -> list:
     from dcf.assumptions import HistoricalRow
 
     rows = []
@@ -214,10 +223,13 @@ def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: floa
         cogs = rev * yf.cogs_pct
         gross_profit = rev - cogs
         rd = yf.rd_pct or 0.0
-        # Net income ≈ (EBIT - interest) * (1 - tax_rate) + other adjustments
         interest = rev * yf.interest_pct
         other = rev * yf.other_pct
-        net_income = (fc.ebit - interest + other) * (1 - tax_rate)
+        pretax = fc.ebit - interest + other
+        income_tax = pretax * tax_rate
+        net_income = pretax * (1 - tax_rate)
+        ebitda = fc.ebit + fc.da
+        diluted_eps = net_income / shares if shares and shares > 0 else None
 
         rows.append(
             HistoricalRow(
@@ -231,11 +243,14 @@ def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: floa
                 total_assets=None,
                 total_debt=None,
                 cash_and_equivalents=None,
-                diluted_eps=None,
+                diluted_eps=diluted_eps,
                 cost_of_revenue=cogs,
                 selling_general_admin=rev * yf.sga_pct,
                 research_development=rev * rd if yf.rd_pct is not None else None,
                 interest_expense=interest,
+                ebitda=ebitda,
+                income_tax_expense=income_tax,
+                pretax_income=pretax,
             )
         )
     return rows
@@ -304,7 +319,23 @@ def run_dcf(
         beta_override=beta_override,
         cost_of_debt_override=overrides.cost_of_debt_override if overrides else None,
         tax_rate_override=overrides.tax_rate_override if overrides else annual_tax_rate,
+        annual_income_df=annual["income"],
     )
+
+    warnings: list[str] = []
+    if wacc_detail.market_cap == 0:
+        warnings.append(
+            "Market cap is zero — diluted shares not found in quarterly or annual income statements. "
+            "Capital structure weights are unreliable; consider overriding cost of debt."
+        )
+    elif wacc_detail.debt_weight > 0.8:
+        warnings.append(
+            f"Debt weight is {wacc_detail.debt_weight:.0%} — verify that price and share count are correct."
+        )
+    if wacc_detail.wacc < 0.05:
+        warnings.append(
+            f"WACC of {wacc_detail.wacc * 100:.1f}% is below 5% — check capital structure inputs."
+        )
 
     year_forecasts = forecast_assumptions(quarterly, annual)
     year_forecasts = merge_overrides(year_forecasts, overrides)
@@ -353,7 +384,12 @@ def run_dcf(
     last_fcff = fcff_series[-1].fcff
     wacc = wacc_detail.wacc
     if wacc <= terminal_growth:
-        terminal_growth = wacc - 0.01
+        clamped_tg = wacc - 0.01
+        warnings.append(
+            f"Terminal growth clamped from {terminal_growth * 100:.1f}% to {clamped_tg * 100:.1f}% "
+            f"because WACC ({wacc * 100:.1f}%) must exceed terminal growth."
+        )
+        terminal_growth = clamped_tg
 
     terminal_value = last_fcff * (1 + terminal_growth) / (wacc - terminal_growth)
     pv_tv = terminal_value / (1 + wacc) ** len(fcff_series)
@@ -375,7 +411,13 @@ def run_dcf(
     equity_value = enterprise_value - net_debt
 
     shares_series = quarterly["income"]["diluted_shares"].dropna()
-    shares = float(shares_series.iloc[-1]) if not shares_series.empty else 1.0
+    if not shares_series.empty:
+        shares = float(shares_series.iloc[-1])
+    elif wacc_detail.market_cap > 0 and effective_price > 0:
+        # Consistent with compute_wacc: derive from the already-computed market_cap.
+        shares = wacc_detail.market_cap / effective_price
+    else:
+        shares = 1.0
 
     intrinsic = equity_value / shares if shares > 0 else 0.0
     upside = (intrinsic - effective_price) / effective_price if effective_price > 0 else None
@@ -391,7 +433,7 @@ def run_dcf(
 
     annual_display = {k: v.iloc[:5].reset_index(drop=True) for k, v in annual.items()}
     historical = _build_historical_rows(annual_display)
-    proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate)
+    proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate, shares)
 
     return DcfResult(
         ticker=ticker,
@@ -414,4 +456,5 @@ def run_dcf(
         historical=historical,
         proforma=proforma,
         sensitivity=sensitivity,
+        warnings=warnings,
     )

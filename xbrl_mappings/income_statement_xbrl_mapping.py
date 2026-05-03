@@ -98,6 +98,8 @@ INCOME_STATEMENT_MAPPING = {
         "SellingAndMarketingExpense",
         "GeneralAndAdministrativeExpense",
         "MarketingAndAdvertisingExpense",
+        # Company-specific (namespace prefix stripped at match time)
+        "MarketingResearchAndGeneralExpense",  # Kimberly-Clark (kmb_)
         # Banking/Financial Services operating expense components
         # Banks report operating expenses as components of NoninterestExpense
         # We aggregate the specific components (NOT the total NoninterestExpense)

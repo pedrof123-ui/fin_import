@@ -75,17 +75,20 @@ class XBRLMappingManager:
     def _initialize_db(self):
         """Initialize DuckDB and create schema if needed"""
         self.conn = duckdb.connect(self.db_path)
-        
+
         # Check if schema exists
         tables = self.conn.execute("""
-            SELECT table_name FROM information_schema.tables 
+            SELECT table_name FROM information_schema.tables
             WHERE table_schema = 'main'
         """).fetchall()
-        
+
         if not tables:
             print("Creating multi-statement database schema...")
             self._create_schema()
             self._sync_core_mappings()
+        else:
+            # Ensure tables added in later versions exist in existing databases
+            self._ensure_new_tables()
     
     def _create_schema(self):
         """Create database schema directly (DuckDB-compatible)"""
@@ -213,13 +216,50 @@ class XBRLMappingManager:
             )
         """)
         
+        # Table 8: Missed Concepts — audit trail for every unmapped concept/field
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS missed_concepts_seq START 1")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS missed_concepts (
+                id INTEGER PRIMARY KEY DEFAULT nextval('missed_concepts_seq'),
+                ticker VARCHAR NOT NULL,
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR,
+                concept VARCHAR,
+                reason VARCHAR NOT NULL,
+                filing_date DATE,
+                period_end_date DATE,
+                logged_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Create indexes
         self.conn.execute("CREATE INDEX idx_core_statement_field ON core_concept_mappings(statement_type, field_name, priority)")
         self.conn.execute("CREATE INDEX idx_ai_statement_field ON ai_discovered_mappings(statement_type, field_name)")
         self.conn.execute("CREATE INDEX idx_log_ticker_statement ON extraction_log(ticker, statement_type, extraction_date)")
-        
+        self.conn.execute("CREATE INDEX idx_missed_ticker ON missed_concepts(ticker, statement_type, period_end_date)")
+
         print("Database schema created successfully")
     
+    def _ensure_new_tables(self):
+        """Create tables introduced after the initial schema for existing databases."""
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS missed_concepts_seq START 1")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS missed_concepts (
+                id INTEGER PRIMARY KEY DEFAULT nextval('missed_concepts_seq'),
+                ticker VARCHAR NOT NULL,
+                statement_type VARCHAR NOT NULL,
+                field_name VARCHAR,
+                concept VARCHAR,
+                reason VARCHAR NOT NULL,
+                filing_date DATE,
+                period_end_date DATE,
+                logged_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_missed_ticker ON missed_concepts(ticker, statement_type, period_end_date)"
+        )
+
     def _sync_core_mappings(self):
         """Sync Python mapping files to database"""
         print("Syncing core mappings from Python files...")
@@ -430,18 +470,20 @@ class XBRLMappingManager:
         static_mapping: dict,
     ) -> dict:
         """
-        Return a copy of static_mapping enriched with every concept previously
-        discovered by AI for this statement type. Concepts already in the static
-        list are not duplicated; newly discovered ones are appended.
+        Return a copy of static_mapping enriched with AI-discovered concepts that have
+        been validated across at least 2 separate filing extractions. Uses ai_discovery_queue
+        directly (concept→field pairs with COUNT >= 2) so the threshold is purely
+        empirical — no confidence scores to miscalibrate.
         """
         enriched = {field: list(concepts) for field, concepts in static_mapping.items()}
 
         rows = self.conn.execute("""
             SELECT field_name, concept
-            FROM ai_discovered_mappings
+            FROM ai_discovery_queue
             WHERE statement_type = ?
-              AND confidence_score >= 0.8
-            ORDER BY times_used DESC, confidence_score DESC
+            GROUP BY field_name, concept
+            HAVING COUNT(*) >= 2
+            ORDER BY COUNT(*) DESC
         """, [statement_type]).fetchall()
 
         added = 0
@@ -500,6 +542,34 @@ class XBRLMappingManager:
         if result:
             print(f"  DB lookup: found {len(result)} prior AI discoveries for {statement_type}")
         return result
+
+    def log_missed_concept(
+        self,
+        ticker: str,
+        statement_type: str,
+        reason: str,
+        filing_date=None,
+        period_end_date=None,
+        field_name: str = None,
+        concept: str = None,
+    ):
+        """
+        Persist a concept or field that could not be resolved.
+
+        reason values:
+          'ai_disabled'  — AI fallback was off; concept never attempted
+          'no_match'     — AI was called but returned no valid field mapping
+          'api_failure'  — AI API call failed entirely
+          'no_value'     — concept present in XBRL but NaN for this period
+        """
+        try:
+            self.conn.execute("""
+                INSERT INTO missed_concepts
+                (ticker, statement_type, field_name, concept, reason, filing_date, period_end_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [ticker, statement_type, field_name, concept, reason, filing_date, period_end_date])
+        except Exception as e:
+            print(f"  Warning: failed to log missed concept ({e})")
 
     async def update_statement_coverage(
         self,

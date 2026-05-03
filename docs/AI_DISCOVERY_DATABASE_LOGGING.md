@@ -1,360 +1,186 @@
-# AI Discovery Database Logging - Implementation Guide
+# AI Discovery and Missed Concept Logging
 
-## ✅ Feature Added: Automatic Database Logging
+## Overview
 
-All three extractors now **automatically log AI discoveries** to the DuckDB database!
+The pipeline maintains two complementary audit trails for XBRL concept resolution:
+
+- **`ai_discovery_queue`** — concepts the AI successfully classified to a field
+- **`missed_concepts`** — concepts or fields that could not be resolved, with the reason
+
+Both tables live in `data/xbrl_mappings_multi.duckdb`.
 
 ---
 
-## 🎯 What Gets Logged
+## How AI discoveries flow
 
-When the AI mapper discovers a new concept mapping, it's automatically saved to:
+When `extract_statement()` runs with AI fallback enabled and encounters an XBRL concept
+not in the static mapping:
 
-**Database:** `xbrl_mappings_multi.duckdb`  
-**Table:** `ai_discovery_queue`
+1. **Phase A** — checks `ai_discovery_queue` for a prior AI classification (free, no API call)
+2. **Phase B** — sends remaining unmapped concepts to Claude Haiku via OpenRouter in batches of 20
+3. Successful classifications are written to `ai_discovery_queue`
+4. On the next extraction of the same statement type, `get_enriched_mapping()` promotes any
+   concept seen **2 or more times** in `ai_discovery_queue` into the in-memory mapping before
+   Pass 1 — so it resolves statically at zero API cost going forward
 
-### **Information Captured:**
+The static `.py` mapping files (`xbrl_mappings/`) are **not modified at runtime**. All
+runtime persistence is DB-only. To permanently promote a discovery into the static files,
+use `write_concept_to_mapping()` manually after review.
+
+---
+
+## `ai_discovery_queue` table
 
 ```sql
 CREATE TABLE ai_discovery_queue (
-    id INTEGER PRIMARY KEY,
-    ticker VARCHAR,              -- Company ticker (e.g., 'AAPL')
-    statement_type VARCHAR,      -- 'income', 'balance', or 'cashflow'
-    field_name VARCHAR,          -- Field it maps to (e.g., 'revenue')
-    concept VARCHAR,             -- XBRL concept (e.g., 'RevenueFromContract...')
-    discovered_date TIMESTAMP,   -- When it was discovered
-    filing_date DATE,            -- Filing date
-    period_end_date DATE,        -- Period end date
-    value DOUBLE,                -- The actual value extracted
-    reviewed BOOLEAN,            -- For manual review tracking
-    approved BOOLEAN,            -- For promotion tracking
-    reviewer VARCHAR,            -- Who reviewed it
-    review_date TIMESTAMP,       -- When reviewed
-    review_notes TEXT            -- Review comments
+    id               INTEGER PRIMARY KEY,
+    ticker           VARCHAR,    -- e.g. 'AAPL'
+    statement_type   VARCHAR,    -- 'income', 'balance', 'cashflow'
+    field_name       VARCHAR,    -- standardized field, e.g. 'revenue'
+    concept          VARCHAR,    -- XBRL concept, e.g. 'RevenueFromContract...'
+    value            DOUBLE,     -- extracted numeric value
+    filing_date      DATE,
+    period_end_date  DATE,
+    discovered_date  TIMESTAMP
 )
 ```
 
----
-
-## 📊 Example Output
-
-### **During Extraction:**
-
-```
-================================================================================
-EXTRACTING BALANCE SHEET
-================================================================================
-
-✓ Extraction complete!
-  Fields found: 35/38
-  Data quality score: 92.1%
-
-✓ AI discovered 2 new concept(s)!
-
-================================================================================
-NEW CONCEPTS DISCOVERED BY AI
-================================================================================
-
-Consider adding these to balance_sheet_xbrl_mapping.py:
-  'MarketableSecuritiesNoncurrent',  # long_term_investments
-  'DeferredIncomeTaxLiabilitiesNet',  # deferred_tax_liabilities
-
-================================================================================
-  ✓ Logged 2 AI discoveries to database  ← NEW!
-```
-
----
-
-## 🔍 Query AI Discoveries
-
-### **View All Discoveries:**
+### Query examples
 
 ```python
 from xbrl_mapping_manager_multi_statement import XBRLMappingManager
 
-mapper = XBRLMappingManager('xbrl_mappings_multi.duckdb')
+mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
 
-# Get all discoveries
-discoveries = mapper.conn.execute("""
+# All discoveries, most recent first
+mapper.conn.execute("""
     SELECT ticker, statement_type, field_name, concept, discovered_date
     FROM ai_discovery_queue
     ORDER BY discovered_date DESC
-""").fetchall()
+""").fetchdf()
 
-for d in discoveries:
-    print(f"{d[0]} - {d[1]}.{d[2]} → {d[3]}")
+# Concepts validated across multiple companies (ready to promote)
+mapper.conn.execute("""
+    SELECT field_name, concept, COUNT(DISTINCT ticker) as companies
+    FROM ai_discovery_queue
+    WHERE statement_type = 'income'
+    GROUP BY field_name, concept
+    HAVING COUNT(DISTINCT ticker) >= 3
+    ORDER BY companies DESC
+""").fetchdf()
+
+# What already enriches Pass 1 (seen >= 2 times)
+mapper.conn.execute("""
+    SELECT field_name, concept, COUNT(*) as times_seen
+    FROM ai_discovery_queue
+    WHERE statement_type = 'balance'
+    GROUP BY field_name, concept
+    HAVING COUNT(*) >= 2
+    ORDER BY times_seen DESC
+""").fetchdf()
 
 mapper.close()
 ```
 
-**Output:**
+---
+
+## `missed_concepts` table
+
+Every concept or field that could not be resolved after all passes is recorded here.
+
+```sql
+CREATE TABLE missed_concepts (
+    id              INTEGER PRIMARY KEY,
+    ticker          VARCHAR,
+    statement_type  VARCHAR,    -- 'income', 'balance', 'cashflow'
+    field_name      VARCHAR,    -- standardized field (NULL for concept-level misses)
+    concept         VARCHAR,    -- XBRL concept name (NULL for field-level misses)
+    reason          VARCHAR,    -- see below
+    filing_date     DATE,
+    period_end_date DATE,
+    logged_date     TIMESTAMP
+)
 ```
-AAPL - balance.long_term_investments → MarketableSecuritiesNoncurrent
-AAPL - balance.deferred_tax_liabilities → DeferredIncomeTaxLiabilitiesNet
-MSFT - income.equity_method_investments → IncomeLossFromEquityMethodInvestments
+
+### Reason codes
+
+| Reason | Meaning |
+|--------|---------|
+| `ai_disabled` | `--no-ai` was set; concept never attempted |
+| `no_match` | AI was called but returned no valid field mapping |
+| `api_failure` | OpenRouter API call failed entirely |
+
+### Query examples
+
+```python
+# Which fields are consistently missing across companies?
+mapper.conn.execute("""
+    SELECT field_name, statement_type, COUNT(DISTINCT ticker) as companies, reason
+    FROM missed_concepts
+    GROUP BY field_name, statement_type, reason
+    ORDER BY companies DESC
+""").fetchdf()
+
+# Concepts AI couldn't classify (candidates for manual mapping)
+mapper.conn.execute("""
+    SELECT concept, COUNT(*) as times_seen, COUNT(DISTINCT ticker) as companies
+    FROM missed_concepts
+    WHERE reason = 'no_match' AND concept IS NOT NULL
+    GROUP BY concept
+    ORDER BY companies DESC
+""").fetchdf()
+
+# API failures (may indicate key or connectivity issues)
+mapper.conn.execute("""
+    SELECT DATE(logged_date) as day, COUNT(*) as failures
+    FROM missed_concepts
+    WHERE reason = 'api_failure'
+    GROUP BY day
+    ORDER BY day DESC
+""").fetchdf()
 ```
 
 ---
 
-### **Discoveries by Statement:**
+## Promotion workflow
+
+After reviewing discoveries, permanently add high-confidence concepts to the static mapping:
 
 ```python
-# Income statement discoveries
-income_discoveries = mapper.conn.execute("""
-    SELECT field_name, concept, COUNT(*) as times_found
-    FROM ai_discovery_queue
-    WHERE statement_type = 'income'
-    GROUP BY field_name, concept
-    ORDER BY times_found DESC
-""").fetchall()
+from xbrl_concept_mapper import write_concept_to_mapping
+
+# Manually promote a concept to the static .py file
+write_concept_to_mapping(
+    concept='MarketableSecuritiesNoncurrent',
+    field_name='long_term_investments',
+    statement_type='balance',
+    ticker='AAPL',  # used in the comment tag
+)
 ```
 
----
-
-### **Discoveries by Company:**
+Or use the `XBRLMappingManager` DB promotion (promotes to `core_concept_mappings`):
 
 ```python
-# See what concepts Apple uses
-aapl_discoveries = mapper.conn.execute("""
-    SELECT statement_type, field_name, concept
-    FROM ai_discovery_queue
-    WHERE ticker = 'AAPL'
-""").fetchall()
-```
-
----
-
-## 🚀 Promotion Workflow
-
-### **Step 1: Extract Multiple Companies**
-
-```python
-tickers = ['AAPL', 'MSFT', 'GOOGL', 'META', 'TSLA']
-
-for ticker in tickers:
-    filing = get_filing(ticker, '10-K', 2024)
-    await extract_income_statement(filing, ticker, '10-K')
-    await extract_balance_sheet(filing, ticker, '10-K')
-    await extract_cash_flow(filing, ticker, '10-K')
-
-# AI discoveries logged to database automatically!
-```
-
----
-
-### **Step 2: Review Discoveries**
-
-```python
+import asyncio
 from xbrl_mapping_manager_multi_statement import XBRLMappingManager
 
-mapper = XBRLMappingManager('xbrl_mappings_multi.duckdb')
-
-# Find concepts discovered multiple times (high confidence)
-candidates = mapper.conn.execute("""
-    SELECT 
-        statement_type,
-        field_name,
-        concept,
-        COUNT(DISTINCT ticker) as companies_using,
-        AVG(value) as avg_value
-    FROM ai_discovery_queue
-    WHERE reviewed = FALSE
-    GROUP BY statement_type, field_name, concept
-    HAVING COUNT(DISTINCT ticker) >= 3  -- Used by 3+ companies
-    ORDER BY companies_using DESC
-""").fetchall()
-
-print("High-Confidence Discoveries (3+ companies):")
-for c in candidates:
-    print(f"  {c[0]}.{c[1]} → {c[2]} (used by {c[3]} companies)")
-```
-
-**Output:**
-```
-High-Confidence Discoveries (3+ companies):
-  balance.long_term_investments → MarketableSecuritiesNoncurrent (used by 5 companies)
-  income.equity_method → IncomeLossFromEquityMethodInvestments (used by 4 companies)
-  cashflow.acquisitions → PaymentsToAcquireBusinessesNetOfCashAcquired (used by 3 companies)
-```
-
----
-
-### **Step 3: Mark as Reviewed**
-
-```python
-# Mark a discovery as reviewed and approved
-mapper.conn.execute("""
-    UPDATE ai_discovery_queue
-    SET reviewed = TRUE,
-        approved = TRUE,
-        reviewer = 'pedro',
-        review_date = CURRENT_TIMESTAMP,
-        review_notes = 'Verified across 5 companies - adding to mapping'
-    WHERE statement_type = 'balance' 
-      AND field_name = 'long_term_investments'
-      AND concept = 'MarketableSecuritiesNoncurrent'
-""")
-```
-
----
-
-### **Step 4: Add to Mapping File**
-
-After review, add approved concepts to the mapping files:
-
-**In `balance_sheet_xbrl_mapping.py`:**
-```python
-BALANCE_SHEET_MAPPING = {
-    # ... existing mappings ...
-    
-    "long_term_investments": [
-        "LongTermInvestments",
-        "AvailableForSaleSecuritiesNoncurrent",
-        "MarketableSecuritiesNoncurrent",  # ← ADDED from AI discovery
-    ],
-}
-```
-
----
-
-## 📈 Analytics Queries
-
-### **Discovery Rate Over Time:**
-
-```python
-# How many discoveries per day?
-daily_discoveries = mapper.conn.execute("""
-    SELECT 
-        DATE(discovered_date) as day,
-        COUNT(*) as discoveries
-    FROM ai_discovery_queue
-    GROUP BY DATE(discovered_date)
-    ORDER BY day DESC
-""").fetchall()
-```
-
----
-
-### **Most Problematic Fields:**
-
-```python
-# Which fields generate the most AI discoveries?
-problematic_fields = mapper.conn.execute("""
-    SELECT 
-        statement_type,
-        field_name,
-        COUNT(DISTINCT concept) as unique_concepts,
-        COUNT(DISTINCT ticker) as companies
-    FROM ai_discovery_queue
-    GROUP BY statement_type, field_name
-    ORDER BY unique_concepts DESC
-""").fetchall()
-
-print("Fields with most variation:")
-for f in problematic_fields[:10]:
-    print(f"  {f[0]}.{f[1]}: {f[2]} different concepts across {f[3]} companies")
-```
-
----
-
-### **Company-Specific Concepts:**
-
-```python
-# Find concepts used by only 1 company (outliers)
-outliers = mapper.conn.execute("""
-    SELECT 
-        concept,
-        ticker,
-        statement_type,
-        field_name
-    FROM ai_discovery_queue
-    GROUP BY concept, statement_type, field_name
-    HAVING COUNT(DISTINCT ticker) = 1
-""").fetchall()
-
-print("Company-specific concepts:")
-for o in outliers:
-    print(f"  {o[1]} uses {o[0]} for {o[2]}.{o[3]}")
-```
-
----
-
-## 🔄 Integration with Mapping Manager
-
-The discoveries integrate with the existing `XBRLMappingManager` methods:
-
-```python
-mapper = XBRLMappingManager('xbrl_mappings_multi.duckdb')
-
-# Get promotion candidates (includes AI discoveries)
-candidates = await mapper.get_promotion_candidates(
-    statement_type='balance',
-    limit=10
-)
-
-# Promote to core mapping
-await mapper.promote_ai_to_core(
+mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
+asyncio.run(mapper.promote_ai_to_core(
     statement_type='balance',
     field_name='long_term_investments',
-    concept='MarketableSecuritiesNoncurrent'
-)
+    concept='MarketableSecuritiesNoncurrent',
+))
+mapper.close()
 ```
 
 ---
 
-## ⚠️ Important Notes
+## Recommended workflow
 
-### **1. Automatic vs Manual:**
-- ✅ Logging is **automatic** - no code changes needed
-- ✅ Review is **manual** - you decide what to promote
+**After each bulk import run:**
+- Check `missed_concepts` for any `api_failure` rows — may indicate a key or network issue
+- Review `ai_discovery_queue` for new concepts with `COUNT(*) >= 2` — these already enrich Pass 1
 
-### **2. Database Location:**
-- Default: `xbrl_mappings_multi.duckdb` in project root
-- Shared across all extractions
-- Persists between runs
-
-### **3. Error Handling:**
-- If database logging fails, extraction still succeeds
-- Discoveries are printed to console
-- Error message shows what went wrong
-
-### **4. Performance:**
-- Minimal overhead (~0.1 seconds per discovery)
-- Doesn't slow down extraction
-- No extra AI calls
-
----
-
-## ✅ Benefits
-
-1. **Track what AI finds** - See which concepts work across companies
-2. **Evidence-based mapping** - Promote concepts with high usage
-3. **Company outliers** - Identify company-specific patterns
-4. **Data quality insights** - Understand coverage gaps
-5. **Audit trail** - Know when and why concepts were added
-
----
-
-## 🎯 Recommended Workflow
-
-### **Weekly:**
-1. Extract 10-20 companies
-2. Review AI discovery queue
-3. Promote high-confidence concepts (3+ companies)
-
-### **Monthly:**
-1. Run analytics on discovery patterns
-2. Update all mapping files with promoted concepts
-3. Clear reviewed/approved discoveries
-4. Document changes in Git
-
-### **Quarterly:**
-1. Analyze company-specific concepts
-2. Consider adding company override mappings
-3. Review and clean up discovery queue
-
----
-
-**Your AI discoveries are now being tracked in the database!** 🎉
-
-Next time you extract financial statements, check the database to see what the AI found!
+**Periodically (e.g. monthly):**
+- Promote concepts seen across 3+ companies from `ai_discovery_queue` to the static `.py` files
+- Review `missed_concepts` with `no_match` — identify XBRL tags worth adding manually to the mapping

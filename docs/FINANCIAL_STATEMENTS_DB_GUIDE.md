@@ -95,6 +95,34 @@ results = db.insert_all_statements(income_df, balance_df, cashflow_df)
 - Inserted cash flow: AAPL 10-K 2024-09-28 (90.0% coverage)
 ```
 
+The bulk import and API paths call `log_extraction()` automatically after each filing.
+To log manually when using the extractors directly:
+
+```python
+db.log_extraction(
+    ticker='AAPL',
+    filing_type='10-K',
+    fiscal_year=2024,
+    fiscal_quarter=None,
+    statements_extracted='income,balance,cashflow',
+    overall_coverage_pct=89.6,
+    success=True,
+    execution_time_seconds=12.4,
+)
+```
+
+Query the log:
+
+```python
+db.conn.execute("""
+    SELECT ticker, filing_type, fiscal_year, statements_extracted,
+           overall_coverage_pct, success, execution_time_seconds
+    FROM extraction_log
+    ORDER BY extraction_date DESC
+    LIMIT 20
+""").fetchdf()
+```
+
 ---
 
 ### **3. Query Data**

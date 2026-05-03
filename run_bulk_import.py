@@ -109,9 +109,9 @@ Examples:
     )
 
     parser.add_argument(
-        '--ai',
+        '--no-ai',
         action='store_true',
-        help='Enable AI fallback for better coverage (slower)'
+        help='Disable AI fallback (faster, lower coverage — not recommended for production)'
     )
     
     parser.add_argument(
@@ -150,7 +150,7 @@ Examples:
     print(f"Form:             {form}")
     print(f"Periods:          {args.periods}")
     print(f"Database:         {args.db}")
-    print(f"AI Fallback:      {'Enabled' if args.ai else 'Disabled'}")
+    print(f"AI Fallback:      {'Disabled' if args.no_ai else 'Enabled'}")
     print(f"Skip Existing:    {'No' if args.no_skip else 'Yes'}")
     print(f"Rate Limit:       {args.delay}s extra (edgartools has built-in limiter)")
     print(f"Concurrency:      {args.concurrency} tickers in parallel")
@@ -179,7 +179,7 @@ Examples:
             db_path=args.db,
             log_file=args.log,
             output_dir=args.output,
-            use_ai_fallback=args.ai,
+            use_ai_fallback=not args.no_ai,
             skip_existing=not args.no_skip,
             rate_limit_delay=args.delay,
             form=form,

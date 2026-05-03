@@ -64,12 +64,17 @@ def compute_wacc(
     beta_override: float | None = None,
     cost_of_debt_override: float | None = None,
     tax_rate_override: float | None = None,
+    annual_income_df: pd.DataFrame | None = None,
 ) -> "WaccDetail":
     from dcf.assumptions import WaccDetail
 
     beta_raw = beta_override if beta_override is not None else (get_beta(ticker) or 1.0)
     tax_rate = tax_rate_override if tax_rate_override is not None else compute_effective_tax_rate(income_df)
-    kd = cost_of_debt_override if cost_of_debt_override is not None else compute_cost_of_debt(income_df, balance_df)
+
+    # Annual income gives a full-year interest expense, yielding the correct annual kd.
+    # Fall back to quarterly income only when annual data is unavailable.
+    kd_income = annual_income_df if (annual_income_df is not None and not annual_income_df.empty) else income_df
+    kd = cost_of_debt_override if cost_of_debt_override is not None else compute_cost_of_debt(kd_income, balance_df)
 
     latest = balance_df.iloc[-1] if not balance_df.empty else pd.Series(dtype=float)
     total_debt = (
@@ -77,11 +82,29 @@ def compute_wacc(
         + _coerce(latest.get("current_portion_long_term_debt"))
         + _coerce(latest.get("long_term_debt"))
     )
-    diluted_shares = float(
-        income_df["diluted_shares"].dropna().iloc[-1]
-        if not income_df["diluted_shares"].dropna().empty
-        else 0
-    )
+
+    # Shares: prefer quarterly (most recent); fall back to annual; then derive from net_income/EPS.
+    qshares = income_df["diluted_shares"].dropna() if "diluted_shares" in income_df.columns else pd.Series(dtype=float)
+    diluted_shares = float(qshares.iloc[-1]) if not qshares.empty else 0.0
+    if diluted_shares == 0 and annual_income_df is not None and not annual_income_df.empty:
+        ashares = annual_income_df["diluted_shares"].dropna() if "diluted_shares" in annual_income_df.columns else pd.Series(dtype=float)
+        if not ashares.empty:
+            diluted_shares = float(ashares.iloc[0])  # annual sorted newest-first
+    if diluted_shares == 0:
+        # Derive from net_income / diluted_eps: quarterly first (iloc[-1] = newest, sorted ASC),
+        # then annual (iloc[0] = newest, sorted DESC).
+        for df, idx in [(income_df, -1), (annual_income_df, 0)]:
+            if df is None or df.empty:
+                continue
+            try:
+                ni = abs(float(df["net_income"].dropna().iloc[idx]))
+                eps = abs(float(df["diluted_eps"].dropna().iloc[idx]))
+                if ni > 0 and eps > 0:
+                    diluted_shares = ni / eps
+                    break
+            except (IndexError, KeyError, ValueError):
+                continue
+
     market_cap = current_price * diluted_shares
 
     de_hist = total_debt / market_cap if market_cap > 0 else 0

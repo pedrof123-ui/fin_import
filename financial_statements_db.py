@@ -484,6 +484,29 @@ class FinancialStatementsDB:
         print(f"Inserted cash flow: {ticker} {filing_type} {period_end_date} ({coverage_pct:.1f}% coverage)")
         return True
     
+    def log_extraction(
+        self,
+        ticker: str,
+        filing_type: str,
+        fiscal_year: Optional[int],
+        fiscal_quarter: Optional[int],
+        statements_extracted: str,
+        overall_coverage_pct: float,
+        success: bool,
+        error_message: Optional[str] = None,
+        execution_time_seconds: Optional[float] = None,
+    ):
+        """Write one row to extraction_log per filing processed."""
+        self.conn.execute("""
+            INSERT INTO extraction_log (
+                ticker, filing_type, fiscal_year, fiscal_quarter,
+                statements_extracted, overall_coverage_pct, success,
+                error_message, execution_time_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [ticker, filing_type, fiscal_year, fiscal_quarter,
+              statements_extracted, overall_coverage_pct, success,
+              error_message, execution_time_seconds])
+
     def insert_all_statements(
         self, 
         income_df: Optional[pd.DataFrame] = None,

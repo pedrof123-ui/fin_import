@@ -251,9 +251,14 @@ def forecast_assumptions(
         cogs_ser = inc_a["revenue"] - inc_a["gross_profit"]
     hist_cogs = _safe_ratio(cogs_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
 
-    # SG&A % of revenue
+    # SG&A % of revenue — fall back to gross_profit - operating_income when not reported separately
     sga_ser = inc_a["selling_general_admin"] if "selling_general_admin" in inc_a.columns else pd.Series(dtype=float)
     hist_sga = _safe_ratio(sga_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
+    if len(hist_sga) < 2 and "gross_profit" in inc_a.columns and "operating_income" in inc_a.columns:
+        residual = (inc_a["gross_profit"] - inc_a["operating_income"]).clip(lower=0)
+        inferred = _safe_ratio(residual, inc_a["revenue"]).dropna().values
+        if len(inferred) >= 2:
+            hist_sga = inferred
 
     # R&D % of revenue — may be all-null for many companies
     rd_ser = inc_a["research_development"] if "research_development" in inc_a.columns else pd.Series(dtype=float)

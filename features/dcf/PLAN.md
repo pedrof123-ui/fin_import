@@ -8,6 +8,7 @@
 **Phase 4 — COMPLETE** (2026-04-23): Polish
 **Phase 5 — COMPLETE** (2026-04-28): Granular P&L, DSO/DPO/DIO NWC, TV decomposition, UI improvements
 **Phase 6 — COMPLETE** (2026-04-30): Revenue forecasting overhaul, period dates, equity bridge, XBRL fixes
+**Phase 7 — COMPLETE** (2026-05-03): EBITDA, Income Tax, Net Income Margin, proforma EPS
 
 ---
 
@@ -169,6 +170,30 @@ web/lib/
 - `DcfFcffTable.tsx`: equity bridge extended to `∑PV FCFFs + PV Terminal = EV − Net Debt = Equity ÷ Diluted Shares = Intrinsic Value/Share`; receives `netDebt`, `equityValue`, `dilutedShares`, `intrinsicValue` props
 - `StatementViewer.tsx`: period end date in column headers; shares-outstanding fields formatted without `$` prefix
 - `web/lib/dcf-types.ts`: `HistoricalRow` interface gains `period_end_date: string | null`
+
+---
+
+---
+
+## Phase 7 changes (2026-05-03)
+
+### Backend
+
+- `assumptions.py`: `HistoricalRow` gains `ebitda`, `income_tax_expense`, `pretax_income` fields (all `float | None`, default `None`)
+- `model.py`: `_build_historical_rows()` computes `ebitda = operating_income + abs(D&A)`; populates `income_tax_expense` (abs-normalised, provider sign-agnostic) and `pretax_income` from annual income statement
+- `model.py`: `_build_proforma_rows()` now accepts `shares` parameter; computes `pretax_income = ebit − interest + other`, `income_tax_expense = pretax × tax_rate`, `ebitda = ebit + D&A`, `diluted_eps = net_income / shares` (shares held flat from last actual period)
+- `model.py`: `run_dcf()` passes `shares` to `_build_proforma_rows()`
+
+### Frontend
+
+- `dcf-types.ts`: `HistoricalRow` interface extended with `ebitda`, `income_tax_expense`, `pretax_income`
+- `DcfStatements.tsx`:
+  - "Operating Income" row renamed to "EBIT"
+  - "Op Margin %" sub-label renamed to "EBIT Margin %"
+  - EBITDA row added (key metrics highlight, EBITDA Margin % sub-row) after EBIT
+  - Income Tax row added (Effective Tax Rate sub-row = `income_tax_expense / pretax_income`) after EBITDA
+  - Net Income Margin % sub-row added under Net Income
+  - Proforma Diluted EPS now populated (was `—` in all proforma columns)
 
 ---
 

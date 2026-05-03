@@ -4,6 +4,7 @@ Supports both annual (10-K / FY) and quarterly (10-Q / Q) filings.
 """
 
 import asyncio
+import time
 import pandas as pd
 from fastapi import HTTPException
 from edgar import Company
@@ -53,8 +54,22 @@ async def import_ticker(
         if not force and db.filing_exists(ticker, period_end):
             continue
 
+        t0 = time.monotonic()
         n_ok, errs = await _extract_and_insert(filing, ticker, year, form, db, quarter=quarter)
+        elapsed = time.monotonic() - t0
         errors.extend(errs)
+
+        db.log_extraction(
+            ticker=ticker,
+            filing_type=form,
+            fiscal_year=year,
+            fiscal_quarter=quarter,
+            statements_extracted='income,balance,cashflow' if n_ok == 3 else f"{n_ok}/3 ok",
+            overall_coverage_pct=None,
+            success=n_ok > 0,
+            error_message='; '.join(errs) if errs else None,
+            execution_time_seconds=elapsed,
+        )
 
         if n_ok > 0:
             processed += 1
@@ -87,7 +102,7 @@ async def _extract_and_insert(
         ("cashflow", extract_cash_flow, db.insert_cash_flow),
     ]:
         try:
-            df = await extractor(filing, ticker, form, year, quarter=quarter, use_ai_fallback=False)
+            df = await extractor(filing, ticker, form, year, quarter=quarter, use_ai_fallback=True)
             inserter(df)
             n_ok += 1
         except Exception as e:

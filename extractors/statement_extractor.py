@@ -3,7 +3,9 @@ Shared financial statement extractor core.
 Parameterized by statement type — used by income, balance, and cash flow wrappers.
 """
 
+import asyncio
 import pandas as pd
+from pathlib import Path
 from typing import Optional
 from .filing import parse_date
 
@@ -65,20 +67,19 @@ def _log_ai_discoveries(
     ticker: str,
     filing_date,
     most_recent_period: str,
+    mapping_manager,
 ):
     from datetime import date as date_type
     try:
-        from xbrl_mapping_manager_multi_statement import XBRLMappingManager
-        mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
         filing_date_obj = date_type.fromisoformat(str(filing_date)) if filing_date else None
-        period_date_obj = date_type.fromisoformat(str(most_recent_period)) if most_recent_period else None
+        period_date_obj = date_type.fromisoformat(str(most_recent_period)[:10]) if most_recent_period else None
         logged_count = 0
         for item in ai_discovered:
             field_row = result_df[result_df['Field'] == item['field']]
             value = field_row.iloc[0]['Value'] if not field_row.empty else None
             if value is not None:
                 try:
-                    mapper.conn.execute("""
+                    mapping_manager.conn.execute("""
                         INSERT OR IGNORE INTO ai_discovery_queue
                         (ticker, statement_type, field_name, concept, value, filing_date, period_end_date)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -89,7 +90,6 @@ def _log_ai_discoveries(
                     print(f"    Failed to log {item['concept']}: {e}")
         if logged_count > 0:
             print(f"  Logged {logged_count} AI discoveries to database")
-        mapper.close()
     except Exception as e:
         print(f"  Failed to log to database: {e}")
 
@@ -128,11 +128,29 @@ async def extract_statement(
         if period_date:
             quarter = ((period_date.month - 1) // 3) + 1
 
+    # Open one mapping manager for enrichment, Pass 2, and miss logging
+    mapping_manager = None
     try:
-        xbrl = filing.xbrl()
+        from xbrl_mapping_manager_multi_statement import XBRLMappingManager
+        _db_path = str(Path(__file__).parent.parent / "data" / "xbrl_mappings_multi.duckdb")
+        mapping_manager = XBRLMappingManager(_db_path)
+    except Exception as e:
+        print(f"  Warning: mapping DB unavailable ({e})")
+
+    # Enrich static mapping with AI-discovered concepts validated across >= 2 filings
+    if mapping_manager is not None:
+        try:
+            mapping = mapping_manager.get_enriched_mapping(statement_type, mapping)
+        except Exception as e:
+            print(f"  Warning: mapping enrichment failed ({e})")
+
+    try:
+        xbrl = await asyncio.to_thread(filing.xbrl)
         if xbrl is None:
             raise ValueError("Unable to extract XBRL data from filing")
     except Exception as e:
+        if mapping_manager:
+            mapping_manager.close()
         raise ValueError(f"Error accessing XBRL data: {e}")
 
     try:
@@ -153,6 +171,8 @@ async def extract_statement(
         if stmt_df.empty:
             raise ValueError(f"{label} DataFrame is empty")
     except Exception as e:
+        if mapping_manager:
+            mapping_manager.close()
         raise ValueError(f"Error retrieving {label}: {e}")
 
     # edgartools appends suffixes like " (FY)", " (Q1)", " (YTD)" to duration-based
@@ -163,24 +183,16 @@ async def extract_statement(
         if isinstance(col, str) and len(col) >= 10 and col[4] == '-' and col[7] == '-'
     ]
     if not date_columns:
+        if mapping_manager:
+            mapping_manager.close()
         raise ValueError(f"No date columns found in {label}")
 
     most_recent_period = sorted(date_columns, key=lambda c: c[:10], reverse=True)[0]
+    period_end_date = most_recent_period[:10]
     print(f"\nAvailable periods: {', '.join(date_columns)}")
     print(f"Using most recent period: {most_recent_period}")
     if use_ai_fallback:
         print("AI fallback enabled (batch mode)")
-
-    # Enrich static mapping with previously AI-discovered concepts (free DB read, no AI call).
-    try:
-        from pathlib import Path as _Path
-        from xbrl_mapping_manager_multi_statement import XBRLMappingManager
-        _db = _Path(__file__).parent.parent / "data" / "xbrl_mappings_multi.duckdb"
-        _mgr = XBRLMappingManager(str(_db))
-        mapping = _mgr.get_enriched_mapping(statement_type, mapping)
-        _mgr.close()
-    except Exception as e:
-        print(f"  Warning: mapping enrichment skipped ({e})")
 
     print(f"\nExtracting {len(mapping)} line items...")
 
@@ -202,14 +214,6 @@ async def extract_statement(
     ai_discovered: list[dict] = []
     if use_ai_fallback and unfound_fields:
         print(f"  Pass 2 (AI): resolving {len(unfound_fields)} unfound fields...")
-
-        mapping_manager = None
-        try:
-            from xbrl_mapping_manager_multi_statement import XBRLMappingManager
-            mapping_manager = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
-        except Exception as e:
-            print(f"  DB lookup unavailable: {e}")
-
         try:
             from extractors.ai_batch_helper import batch_ai_resolve_unfound_fields
             ai_results = await batch_ai_resolve_unfound_fields(
@@ -220,6 +224,8 @@ async def extract_statement(
                 statement_type=statement_type,
                 ticker=ticker,
                 mapping_manager=mapping_manager,
+                filing_date=filing_date,
+                period_end_date=period_end_date,
             )
             for r in results:
                 if r['Field'] in ai_results:
@@ -235,13 +241,10 @@ async def extract_statement(
         except Exception as e:
             print(f"  Pass 2 failed: {e}")
 
-        if mapping_manager:
-            mapping_manager.close()
-
     result_df = pd.DataFrame(results)
     result_df.insert(0, 'Ticker', ticker)
     result_df.insert(1, 'Fiscal_Year', year)
-    result_df.insert(2, 'Period_End_Date', most_recent_period[:10])
+    result_df.insert(2, 'Period_End_Date', period_end_date)
     result_df.insert(3, 'Filing_Date', filing_date)
     result_df.insert(4, 'Filing_Type', form_type)
     result_df.insert(5, 'Period_Type', period_type)
@@ -254,7 +257,25 @@ async def extract_statement(
 
     if ai_discovered:
         print(f"\nAI discovered {len(ai_discovered)} new concept(s)!")
-        _log_ai_discoveries(ai_discovered, result_df, statement_type, ticker, filing_date, most_recent_period)
+        _log_ai_discoveries(ai_discovered, result_df, statement_type, ticker, filing_date, most_recent_period, mapping_manager)
+
+    # Log every field that remained unfound after all passes
+    if mapping_manager is not None:
+        still_unfound = [r['Field'] for r in results if r['Status'] == 'not_found']
+        if still_unfound:
+            reason = 'ai_disabled' if not use_ai_fallback else 'no_match'
+            for field_name in still_unfound:
+                mapping_manager.log_missed_concept(
+                    ticker=ticker,
+                    statement_type=statement_type,
+                    reason=reason,
+                    filing_date=filing_date,
+                    period_end_date=period_end_date,
+                    field_name=field_name,
+                )
+
+    if mapping_manager:
+        mapping_manager.close()
 
     if data_quality < 0.5:
         print(f"  WARNING: Low data quality (<50%). Check if correct filing was retrieved.")
