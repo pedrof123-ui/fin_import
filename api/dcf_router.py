@@ -45,6 +45,7 @@ class RunRequest(BaseModel):
     dio: float | None = None
     cost_of_debt: float | None = None
     tax_rate: float | None = None
+    y1_quarter_revenues: dict[str, float] | None = None  # keys "1"–"4"
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,10 @@ def _build_overrides(req: RunRequest) -> UserOverrides:
         )
         for k, v in req.years.items()
     }
+    q_rev = (
+        {int(k): v for k, v in req.y1_quarter_revenues.items()}
+        if req.y1_quarter_revenues else None
+    )
     return UserOverrides(
         years=year_map,
         terminal_growth_rate=req.terminal_growth_rate,
@@ -86,6 +91,7 @@ def _build_overrides(req: RunRequest) -> UserOverrides:
         dio=req.dio,
         cost_of_debt_override=req.cost_of_debt,
         tax_rate_override=req.tax_rate,
+        y1_quarter_revenues=q_rev,
     )
 
 

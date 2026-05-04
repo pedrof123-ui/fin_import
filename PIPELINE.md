@@ -228,6 +228,7 @@ All three statement insert methods use upsert semantics (`INSERT OR REPLACE`), s
 | 12 | `dcf/wacc.py` | Diluted shares: three-level fallback (quarterly → annual income statement → derived from `net_income / diluted_eps`). Previously `market_cap = 0` when shares were absent, making D_w = 100% and WACC = kd × (1 − tax) only |
 | 13 | `dcf/model.py` | `diluted_shares` for the equity bridge now consistent with `wacc_detail.market_cap` — previously used a separate lookup that fell back to 1, inflating intrinsic value by ~300M× |
 | 14 | `dcf/model.py` | `DcfResult.warnings` added; surfaces data quality issues (zero market cap, high D_w, low WACC, terminal growth clamped). Displayed as amber banners in `DcfViewer.tsx` |
+| 15 | `dcf/model.py` | Historical EBIT fallback: when `operating_income` is null (common with pharma/healthcare XBRL filers), EBIT is derived as `gross_profit − SG&A − R&D` so historical EBIT/EBITDA rows populate instead of showing "—" |
 
 ---
 

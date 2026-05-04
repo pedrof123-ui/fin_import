@@ -11,6 +11,7 @@ class YearOverride:
     interest_pct: float | None = None
     other_pct: float | None = None
     capex_pct_revenue: float | None = None
+    da_pct: float | None = None
 
 
 @dataclass
@@ -25,6 +26,7 @@ class UserOverrides:
     dio: float | None = None
     cost_of_debt_override: float | None = None
     tax_rate_override: float | None = None
+    y1_quarter_revenues: dict[int, float] | None = None  # keys 1-4
 
 
 @dataclass
@@ -38,6 +40,7 @@ class YearForecast:
     interest_pct: float
     other_pct: float
     capex_pct_revenue: float
+    da_pct: float = 0.03
 
 
 @dataclass
@@ -106,6 +109,7 @@ class HistoricalRow:
     ebitda: float | None = None
     income_tax_expense: float | None = None
     pretax_income: float | None = None
+    is_actual: bool = False
 
 
 @dataclass
@@ -137,3 +141,4 @@ class DcfResult:
     sensitivity: list[SensitivityCell]
 
     warnings: List[str] = field(default_factory=list)
+    y1_quarters: list = field(default_factory=list)

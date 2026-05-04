@@ -39,42 +39,12 @@ def _nwc_from_days(
     return receivables + inventory - payables
 
 
-def _da_pct(income_df: pd.DataFrame, cashflow_df: pd.DataFrame | None = None) -> float:
-    """
-    Estimate D&A as % of revenue. Prefers CF statement since most companies
-    report D&A there (as a non-cash add-back) rather than on the income statement.
-    """
-    rev = _col(income_df, "revenue").replace(0, np.nan)
-
-    if cashflow_df is not None and not cashflow_df.empty:
-        da_cf = _col(cashflow_df, "depreciation_amortization")
-        if da_cf.abs().gt(0).any() and "period_end_date" in income_df.columns and "period_end_date" in cashflow_df.columns:
-            merged = pd.merge(
-                income_df[["period_end_date", "revenue"]],
-                cashflow_df[["period_end_date", "depreciation_amortization"]],
-                on="period_end_date",
-                how="inner",
-            )
-            if not merged.empty:
-                rev_m = merged["revenue"].replace(0, np.nan)
-                da_m = merged["depreciation_amortization"].fillna(0).abs()
-                ratio = (da_m / rev_m).dropna()
-                ratio = ratio[ratio > 0]
-                if not ratio.empty:
-                    return float(ratio.mean())
-
-    da = _col(income_df, "depreciation_amortization").abs()
-    ratio = pd.Series((da / rev).values).dropna()
-    ratio = ratio[ratio > 0]
-    return float(ratio.mean()) if len(ratio) > 0 else 0.03
-
 
 def _build_fcff_series(
     year_forecasts: list,
     last_actual_revenue: float,
     last_actual_cogs: float,
     tax_rate: float,
-    da_pct: float,
     nwc_assumptions,
     wacc: float,
 ) -> list:
@@ -94,7 +64,7 @@ def _build_fcff_series(
         rd = yf.rd_pct or 0.0
         ebit = rev * (1.0 - yf.cogs_pct - yf.sga_pct - rd)
         nopat = ebit * (1 - tax_rate)
-        da = rev * da_pct
+        da = rev * yf.da_pct
         capex = rev * yf.capex_pct_revenue
         cogs = rev * yf.cogs_pct
         nwc = _nwc_from_days(rev, cogs, nwc_assumptions.dso, nwc_assumptions.dpo, nwc_assumptions.dio)
@@ -183,6 +153,12 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
         da = abs(da_raw) if da_raw is not None else None
 
         op_income = _val(row, "operating_income")
+        if op_income is None:
+            gp = _val(row, "gross_profit")
+            if gp is not None:
+                sga = _val(row, "selling_general_admin") or 0.0
+                rd = _val(row, "research_development") or 0.0
+                op_income = gp - abs(sga) - abs(rd)
         ebitda = (op_income + da) if op_income is not None and da is not None else op_income
 
         tax_raw = _val(row, "income_tax_expense")
@@ -214,7 +190,9 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
     return rows
 
 
-def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: float, shares: float | None = None) -> list:
+def _build_proforma_rows(
+    year_forecasts: list, fcff_series: list, tax_rate: float, last_annual_year: int, shares: float | None = None
+) -> list:
     from dcf.assumptions import HistoricalRow
 
     rows = []
@@ -233,7 +211,7 @@ def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: floa
 
         rows.append(
             HistoricalRow(
-                period_label=f"Y+{yf.year}",
+                period_label=f"FY {last_annual_year + yf.year}",
                 revenue=rev,
                 gross_profit=gross_profit,
                 operating_income=fc.ebit,
@@ -254,6 +232,253 @@ def _build_proforma_rows(year_forecasts: list, fcff_series: list, tax_rate: floa
             )
         )
     return rows
+
+
+def _build_y1_quarter_rows(
+    quarterly: dict,
+    annual: dict,
+    year_forecast_y1: object,
+    tax_rate: float,
+    shares: float | None,
+    y1_quarter_revenues: dict | None,
+) -> tuple:
+    """Build 4 quarterly HistoricalRows for Y1, mixing actuals and seasonality-based estimates.
+
+    Returns (rows, y1_total_revenue).
+    """
+    from dcf.assumptions import HistoricalRow
+
+    inc_q = quarterly["income"].copy().sort_values("period_end_date")
+    cf_q = quarterly["cashflow"].copy().sort_values("period_end_date") if not quarterly["cashflow"].empty else pd.DataFrame()
+    bs_q = quarterly["balance"].copy().sort_values("period_end_date") if not quarterly["balance"].empty else pd.DataFrame()
+
+    last_annual_inc = annual["income"].iloc[0]
+    last_annual_date_raw = last_annual_inc.get("period_end_date")
+    if last_annual_date_raw is None or pd.isna(last_annual_date_raw):
+        return [], float(year_forecast_y1.revenue)
+
+    last_annual_date = pd.Timestamp(last_annual_date_raw)
+    y1_end_date = last_annual_date + pd.DateOffset(years=1)
+    prior_start_date = last_annual_date - pd.DateOffset(years=1)
+
+    # Fiscal year used consistently for all Y1 quarter labels
+    _fy_raw = last_annual_inc.get("fiscal_year")
+    y1_fiscal_year = (int(_fy_raw) + 1) if _fy_raw is not None and pd.notna(_fy_raw) else (last_annual_date.year + 1)
+
+    # Y1 actual quarterly rows (period after last annual, within one year)
+    inc_q_dates = pd.to_datetime(inc_q["period_end_date"])
+    y1_mask = (inc_q_dates > last_annual_date) & (inc_q_dates <= y1_end_date)
+    y1_actuals_inc = inc_q[y1_mask.values].sort_values("period_end_date").reset_index(drop=True)
+    n_actuals = len(y1_actuals_inc)
+
+    # Prior-year quarterly rows for seasonality
+    prior_mask = (inc_q_dates > prior_start_date) & (inc_q_dates <= last_annual_date)
+    prior_q_inc = inc_q[prior_mask.values].sort_values("period_end_date").reset_index(drop=True)
+    prior_annual_rev = _val(last_annual_inc, "revenue") or 0.0
+
+    def _is_ytd(rows: pd.DataFrame) -> bool:
+        """True if revenues monotonically non-decrease — indicates YTD/cumulative filing."""
+        revs = [_val(rows.iloc[i], "revenue") or 0.0 for i in range(min(len(rows), 4))]
+        return len(revs) >= 2 and all(revs[i] >= revs[i - 1] * 0.95 for i in range(1, len(revs)))
+
+    # Use per-dataset YTD flags to avoid false positives from seasonal high-Q1 filers
+    ytd_prior = _is_ytd(prior_q_inc)
+    ytd_y1 = _is_ytd(y1_actuals_inc) if n_actuals > 1 else False
+
+    def _standalone_revs(rows: pd.DataFrame, annual_rev: float, is_ytd: bool) -> list:
+        revs = [_val(rows.iloc[i], "revenue") or 0.0 for i in range(len(rows))]
+        if is_ytd:
+            standalone = []
+            for i, r in enumerate(revs):
+                standalone.append(r - (revs[i - 1] if i > 0 else 0.0))
+            if len(standalone) == 3:
+                standalone.append(max(0.0, annual_rev - sum(standalone)))
+            while len(standalone) < 4:
+                remaining = max(1, 4 - len(standalone))
+                leftover = max(0.0, annual_rev - sum(standalone))
+                standalone.append(leftover / remaining)
+        else:
+            standalone = list(revs)
+            while len(standalone) < 4:
+                remaining = max(1, 4 - len(standalone))
+                leftover = max(0.0, annual_rev - sum(standalone))
+                standalone.append(leftover / remaining)
+        return standalone[:4]
+
+    prior_standalone = _standalone_revs(prior_q_inc, prior_annual_rev, ytd_prior)
+    total_prior = sum(r for r in prior_standalone if r > 0)
+    seasonality = [r / total_prior for r in prior_standalone] if total_prior > 0 else [0.25] * 4
+
+    # Base estimated quarterly revenues from seasonality applied to annual model forecast
+    annual_model_rev = float(year_forecast_y1.revenue)
+    quarterly_revs = [annual_model_rev * s for s in seasonality]
+
+    # Apply user quarterly revenue overrides (only for estimated quarters)
+    if y1_quarter_revenues:
+        for qi, rev in y1_quarter_revenues.items():
+            idx = int(qi) - 1
+            if n_actuals <= idx < 4:
+                quarterly_revs[idx] = float(rev)
+
+    # Replace estimates with actuals where reported
+    actual_revs = _standalone_revs(y1_actuals_inc, annual_model_rev, ytd_y1) if n_actuals > 0 else []
+    for i in range(n_actuals):
+        if i < len(actual_revs):
+            quarterly_revs[i] = actual_revs[i]
+
+    y1_total_rev = sum(quarterly_revs)
+
+    # Y1 actual CF and BS rows
+    cf_q_y1 = pd.DataFrame()
+    bs_q_y1 = pd.DataFrame()
+    if not cf_q.empty:
+        cf_dates = pd.to_datetime(cf_q["period_end_date"])
+        cf_q_y1 = cf_q[(cf_dates > last_annual_date) & (cf_dates <= y1_end_date)].sort_values("period_end_date").reset_index(drop=True)
+    if not bs_q.empty:
+        bs_dates = pd.to_datetime(bs_q["period_end_date"])
+        bs_q_y1 = bs_q[(bs_dates > last_annual_date) & (bs_dates <= y1_end_date)].sort_values("period_end_date").reset_index(drop=True)
+
+    # Estimated quarter dates: prior-year same quarter date + 1 year
+    prior_q_dates = []
+    for i in range(len(prior_q_inc)):
+        d = prior_q_inc.iloc[i].get("period_end_date")
+        if d is not None and pd.notna(d):
+            try:
+                prior_q_dates.append(pd.Timestamp(d))
+            except Exception:
+                pass
+
+    def _est_date(q_idx: int) -> str | None:
+        if q_idx < len(prior_q_dates):
+            try:
+                d = prior_q_dates[q_idx]
+                return d.replace(year=d.year + 1).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        if ytd_prior and q_idx == 3:
+            return y1_end_date.strftime("%Y-%m-%d")
+        return None
+
+    rows = []
+    for q_idx in range(4):
+        q_num = q_idx + 1
+        is_actual = q_idx < n_actuals
+        rev = quarterly_revs[q_idx]
+
+        if is_actual:
+            inc_row = y1_actuals_inc.iloc[q_idx]
+            prev_inc = y1_actuals_inc.iloc[q_idx - 1] if q_idx > 0 else None
+            date = str(inc_row.get("period_end_date", ""))[:10]
+
+            def _sa(field, row=inc_row, prev=prev_inc):
+                v = _val(row, field)
+                if v is None:
+                    return None
+                if ytd_y1 and prev is not None:
+                    p = _val(prev, field)
+                    if p is not None:
+                        v -= p
+                return v
+
+            gross_profit = _sa("gross_profit")
+            if gross_profit is None:
+                cogs_sa = _sa("cost_of_revenue")
+                if cogs_sa is not None:
+                    gross_profit = rev - cogs_sa
+
+            op_income = _sa("operating_income")
+            net_income = _sa("net_income")
+            tax_raw = _sa("income_tax_expense")
+            income_tax = abs(tax_raw) if tax_raw is not None else None
+            pretax = _sa("pretax_income")
+
+            cf_row = cf_q_y1.iloc[q_idx] if q_idx < len(cf_q_y1) else pd.Series(dtype=float)
+            prev_cf = cf_q_y1.iloc[q_idx - 1] if (q_idx > 0 and q_idx - 1 < len(cf_q_y1)) else None
+            da_cf = _val(cf_row, "depreciation_amortization")
+            if da_cf is not None and ytd_y1 and prev_cf is not None:
+                p = _val(prev_cf, "depreciation_amortization")
+                if p is not None:
+                    da_cf -= p
+            da_raw = da_cf if da_cf is not None else _sa("depreciation_amortization")
+            da = abs(da_raw) if da_raw is not None else None
+            ebitda = (op_income + da) if op_income is not None and da is not None else op_income
+
+            capex_raw = _val(cf_row, "capital_expenditures")
+            if capex_raw is not None and ytd_y1 and prev_cf is not None:
+                p = _val(prev_cf, "capital_expenditures")
+                if p is not None:
+                    capex_raw -= p
+            capex = capex_raw
+
+            bs_row = bs_q_y1.iloc[q_idx] if q_idx < len(bs_q_y1) else pd.Series(dtype=float)
+            total_assets = _val(bs_row, "total_assets")
+            total_debt = _sum_debt(bs_row) if not bs_row.empty else None
+            cash = _val(bs_row, "cash_and_equivalents")
+
+            rows.append(HistoricalRow(
+                period_label=f"Q{q_num} FY{y1_fiscal_year}",
+                period_end_date=date,
+                is_actual=True,
+                revenue=rev,
+                gross_profit=gross_profit,
+                operating_income=op_income,
+                net_income=net_income,
+                depreciation_amortization=da,
+                capital_expenditures=capex,
+                total_assets=total_assets,
+                total_debt=total_debt,
+                cash_and_equivalents=cash,
+                diluted_eps=_sa("diluted_eps"),
+                cost_of_revenue=_sa("cost_of_revenue"),
+                selling_general_admin=_sa("selling_general_admin"),
+                research_development=_sa("research_development"),
+                interest_expense=_sa("interest_expense"),
+                ebitda=ebitda,
+                income_tax_expense=income_tax,
+                pretax_income=pretax,
+            ))
+        else:
+            cogs = rev * year_forecast_y1.cogs_pct
+            gross_profit = rev - cogs
+            rd = year_forecast_y1.rd_pct or 0.0
+            sga = rev * year_forecast_y1.sga_pct
+            rd_amt = rev * rd
+            ebit = rev * (1.0 - year_forecast_y1.cogs_pct - year_forecast_y1.sga_pct - rd)
+            interest = rev * year_forecast_y1.interest_pct
+            other = rev * year_forecast_y1.other_pct
+            pretax = ebit - interest + other
+            income_tax_est = pretax * tax_rate
+            net_income = pretax * (1 - tax_rate)
+            da = rev * year_forecast_y1.da_pct
+            ebitda = ebit + da
+            capex = rev * year_forecast_y1.capex_pct_revenue
+            diluted_eps = net_income / shares if shares and shares > 0 else None
+
+            est_date = _est_date(q_idx)
+            rows.append(HistoricalRow(
+                period_label=f"Q{q_num} FY{y1_fiscal_year}",
+                period_end_date=est_date,
+                is_actual=False,
+                revenue=rev,
+                gross_profit=gross_profit,
+                operating_income=ebit,
+                net_income=net_income,
+                depreciation_amortization=da,
+                capital_expenditures=capex,
+                total_assets=None,
+                total_debt=None,
+                cash_and_equivalents=None,
+                diluted_eps=diluted_eps,
+                cost_of_revenue=cogs,
+                selling_general_admin=sga,
+                research_development=rd_amt if year_forecast_y1.rd_pct is not None else None,
+                interest_expense=interest,
+                ebitda=ebitda,
+                income_tax_expense=income_tax_est,
+                pretax_income=pretax,
+            ))
+
+    return rows, y1_total_rev
 
 
 def _val(row, col: str) -> float | None:
@@ -344,8 +569,6 @@ def run_dcf(
     if overrides and overrides.terminal_growth_rate is not None:
         terminal_growth = overrides.terminal_growth_rate
 
-    da_pct = _da_pct(annual["income"], annual["cashflow"])
-
     # NWC via DSO/DPO/DIO
     nwc_assumptions = compute_nwc_days(annual["balance"], annual["income"])
     if overrides:
@@ -371,12 +594,39 @@ def run_dcf(
     else:
         last_cogs = last_rev * year_forecasts[0].cogs_pct
 
+    # Early shares estimate (for quarterly row EPS; full computation happens later)
+    _sq = quarterly["income"]["diluted_shares"].dropna()
+    _early_shares = float(_sq.iloc[-1]) if not _sq.empty else None
+
+    # Last annual fiscal year for period labels
+    _last_annual_inc = annual["income"].iloc[0]
+    last_annual_year = int(_last_annual_inc.get("fiscal_year", 0)) if pd.notna(_last_annual_inc.get("fiscal_year")) else 0
+
+    # Build Y1 quarterly rows (actuals + seasonality estimates) and get revised Y1 revenue
+    y1_q_overrides = overrides.y1_quarter_revenues if overrides else None
+    y1_quarters, y1_revised_rev = _build_y1_quarter_rows(
+        quarterly=quarterly,
+        annual=annual,
+        year_forecast_y1=year_forecasts[0],
+        tax_rate=wacc_detail.tax_rate,
+        shares=_early_shares,
+        y1_quarter_revenues=y1_q_overrides,
+    )
+
+    # Update Y1 revenue to reflect actuals + estimates, and cascade to Y2-Y5
+    if y1_quarters and y1_revised_rev != year_forecasts[0].revenue:
+        year_forecasts[0].revenue = y1_revised_rev
+        year_forecasts[0].revenue_growth = (y1_revised_rev - last_rev) / last_rev if last_rev != 0 else 0.0
+        prev = y1_revised_rev
+        for yf in year_forecasts[1:]:
+            yf.revenue = prev * (1 + yf.revenue_growth)
+            prev = yf.revenue
+
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,
         last_actual_revenue=last_rev,
         last_actual_cogs=last_cogs,
         tax_rate=wacc_detail.tax_rate,
-        da_pct=da_pct,
         nwc_assumptions=nwc_assumptions,
         wacc=wacc_detail.wacc,
     )
@@ -433,7 +683,7 @@ def run_dcf(
 
     annual_display = {k: v.iloc[:5].reset_index(drop=True) for k, v in annual.items()}
     historical = _build_historical_rows(annual_display)
-    proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate, shares)
+    proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate, last_annual_year, shares)
 
     return DcfResult(
         ticker=ticker,
@@ -457,4 +707,5 @@ def run_dcf(
         proforma=proforma,
         sensitivity=sensitivity,
         warnings=warnings,
+        y1_quarters=y1_quarters,
     )
