@@ -3,6 +3,20 @@ from typing import List
 
 
 @dataclass
+class EarningsEstimate:
+    date: str
+    horizon: str  # "fiscal year" | "fiscal quarter"
+    eps_estimate_avg: float | None
+    eps_estimate_high: float | None
+    eps_estimate_low: float | None
+    eps_analyst_count: int | None
+    revenue_estimate_avg: float | None
+    revenue_estimate_high: float | None
+    revenue_estimate_low: float | None
+    revenue_analyst_count: int | None
+
+
+@dataclass
 class YearOverride:
     revenue_growth: float | None = None
     cogs_pct: float | None = None
@@ -142,3 +156,4 @@ class DcfResult:
 
     warnings: List[str] = field(default_factory=list)
     y1_quarters: list = field(default_factory=list)
+    analyst_estimates: list = field(default_factory=list)

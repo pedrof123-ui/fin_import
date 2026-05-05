@@ -563,6 +563,33 @@ def run_dcf(
         )
 
     year_forecasts = forecast_assumptions(quarterly, annual)
+
+    # Apply analyst estimates before user overrides (user overrides win)
+    from dcf.estimates import fetch_and_cache, apply_to_forecasts, to_dataclass as _to_dc
+    _inc_a = annual["income"]
+    _last_a = _inc_a.iloc[0] if not _inc_a.empty else pd.Series(dtype=float)
+    _last_rev_est = float(_inc_a["revenue"].dropna().iloc[0]) if not _inc_a.empty and _inc_a["revenue"].notna().any() else 0.0
+    _last_year_est = int(_last_a.get("fiscal_year", 0)) if pd.notna(_last_a.get("fiscal_year", None)) else 0
+    _last_date_est = str(_last_a.get("period_end_date", ""))[:10]
+    raw_estimates = fetch_and_cache(ticker, db.conn)
+    year_forecasts, _analyst_q_revs, _analyst_years = apply_to_forecasts(
+        raw_estimates, year_forecasts, _last_rev_est, _last_year_est, _last_date_est, overrides
+    )
+    if _analyst_q_revs:
+        _user_set_y1_growth = (
+            overrides is not None
+            and 1 in overrides.years
+            and overrides.years[1].revenue_growth is not None
+        )
+        if not _user_set_y1_growth:
+            _existing_q = (overrides.y1_quarter_revenues or {}) if overrides else {}
+            _merged_q = {**_analyst_q_revs, **_existing_q}  # user per-quarter values win
+            if overrides:
+                overrides.y1_quarter_revenues = _merged_q
+            else:
+                from dcf.assumptions import UserOverrides as _UO
+                overrides = _UO(y1_quarter_revenues=_merged_q)
+
     year_forecasts = merge_overrides(year_forecasts, overrides)
 
     terminal_growth = DEFAULT_TERMINAL_GROWTH
@@ -613,14 +640,22 @@ def run_dcf(
         y1_quarter_revenues=y1_q_overrides,
     )
 
-    # Update Y1 revenue to reflect actuals + estimates, and cascade to Y2-Y5
-    if y1_quarters and y1_revised_rev != year_forecasts[0].revenue:
+    # Update Y1 revenue to reflect actuals + estimates, and cascade to Y2-Y5.
+    # Y1 is only overridden when it has no analyst annual estimate; when an analyst
+    # estimate anchors Y1, preserve it and skip the cascade entirely.
+    # For years with analyst estimates in the cascade, preserve the absolute analyst
+    # revenue and only recalculate the implied growth rate; for other years, cascade normally.
+    if y1_quarters and y1_revised_rev != year_forecasts[0].revenue and 1 not in _analyst_years:
         year_forecasts[0].revenue = y1_revised_rev
         year_forecasts[0].revenue_growth = (y1_revised_rev - last_rev) / last_rev if last_rev != 0 else 0.0
         prev = y1_revised_rev
         for yf in year_forecasts[1:]:
-            yf.revenue = prev * (1 + yf.revenue_growth)
-            prev = yf.revenue
+            if yf.year in _analyst_years:
+                yf.revenue_growth = (yf.revenue - prev) / prev if prev else yf.revenue_growth
+                prev = yf.revenue
+            else:
+                yf.revenue = prev * (1 + yf.revenue_growth)
+                prev = yf.revenue
 
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,
@@ -685,6 +720,9 @@ def run_dcf(
     historical = _build_historical_rows(annual_display)
     proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate, last_annual_year, shares)
 
+    _today = str(pd.Timestamp.today().date())
+    analyst_estimates = _to_dc([e for e in raw_estimates if e.get("date", "") >= _today])
+
     return DcfResult(
         ticker=ticker,
         intrinsic_value_per_share=float(intrinsic),
@@ -708,4 +746,5 @@ def run_dcf(
         sensitivity=sensitivity,
         warnings=warnings,
         y1_quarters=y1_quarters,
+        analyst_estimates=analyst_estimates,
     )

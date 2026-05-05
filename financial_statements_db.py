@@ -308,8 +308,34 @@ class FinancialStatementsDB:
             )
         """)
 
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS earnings_estimates (
+                ticker VARCHAR NOT NULL,
+                date DATE NOT NULL,
+                horizon VARCHAR NOT NULL,
+                fetched_at TIMESTAMP NOT NULL,
+                eps_avg DOUBLE,
+                eps_high DOUBLE,
+                eps_low DOUBLE,
+                eps_count INTEGER,
+                eps_avg_7d DOUBLE,
+                eps_avg_30d DOUBLE,
+                eps_avg_60d DOUBLE,
+                eps_avg_90d DOUBLE,
+                eps_rev_up_7d INTEGER,
+                eps_rev_down_7d INTEGER,
+                eps_rev_up_30d INTEGER,
+                eps_rev_down_30d INTEGER,
+                rev_avg DOUBLE,
+                rev_high DOUBLE,
+                rev_low DOUBLE,
+                rev_count INTEGER,
+                PRIMARY KEY (ticker, date, horizon, fetched_at)
+            )
+        """)
+
         print("Database schema created/verified")
-    
+
     # ========================================================================
     # INSERT METHODS
     # ========================================================================
