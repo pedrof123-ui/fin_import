@@ -57,10 +57,12 @@ async def batch_ai_resolve_unfound_fields(
         clean = c.split('_', 1)[1] if '_' in c else c
         concept_name_map[clean] = c
 
-    # Unmapped = present in XBRL statement but not in any static mapping entry
+    # Unmapped = present in XBRL statement but not in any static mapping entry.
+    # Strip namespace prefix from mapping entries to match the same bare names used in concept_name_map.
     all_mapped_concepts: set = set()
     for mapped_concepts in mapping_dict.values():
-        all_mapped_concepts.update(mapped_concepts)
+        for c in mapped_concepts:
+            all_mapped_concepts.add(c.split('_', 1)[1] if '_' in c else c)
 
     unmapped_concepts = [
         name for name in concept_name_map.keys()

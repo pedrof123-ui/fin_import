@@ -39,7 +39,8 @@ def _extract_value(
     found_concepts: list[str] = []
 
     for concept in concepts:
-        rows = main_items[main_items['bare_concept'] == concept]
+        bare = concept.split('_', 1)[1] if '_' in concept else concept
+        rows = main_items[main_items['bare_concept'] == bare]
         if not rows.empty and year_column in rows.columns:
             value = rows.iloc[0][year_column]
             if pd.notna(value):
@@ -108,6 +109,7 @@ async def extract_statement(
     quarter: Optional[int] = None,
     use_ai_fallback: bool = True,
     max_fields: set = frozenset(),
+    prior_period_fields: frozenset = frozenset(),
 ) -> pd.DataFrame:
     print(f"\n{'='*80}\nEXTRACTING {label}\n{'='*80}")
 
@@ -126,6 +128,7 @@ async def extract_statement(
     if not is_annual and period_of_report and not quarter:
         period_date = parse_date(period_of_report)
         if period_date:
+            # Approximate with calendar quarter; callers should pass quarter explicitly.
             quarter = ((period_date.month - 1) // 3) + 1
 
     # Open one mapping manager for enrichment, Pass 2, and miss logging
@@ -187,7 +190,9 @@ async def extract_statement(
             mapping_manager.close()
         raise ValueError(f"No date columns found in {label}")
 
-    most_recent_period = sorted(date_columns, key=lambda c: c[:10], reverse=True)[0]
+    sorted_date_columns = sorted(date_columns, key=lambda c: c[:10], reverse=True)
+    most_recent_period = sorted_date_columns[0]
+    prior_period = sorted_date_columns[1] if len(sorted_date_columns) >= 2 else None
     period_end_date = most_recent_period[:10]
     print(f"\nAvailable periods: {', '.join(date_columns)}")
     print(f"Using most recent period: {most_recent_period}")
@@ -201,7 +206,8 @@ async def extract_statement(
     unfound_fields = []
 
     for field_name in mapping:
-        value, concept_used = _extract_value(stmt_df, field_name, most_recent_period, mapping, aggregation_fields, max_fields)
+        col = prior_period if (field_name in prior_period_fields and prior_period) else most_recent_period
+        value, concept_used = _extract_value(stmt_df, field_name, col, mapping, aggregation_fields, max_fields)
         if value is not None:
             found_count += 1
             results.append({'Status': 'found', 'Field': field_name, 'Value': value, 'Concept': concept_used})

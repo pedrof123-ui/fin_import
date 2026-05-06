@@ -62,7 +62,8 @@ def _build_fcff_series(
     for yf in year_forecasts:
         rev = yf.revenue
         rd = yf.rd_pct or 0.0
-        ebit = rev * (1.0 - yf.cogs_pct - yf.sga_pct - rd)
+        other_opex = yf.other_opex_pct
+        ebit = rev * (1.0 - yf.cogs_pct - yf.sga_pct - rd - other_opex)
         nopat = ebit * (1 - tax_rate)
         da = rev * yf.da_pct
         capex = rev * yf.capex_pct_revenue
@@ -443,7 +444,8 @@ def _build_y1_quarter_rows(
             rd = year_forecast_y1.rd_pct or 0.0
             sga = rev * year_forecast_y1.sga_pct
             rd_amt = rev * rd
-            ebit = rev * (1.0 - year_forecast_y1.cogs_pct - year_forecast_y1.sga_pct - rd)
+            other_opex = year_forecast_y1.other_opex_pct
+            ebit = rev * (1.0 - year_forecast_y1.cogs_pct - year_forecast_y1.sga_pct - rd - other_opex)
             interest = rev * year_forecast_y1.interest_pct
             other = rev * year_forecast_y1.other_pct
             pretax = ebit - interest + other

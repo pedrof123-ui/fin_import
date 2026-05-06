@@ -314,7 +314,6 @@ INCOME_STATEMENT_MAPPING = {
     "antidilutive_securities": [
         # Securities excluded from diluted EPS calculation
         "AntidilutiveSecuritiesExcludedFromComputationOfEarningsPerShareAmount",
-        "AntidilutiveSecuritiesExcludedFromComputationOfEarningsPerShareByAntidilutiveSecuritiesAxis",
     ],
     
     # =============================================================================

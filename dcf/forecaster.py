@@ -7,54 +7,20 @@ so quarterly income totals cover only 9 of 12 months — unreliable for annual a
 The quarterly data is still required (for WACC balance sheet computations).
 
 Forecast methodology:
-  Years 1-2: Revenue via blended signal —
+  Revenue Y1-Y2: blended signal —
              50%/25% quarterly momentum (EWM of last-4-quarter YoY rates + linear trend)
              50%/75% annual EWM growth (exponentially weighted, half-life ~1.4 yrs).
-             P&L ratios (cogs_pct, sga_pct, rd_pct, interest_pct) use ARIMA(0,1,0)
-             on the 5 most recent annual periods.
-  Years 3-5: OLS linear regression on (historical annual + Y1/Y2 forecasts) for P&L ratios.
+  Revenue Y3-Y5: OLS slope anchored at Y2 (captures long-run increment, avoids mean reversion).
+  P&L ratios (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean
+             applied flat across all 5 forecast years. Mean-reversion is the standard DCF
+             assumption — ratios are bounded by competitive dynamics over a 5-year horizon.
   D&A and CapEx: normalized 5-year mean from the CF statement, applied flat across all
-             growth years. Trend extrapolation (ARIMA/OLS) is intentionally avoided for
-             these metrics because D&A/revenue and CapEx/revenue are mean-reverting —
-             companies experience multi-year investment cycles that revert to maintenance
-             levels. Extrapolating a spike would inflate CapEx and compress FCFF into the
-             terminal period.
+             growth years. CapEx/revenue and D&A/revenue are mean-reverting; extrapolating
+             a spike would distort FCFF in the terminal period.
 """
 
-import warnings
 import numpy as np
 import pandas as pd
-
-
-def _arima_forecast(series: pd.Series, n: int) -> np.ndarray:
-    """
-    ARIMA(0,1,0) with trend on annual data — random walk with drift.
-    Falls back to linear extrapolation if fit fails.
-    """
-    from statsmodels.tsa.arima.model import ARIMA
-
-    values = series.dropna().values.astype(float)
-    if len(values) < 3:
-        x = np.arange(len(values))
-        return np.polyval(np.polyfit(x, values, 1), np.arange(len(values), len(values) + n))
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        try:
-            res = ARIMA(values, order=(0, 1, 0), trend="t").fit()
-            return res.forecast(n)
-        except Exception:
-            pass
-
-    x = np.arange(len(values))
-    return np.polyval(np.polyfit(x, values, 1), np.arange(len(values), len(values) + n))
-
-
-def _linear_forecast(y_hist: np.ndarray, n_future: int) -> np.ndarray:
-    """OLS linear regression extrapolation."""
-    x = np.arange(len(y_hist))
-    coef = np.polyfit(x, y_hist, 1)
-    return np.polyval(coef, np.arange(len(y_hist), len(y_hist) + n_future))
 
 
 def _safe_ratio(num: pd.Series, den: pd.Series) -> pd.Series:
@@ -63,10 +29,10 @@ def _safe_ratio(num: pd.Series, den: pd.Series) -> pd.Series:
     return pd.Series(r).replace([np.inf, -np.inf], np.nan)
 
 
-def _ratio_forecast(hist: np.ndarray, n: int) -> np.ndarray:
-    if len(hist) < 2:
-        return np.full(n, hist.mean() if len(hist) else 0.0)
-    return _arima_forecast(pd.Series(hist), n)
+def _mean_ratio(hist: np.ndarray, default: float, lo: float, hi: float) -> float:
+    """Historical mean of a ratio series, clipped to [lo, hi]."""
+    val = float(hist.mean()) if len(hist) > 0 else default
+    return float(np.clip(val, lo, hi))
 
 
 def _quarterly_momentum_signal(quarterly_income: pd.DataFrame) -> float | None:
@@ -261,11 +227,13 @@ def forecast_assumptions(
     # SG&A % of revenue — fall back to gross_profit - operating_income when not reported separately
     sga_ser = inc_a["selling_general_admin"] if "selling_general_admin" in inc_a.columns else pd.Series(dtype=float)
     hist_sga = _safe_ratio(sga_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
+    _sga_fallback_used = False
     if len(hist_sga) < 2 and "gross_profit" in inc_a.columns and "operating_income" in inc_a.columns:
         residual = (inc_a["gross_profit"] - inc_a["operating_income"]).clip(lower=0)
         inferred = _safe_ratio(residual, inc_a["revenue"]).dropna().values
         if len(inferred) >= 2:
             hist_sga = inferred
+            _sga_fallback_used = True
 
     # R&D % of revenue — may be all-null for many companies
     rd_ser = inc_a["research_development"] if "research_development" in inc_a.columns else pd.Series(dtype=float)
@@ -276,66 +244,51 @@ def forecast_assumptions(
     int_ser = inc_a["interest_expense"] if "interest_expense" in inc_a.columns else pd.Series(dtype=float)
     hist_int = _safe_ratio(int_ser.abs().reindex(inc_a.index), inc_a["revenue"]).dropna().values
 
-    # Other % of revenue — residual between operating income and (revenue - cogs - sga - rd)
-    # Computed as: (EBIT - op_income_reported) / revenue; treat as zero if uncertain
-    hist_other = np.zeros(len(rev))
+    # Other operating expense % — residual between gross profit and operating income,
+    # minus SGA and R&D already captured. Absorbs any line items not tagged in those buckets
+    # (e.g. Amazon fulfillment, sales & marketing reported separately from SGA).
+    # Only computed when SGA fallback was NOT used; the fallback already absorbs the full residual.
+    gp_ser = inc_a["gross_profit"] if "gross_profit" in inc_a.columns else pd.Series(dtype=float)
+    op_inc_ser = inc_a["operating_income"] if "operating_income" in inc_a.columns else pd.Series(dtype=float)
+    if not _sga_fallback_used and not op_inc_ser.isna().all() and not gp_ser.isna().all():
+        sga_raw = sga_ser.abs().reindex(inc_a.index).fillna(0)
+        rd_raw = rd_ser.abs().reindex(inc_a.index).fillna(0)
+        other_opex_ser = (gp_ser - op_inc_ser - sga_raw - rd_raw).clip(lower=0)
+        hist_other_opex = _safe_ratio(other_opex_ser, inc_a["revenue"]).dropna().values
+    else:
+        hist_other_opex = np.array([])
+    has_other_opex = len(hist_other_opex) >= 2 and np.any(hist_other_opex > 0.005)
 
     # CapEx % of revenue — normalized 5-year mean from CF statement.
-    # Mean is intentional: CapEx/revenue is mean-reverting, not trending. ARIMA/linear
-    # extrapolation amplifies investment-cycle spikes into the terminal period.
     cx_denom = inc_a["revenue"].reindex(cf_a.index).values
     hist_cx = _safe_ratio(cf_a["capital_expenditures"].abs(), pd.Series(cx_denom)).dropna().values
     cx_norm = hist_cx[hist_cx > 0]
     cx_pct_norm = float(cx_norm.mean()) if len(cx_norm) > 0 else 0.05
 
     # D&A % of revenue — normalized 5-year mean from CF statement.
-    # Mean is intentional: D&A/revenue is mean-reverting, not trending, so ARIMA/linear
-    # extrapolation would amplify investment-cycle spikes into the terminal period.
     da_ser = cf_a["depreciation_amortization"].abs() if "depreciation_amortization" in cf_a.columns else pd.Series(dtype=float)
     hist_da = _safe_ratio(da_ser.reindex(cf_a.index), pd.Series(cx_denom)).dropna()
     hist_da = hist_da[hist_da > 0]
     da_pct_norm = float(hist_da.mean()) if not hist_da.empty else 0.03
 
-    # Y1/Y2 via ARIMA
-    cogs_fc2 = _ratio_forecast(hist_cogs if len(hist_cogs) >= 2 else np.array([0.5, 0.5]), 2)
-    sga_fc2 = _ratio_forecast(hist_sga if len(hist_sga) >= 2 else np.array([0.1, 0.1]), 2)
-    rd_fc2 = _ratio_forecast(hist_rd, 2) if has_rd else np.zeros(2)
-    int_fc2 = _ratio_forecast(hist_int if len(hist_int) >= 2 else np.array([0.02, 0.02]), 2)
+    # P&L ratios: historical mean applied flat across all 5 forecast years.
+    cogs_flat = _mean_ratio(hist_cogs, 0.5, 0.0, 1.0)
+    sga_flat  = _mean_ratio(hist_sga,  0.1, 0.0, 0.8)
+    rd_flat   = _mean_ratio(hist_rd,   0.0, 0.0, 0.5) if has_rd else None
+    int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
+    other_opex_flat = _mean_ratio(hist_other_opex, 0.0, 0.0, 0.8) if has_other_opex else 0.0
 
-    def _clip(arr, lo, hi):
-        return [float(np.clip(v, lo, hi)) for v in arr]
-
-    cogs_2 = _clip(cogs_fc2, 0.0, 1.0)
-    sga_2 = _clip(sga_fc2, 0.0, 0.8)
-    rd_2 = _clip(rd_fc2, 0.0, 0.5)
-    int_2 = _clip(int_fc2, 0.0, 0.3)
-
-    # Y3-Y5 via linear regression on (history + Y1/Y2)
+    # Revenue Y3-Y5: OLS slope anchored at Y2.
     rev_combined = np.append(rev.values.astype(float), rev_y)
-
-    def _extend(hist, y2_vals):
-        return np.append(hist, y2_vals) if len(hist) else np.array(y2_vals)
-
-    cogs_combined = _extend(hist_cogs, cogs_2)
-    sga_combined = _extend(hist_sga, sga_2)
-    rd_combined = _extend(hist_rd, rd_2) if has_rd else np.array(rd_2)
-    int_combined = _extend(hist_int, int_2)
-
-    # Revenue Y3-Y5: use OLS slope anchored at Y2 so momentum years don't cause a stall.
-    # The slope captures the long-run annual increment; applying it from Y2 ensures a
-    # smooth continuation rather than mean-reverting to the trend line level.
     rev_slope = float(np.polyfit(np.arange(len(rev_combined)), rev_combined, 1)[0])
-    rev_y3_5 = np.array([rev_y[1] + rev_slope * i for i in range(1, 4)])
-    cogs_y3_5 = _clip(_linear_forecast(cogs_combined, 3), 0.0, 1.0)
-    sga_y3_5 = _clip(_linear_forecast(sga_combined, 3), 0.0, 0.8)
-    rd_y3_5 = _clip(_linear_forecast(rd_combined, 3), 0.0, 0.5) if has_rd else [0.0, 0.0, 0.0]
-    int_y3_5 = _clip(_linear_forecast(int_combined, 3), 0.0, 0.3)
+    rev_y3_5 = [rev_y[1] + rev_slope * i for i in range(1, 4)]
 
-    rev_all = rev_y + list(rev_y3_5)
-    cogs_all = cogs_2 + cogs_y3_5
-    sga_all = sga_2 + sga_y3_5
-    rd_all = (rd_2 + rd_y3_5) if has_rd else [None] * 5
-    int_all = int_2 + int_y3_5
+    rev_all = list(rev_y) + rev_y3_5
+    cogs_all = [cogs_flat] * 5
+    sga_all  = [sga_flat]  * 5
+    rd_all   = [rd_flat]   * 5 if has_rd else [None] * 5
+    int_all  = [int_flat]  * 5
+    other_opex_all = [other_opex_flat] * 5
 
     prev_rev = [last_rev] + list(rev_all)
 
@@ -353,6 +306,7 @@ def forecast_assumptions(
                 rd_pct=float(rd_all[i]) if rd_all[i] is not None else None,
                 interest_pct=float(int_all[i]),
                 other_pct=0.0,
+                other_opex_pct=float(other_opex_all[i]),
                 capex_pct_revenue=cx_pct_norm,
                 da_pct=da_pct_norm,
             )
@@ -384,6 +338,7 @@ def merge_overrides(base: list, overrides) -> list:
                 rd_pct=yo.rd_pct if yo.rd_pct is not None else yf.rd_pct,
                 interest_pct=yo.interest_pct if yo.interest_pct is not None else yf.interest_pct,
                 other_pct=yo.other_pct if yo.other_pct is not None else yf.other_pct,
+                other_opex_pct=yo.other_opex_pct if yo.other_opex_pct is not None else yf.other_opex_pct,
                 capex_pct_revenue=yo.capex_pct_revenue if yo.capex_pct_revenue is not None else yf.capex_pct_revenue,
                 da_pct=yo.da_pct if yo.da_pct is not None else yf.da_pct,
             )

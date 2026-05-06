@@ -17,6 +17,21 @@ if not sec_identity:
 set_identity(sec_identity)
 
 
+def _fye_month(company) -> int:
+    """Return fiscal year end month (1–12), defaulting to December."""
+    fye = getattr(company, 'fiscal_year_end', None)
+    if isinstance(fye, str) and fye:
+        try:
+            return int(fye.replace('-', '')[:2])
+        except (ValueError, IndexError):
+            pass
+    return 12
+
+
+def _fiscal_quarter(period_month: int, fye_month: int) -> int:
+    return ((period_month - fye_month - 1) % 12) // 3 + 1
+
+
 def parse_date(date_str):
     """Parse a date string to datetime object."""
     if isinstance(date_str, str):
@@ -51,6 +66,7 @@ def get_filing(
 
     company = Company(ticker)
     print(f"Retrieved company: {company.name} ({ticker})")
+    fye = _fye_month(company)
 
     filings = company.get_filings(form=filing_type)
 
@@ -81,7 +97,7 @@ def get_filing(
             for f in filings_filtered:
                 period_date = f._parsed_period_date
                 if period_date:
-                    file_quarter = ((period_date.month - 1) // 3) + 1
+                    file_quarter = _fiscal_quarter(period_date.month, fye)
                     if file_quarter == quarter:
                         quarter_filtered.append(f)
 

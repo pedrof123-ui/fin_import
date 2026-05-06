@@ -28,6 +28,8 @@ _AGG_FIELDS = {
     'other_financing_activities',
 }
 
+_PRIOR_PERIOD_FIELDS = frozenset({'cash_beginning_of_period'})
+
 
 async def extract_cash_flow(
     filing,
@@ -50,4 +52,5 @@ async def extract_cash_flow(
         year=year,
         quarter=quarter,
         use_ai_fallback=use_ai_fallback,
+        prior_period_fields=_PRIOR_PERIOD_FIELDS,
     )

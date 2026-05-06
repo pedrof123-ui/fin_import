@@ -95,6 +95,9 @@ BALANCE_SHEET_MAPPING = {
 
     "other_noncurrent_assets": [
         "OtherAssetsNoncurrent",
+        # ASC 842 operating lease right-of-use assets (mandatory post-2019)
+        "OperatingLeaseRightOfUseAsset",
+        "FinanceLeaseRightOfUseAsset",
     ],
     
     "total_noncurrent_assets": [
@@ -135,6 +138,8 @@ BALANCE_SHEET_MAPPING = {
     
     "other_current_liabilities": [
         "OtherLiabilitiesCurrent",
+        "OperatingLeaseLiabilityCurrent",
+        "FinanceLeaseLiabilityCurrent",
     ],
     
     "total_current_liabilities": [
@@ -161,6 +166,8 @@ BALANCE_SHEET_MAPPING = {
     
     "other_noncurrent_liabilities": [
         "OtherLiabilitiesNoncurrent",
+        "OperatingLeaseLiabilityNoncurrent",
+        "FinanceLeaseLiabilityNoncurrent",
     ],
     
     "total_noncurrent_liabilities": [

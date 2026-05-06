@@ -15,6 +15,24 @@ from extractors.balance_sheet_extractor import extract_balance_sheet
 from extractors.cash_flow_extractor import extract_cash_flow
 
 
+def _fye_month(company) -> int:
+    """Return the fiscal year end month (1–12) from the Company object, defaulting to 12."""
+    fye = getattr(company, 'fiscal_year_end', None)
+    if isinstance(fye, str) and fye:
+        try:
+            # Common formats: "0930" (MMDD) or "09-30"
+            digits = fye.replace('-', '')
+            return int(digits[:2])
+        except (ValueError, IndexError):
+            pass
+    return 12
+
+
+def _fiscal_quarter(period_month: int, fye_month: int) -> int:
+    """Return fiscal quarter (1–3) for a 10-Q given the period end month and FYE month."""
+    return ((period_month - fye_month - 1) % 12) // 3 + 1
+
+
 async def import_ticker(
     ticker: str,
     periods: int,
@@ -37,6 +55,7 @@ async def import_ticker(
             raise HTTPException(status_code=404, detail=f"No {form} filings found for {ticker}")
         filings_list = list(filings_obj)[:periods]
 
+    fye = _fye_month(company)
     processed = 0
     failed = 0
     errors: list[str] = []
@@ -45,7 +64,7 @@ async def import_ticker(
         try:
             period_date = pd.to_datetime(getattr(filing, 'report_date', None) or filing.period_of_report)
             year = period_date.year
-            quarter = ((period_date.month - 1) // 3 + 1) if form == "10-Q" else None
+            quarter = _fiscal_quarter(period_date.month, fye) if form == "10-Q" else None
             period_end = period_date.date()
         except Exception:
             failed += 1

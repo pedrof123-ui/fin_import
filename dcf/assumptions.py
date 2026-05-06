@@ -24,6 +24,7 @@ class YearOverride:
     rd_pct: float | None = None
     interest_pct: float | None = None
     other_pct: float | None = None
+    other_opex_pct: float | None = None
     capex_pct_revenue: float | None = None
     da_pct: float | None = None
 
@@ -55,6 +56,7 @@ class YearForecast:
     other_pct: float
     capex_pct_revenue: float
     da_pct: float = 0.03
+    other_opex_pct: float = 0.0  # residual operating costs not in COGS/SGA/R&D
 
 
 @dataclass

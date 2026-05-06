@@ -7,7 +7,7 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 - **FastAPI backend** (`api/`) — REST API for importing, querying statements, and running DCF valuations
 - **Next.js frontend** (`web/`) — UI to import a ticker, view all 3 statements, switch FY/Q, DCF valuation tab
 - **DuckDB** (`data/financial_statements.duckdb`) — stores income, balance sheet, and cash flow tables
-- **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, ARIMA+OLS for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
+- **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 
 ## Quick Start
@@ -87,7 +87,7 @@ DCF run override body (all fields optional):
 The DCF uses FCFF (Free Cash Flow to the Firm):
 
 ```
-EBIT   = Revenue × (1 - cogs_pct - sga_pct - rd_pct)
+EBIT   = Revenue × (1 - cogs_pct - sga_pct - rd_pct - other_opex_pct)
 NOPAT  = EBIT × (1 - tax_rate)
 FCFF   = NOPAT + D&A - CapEx - ΔNWC
 ΔNWC   = derived from DSO / DPO / DIO working capital days
@@ -98,10 +98,11 @@ EV     = Σ PV(FCFF₁..₅) + PV(TV)
 Forecasting:
 - **Revenue Y1-Y2**: exponentially weighted mean of historical annual growth rates (decay 0.5) blended with a quarterly momentum signal (EWM of last-4-quarter YoY growth + linear trend): 50% momentum / 50% annual for Y1, 25% / 75% for Y2
 - **Revenue Y3-Y5**: OLS slope from combined historical + Y1-Y2 series, anchored at Y2 level (eliminates stall when momentum boosts Y1/Y2 above trend)
-- **P&L ratios** (cogs_pct, sga_pct, rd_pct, interest_pct): ARIMA(0,1,0) for years 1-2, OLS for years 3-5, using the 5 most recent annual periods
-- **D&A and CapEx**: normalized 5-year mean from the CF statement, applied flat across all growth years. Trend extrapolation is intentionally avoided — both metrics are mean-reverting around a structural level; extrapolating an investment-cycle spike would permanently inflate CapEx / suppress FCFF into the terminal value
+- **P&L ratios** (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean over the 5 most recent annual periods, applied flat across all 5 forecast years. Mean-reversion is the standard DCF assumption — margins are bounded by competitive dynamics over a 5-year horizon
+- **other_opex_pct**: residual between gross profit and operating income, net of SG&A and R&D already captured. Absorbs operating costs reported outside standard line items (e.g. Amazon fulfillment, technology, content). Prevents EBIT from being overstated when companies have significant operating costs not mapped to COGS/SG&A/R&D
+- **D&A and CapEx**: normalized 5-year mean from the CF statement, applied flat across all growth years
 - All forecasts use **annual** 10-K data; quarterly income data is used only for the momentum signal and is handled correctly for both standalone and YTD-cumulative filers
-- **Historical EBIT fallback**: when `operating_income` is null in the DB (common with pharma/healthcare XBRL filers), EBIT is derived as `gross_profit − SG&A − R&D`. This may overstate EBIT for companies with material other operating expenses (restructuring, impairments)
+- **Historical EBIT fallback**: when `operating_income` is null in the DB (common with pharma/healthcare XBRL filers), EBIT is derived as `gross_profit − SG&A − R&D`
 - **Y1 quarterly detail**: the DCF tab shows a quarterly breakdown of Y1 mixing reported actuals with seasonality-based estimates for unreported quarters. Quarterly revenue estimates can be overridden via `y1_quarter_revenues` in the run request
 
 **WACC** (`dcf/wacc.py`):
@@ -148,7 +149,7 @@ api/
   dcf_router.py        DCF endpoints (GET /dcf/{ticker}, POST /dcf/{ticker}/run)
 dcf/
   assumptions.py       Dataclasses: YearForecast, UserOverrides, DcfResult, NwcAssumptions, HistoricalRow
-  forecaster.py        ARIMA + OLS for P&L ratios; normalized mean for D&A and CapEx; DSO/DPO/DIO
+  forecaster.py        Historical mean for P&L ratios; normalized mean for D&A and CapEx; DSO/DPO/DIO
   model.py             FCFF construction, terminal value, equity bridge
   wacc.py              WACC, CAPM, cost of debt, Hamada beta re-levering
   data.py              Reads from financial_statements.duckdb, prices.duckdb, fred.duckdb
