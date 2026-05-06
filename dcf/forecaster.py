@@ -10,7 +10,8 @@ Forecast methodology:
   Revenue Y1-Y2: blended signal —
              50%/25% quarterly momentum (EWM of last-4-quarter YoY rates + linear trend)
              50%/75% annual EWM growth (exponentially weighted, half-life ~1.4 yrs).
-  Revenue Y3-Y5: OLS slope anchored at Y2 (captures long-run increment, avoids mean reversion).
+  Revenue Y3-Y5: fade from actual Y2 growth rate toward terminal growth rate, applied
+             after analyst estimates are resolved (see fade_y3_y5).
   P&L ratios (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean
              applied flat across all 5 forecast years. Mean-reversion is the standard DCF
              assumption — ratios are bounded by competitive dynamics over a 5-year horizon.
@@ -30,8 +31,12 @@ def _safe_ratio(num: pd.Series, den: pd.Series) -> pd.Series:
 
 
 def _mean_ratio(hist: np.ndarray, default: float, lo: float, hi: float) -> float:
-    """Historical mean of a ratio series, clipped to [lo, hi]."""
-    val = float(hist.mean()) if len(hist) > 0 else default
+    """Exponentially weighted mean of a ratio series, clipped to [lo, hi]. Recent years weighted more."""
+    if len(hist) == 0:
+        return float(np.clip(default, lo, hi))
+    w = np.exp(np.arange(len(hist)) * 0.5)
+    w /= w.sum()
+    val = float(np.dot(w, hist))
     return float(np.clip(val, lo, hi))
 
 
@@ -99,32 +104,33 @@ def _quarterly_momentum_signal(quarterly_income: pd.DataFrame) -> float | None:
     return 0.6 * ewm_level + 0.4 * trend_signal
 
 
-def _rev_forecast_y1y2(
-    annual_rev: pd.Series,
-    quarterly_income: pd.DataFrame,
-) -> tuple[float, float]:
-    """
-    Y1 = 50% quarterly momentum + 50% annual EWM growth
-    Y2 = 25% quarterly momentum + 75% annual EWM growth  (momentum decays)
-    Falls back to annual EWM only when quarterly data is insufficient.
-    """
-    vals = annual_rev.dropna().values.astype(float)
-    last = vals[-1]
-
-    # Annual EWM of YoY growth rates (recent years weighted more, half-life ~1.4 yrs)
+def _annual_ewm_growth(vals: np.ndarray) -> float:
+    """Exponentially weighted mean of YoY growth rates (half-life ~1.4 yrs). Default 3%."""
     if len(vals) >= 2:
         with np.errstate(divide="ignore", invalid="ignore"):
             gr = np.diff(vals) / vals[:-1]
         gr = gr[np.isfinite(gr)]
-    else:
-        gr = np.array([])
+        if len(gr) > 0:
+            w = np.exp(np.arange(len(gr)) * 0.5)
+            w /= w.sum()
+            return float(np.dot(w, gr))
+    return 0.03
 
-    if len(gr) > 0:
-        w = np.exp(np.arange(len(gr)) * 0.5)
-        w /= w.sum()
-        annual_g = float(np.dot(w, gr))
-    else:
-        annual_g = 0.03
+
+def _rev_forecast_y1y2(
+    annual_rev: pd.Series,
+    quarterly_income: pd.DataFrame,
+) -> tuple[float, float, float]:
+    """
+    Y1 = 50% quarterly momentum + 50% annual EWM growth
+    Y2 = 25% quarterly momentum + 75% annual EWM growth  (momentum decays)
+    Falls back to annual EWM only when quarterly data is insufficient.
+    Returns (y1_revenue, y2_revenue, annual_ewm_growth).
+    """
+    vals = annual_rev.dropna().values.astype(float)
+    last = vals[-1]
+
+    annual_g = _annual_ewm_growth(vals)
 
     q_signal = _quarterly_momentum_signal(quarterly_income)
 
@@ -136,7 +142,7 @@ def _rev_forecast_y1y2(
         g2 = annual_g
 
     y1 = last * (1 + g1)
-    return y1, y1 * (1 + g2)
+    return y1, y1 * (1 + g2), annual_g
 
 
 def compute_nwc_days(
@@ -214,7 +220,8 @@ def forecast_assumptions(
 
     # --- Y1, Y2: EWM annual growth + quarterly momentum blend ---
     last_rev = float(rev.iloc[-1])
-    rev_y1, rev_y2 = _rev_forecast_y1y2(rev, quarterly["income"])
+    rev_y1, rev_y2, g_lr = _rev_forecast_y1y2(rev, quarterly["income"])
+    g_lr = float(np.clip(g_lr, -0.10, 0.15))
     rev_y = [rev_y1, rev_y2]
 
     # COGS % of revenue
@@ -278,10 +285,14 @@ def forecast_assumptions(
     int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
     other_opex_flat = _mean_ratio(hist_other_opex, 0.0, 0.0, 0.8) if has_other_opex else 0.0
 
-    # Revenue Y3-Y5: OLS slope anchored at Y2.
-    rev_combined = np.append(rev.values.astype(float), rev_y)
-    rev_slope = float(np.polyfit(np.arange(len(rev_combined)), rev_combined, 1)[0])
-    rev_y3_5 = [rev_y[1] + rev_slope * i for i in range(1, 4)]
+    # Revenue Y3-Y5: placeholder using flat g_lr; overwritten by fade_y3_y5() in model.py
+    # after analyst estimates and user overrides are fully resolved.
+    rev_y3_5 = []
+    prev = rev_y2
+    for _ in range(3):
+        nxt = prev * (1 + g_lr)
+        rev_y3_5.append(nxt)
+        prev = nxt
 
     rev_all = list(rev_y) + rev_y3_5
     cogs_all = [cogs_flat] * 5
@@ -313,6 +324,33 @@ def forecast_assumptions(
         )
 
     return forecasts
+
+
+def fade_y3_y5(year_forecasts: list, terminal_growth: float, overrides) -> list:
+    """
+    Fade Y3-Y5 revenue growth from the final Y2 growth rate toward terminal_growth.
+    Called after analyst estimates and user overrides are fully applied.
+    Skips any year the user has explicitly overridden.
+    """
+    g_y2 = year_forecasts[1].revenue_growth
+    weights = [(2/3, 1/3), (1/3, 2/3), (0.0, 1.0)]  # (w_y2, w_terminal) for Y3, Y4, Y5
+    prev_rev = year_forecasts[1].revenue
+    for yf, (w_y2, w_tg) in zip(year_forecasts[2:], weights):
+        if _has_rev_override(overrides, yf.year):
+            prev_rev = yf.revenue
+            continue
+        g = w_y2 * g_y2 + w_tg * terminal_growth
+        yf.revenue_growth = float(g)
+        yf.revenue = float(prev_rev * (1 + g))
+        prev_rev = yf.revenue
+    return year_forecasts
+
+
+def _has_rev_override(overrides, year: int) -> bool:
+    if overrides is None:
+        return False
+    yo = overrides.years.get(year)
+    return yo is not None and yo.revenue_growth is not None
 
 
 def merge_overrides(base: list, overrides) -> list:

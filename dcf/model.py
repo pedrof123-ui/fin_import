@@ -9,7 +9,7 @@ def _coerce(val) -> float:
     return 0.0 if np.isnan(f) else f
 
 
-DEFAULT_TERMINAL_GROWTH = 0.025  # 2.5%
+DEFAULT_TERMINAL_GROWTH = 0.03  # 3%
 
 # WACC sensitivity grid offsets (±)
 _WACC_OFFSETS = [-0.02, -0.01, 0.0, 0.01, 0.02]
@@ -509,7 +509,7 @@ def run_dcf(
     from dcf.assumptions import DcfResult
     from dcf.data import load_quarterly_financials, load_annual_financials, load_current_price, load_risk_free_rate
     from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
-    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days
+    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, fade_y3_y5
 
     quarterly = load_quarterly_financials(db, ticker)
     annual = load_annual_financials(db, ticker)
@@ -658,6 +658,9 @@ def run_dcf(
             else:
                 yf.revenue = prev * (1 + yf.revenue_growth)
                 prev = yf.revenue
+
+    # Y3-Y5: fade from final Y2 growth toward terminal growth (applied after all Y1/Y2 are settled)
+    year_forecasts = fade_y3_y5(year_forecasts, terminal_growth, overrides)
 
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,

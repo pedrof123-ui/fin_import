@@ -85,13 +85,15 @@ EV     = Σ PV(FCFF₁..₅) + PV(TV)
 ```
 
 Revenue forecasting:
-- Y1-Y2: exponentially weighted mean of annual growth rates (EWM decay=0.5) blended with a quarterly momentum signal (EWM of last-4-quarter YoY + linear trend), 50%/25% blend
-- Y3-Y5: OLS slope anchored at Y2 level — avoids near-zero-growth stall when momentum boosts Y1/Y2 above trend
+- Y1-Y2: analyst annual revenue estimates (Alpha Vantage) are the primary source; EWM of historical annual growth rates blended with quarterly momentum signal (50%/25%) is the fallback when no estimates are available
+- Y3-Y5: linear fade from the final Y2 growth rate toward the terminal growth rate, applied after all Y1/Y2 are settled (analyst estimates + user overrides + quarterly actuals cascade). Y3 = 2/3·g_y2 + 1/3·g_terminal, Y4 = 1/3·g_y2 + 2/3·g_terminal, Y5 = g_terminal
 - Quarterly YTD detection: identifies YTD-cumulative filers (AAPL pattern: 3 entries/year with resets > 35%) and groups by fiscal year before computing YoY comparisons
 
-P&L ratio forecasting: ARIMA(0,1,0) for Y1-Y2, OLS for Y3-Y5 (annual data only).
+P&L ratio forecasting: exponentially weighted mean of the last 5 annual years (EWM half-life ~1.4 yrs, same decay as revenue model), applied flat across all 5 forecast years. Recent years are weighted more than older ones; mean-reversion over the competitive horizon is preserved.
 
 WACC: Hamada equation; risk-free rate from FRED DGS10; yfinance beta; cost of debt from 5-yr average interest/debt.
+
+Default terminal growth rate: 3%.
 
 All WACC inputs, per-year P&L ratios, and working capital days are overridable in the UI. Reset button restores model defaults without re-fetching.
 
@@ -151,6 +153,12 @@ Keyboard navigation:
 - `PaymentsToAcquireProductiveAssets` added to `capital_expenditures` in `cash_flow_xbrl_mapping.py` — Amazon uses this concept instead of the standard `PaymentsToAcquirePropertyPlantAndEquipment`
 - Historical FCFF rows now joined by `period_end_date` (was positional index) — prevents silent null CapEx when income/balance/cashflow tables have different row counts
 - `HistoricalRow` dataclass and TypeScript interface extended with `period_end_date` field
+
+## DCF forecasting enhancements (2026-05-06)
+
+- **Revenue Y3-Y5 methodology**: replaced OLS dollar-level slope (which extrapolated historical divestiture declines) with a fade model anchored on the final post-analyst Y2 growth rate. `fade_y3_y5()` in `forecaster.py` is called from `model.py` after analyst estimates, user overrides, and the Y1 quarterly actuals cascade are all settled. Y3 = 2/3·g_y2 + 1/3·g_terminal, Y4 = 1/3·g_y2 + 2/3·g_terminal, Y5 = g_terminal. This is the standard equity research approach and avoids oscillation from analyst/model base mismatches.
+- **P&L ratio forecasting**: replaced simple equal-weight 5-year mean with EWM (half-life ~1.4 yrs) in `_mean_ratio`. Applies to COGS%, SG&A%, R&D%, interest%, other opex%. D&A% and CapEx% retain their normalized mean (asset-intensity ratios are not trend-driven).
+- **Default terminal growth rate**: raised from 2.5% to 3% (`DEFAULT_TERMINAL_GROWTH` in `model.py`).
 
 ## MCP integration
 
