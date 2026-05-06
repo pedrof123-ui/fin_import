@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ImportForm from "@/components/ImportForm";
 import StatementViewer from "@/components/StatementViewer";
 import DcfViewer from "@/components/DcfViewer";
@@ -11,14 +11,25 @@ type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
 type Tab = "financials" | "dcf";
 
-const Q_DISPLAY_PERIODS = 8; // quarters shown in the Financials table
+const FY_DISPLAY_PERIODS = 20;
+const Q_DISPLAY_PERIODS = 8;
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+function Spinner() {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="font-mono text-violet-400 shrink-0">{SPINNER_FRAMES[frame]}</span>;
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>("financials");
   const [stmtType, setStmtType] = useState<StmtType>("income");
   const [data, setData] = useState<Record<string, unknown>[] | null>(null);
   const [loadedTicker, setLoadedTicker] = useState("");
-  const [loadedPeriods, setLoadedPeriods] = useState(10);
   const [displayPeriodType, setDisplayPeriodType] = useState<PeriodType>("FY");
   const [importing, setImporting] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -47,18 +58,18 @@ export default function Home() {
     []
   );
 
-  const handleImport = async (ticker: string, periods: number, periodType: PeriodType) => {
+  const handleImport = async (ticker: string) => {
     setImporting(true);
     setError(null);
     setQuartersStatus(null);
-    setStatus(`Importing ${ticker}…`);
+    setStatus(`Downloading 20 years of annual filings for ${ticker}…`);
     setData(null);
 
     try {
       const res = await fetch(`${API}/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker, periods, period_type: periodType }),
+        body: JSON.stringify({ ticker, periods: 20, period_type: "FY" }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail ?? `HTTP ${res.status}`);
@@ -70,31 +81,28 @@ export default function Home() {
           : `${ticker} already up to date`
       );
       setLoadedTicker(ticker);
-      setLoadedPeriods(periods);
-      setDisplayPeriodType(periodType);
+      setDisplayPeriodType("FY");
 
-      await fetchStatement(ticker, periodType, stmtType, periods);
+      await fetchStatement(ticker, "FY", stmtType, FY_DISPLAY_PERIODS);
 
-      // When importing FY, automatically fetch 20 quarters in background
-      if (periodType === "FY") {
-        setQuartersStatus("Fetching quarters…");
-        fetch(`${API}/import`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticker, periods: 40, period_type: "Q" }),
+      // Automatically fetch 20 quarters in background
+      setQuartersStatus("Fetching 20 quarters of data…");
+      fetch(`${API}/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker, periods: 20, period_type: "Q" }),
+      })
+        .then((r) => r.json())
+        .then((qj) => {
+          const qn = qj.filings_processed as number;
+          setQuartersStatus(
+            qn > 0
+              ? `${qn} quarterly filing${qn !== 1 ? "s" : ""} added`
+              : "Quarters up to date"
+          );
+          setTimeout(() => setQuartersStatus(null), 4000);
         })
-          .then((r) => r.json())
-          .then((qj) => {
-            const qn = qj.filings_processed as number;
-            setQuartersStatus(
-              qn > 0
-                ? `${qn} quarterly filing${qn !== 1 ? "s" : ""} added`
-                : "Quarters up to date"
-            );
-            setTimeout(() => setQuartersStatus(null), 4000);
-          })
-          .catch(() => setQuartersStatus(null));
-      }
+        .catch(() => setQuartersStatus(null));
     } catch (e: unknown) {
       setError((e as Error).message);
       setStatus(null);
@@ -106,7 +114,7 @@ export default function Home() {
   const handleStmtChange = (stmt: StmtType) => {
     setStmtType(stmt);
     if (loadedTicker) {
-      const periods = displayPeriodType === "Q" ? Q_DISPLAY_PERIODS : loadedPeriods;
+      const periods = displayPeriodType === "Q" ? Q_DISPLAY_PERIODS : FY_DISPLAY_PERIODS;
       fetchStatement(loadedTicker, displayPeriodType, stmt, periods);
     }
   };
@@ -114,12 +122,14 @@ export default function Home() {
   const handlePeriodTypeChange = (pt: PeriodType) => {
     setDisplayPeriodType(pt);
     if (loadedTicker) {
-      const periods = pt === "Q" ? Q_DISPLAY_PERIODS : loadedPeriods;
+      const periods = pt === "Q" ? Q_DISPLAY_PERIODS : FY_DISPLAY_PERIODS;
       fetchStatement(loadedTicker, pt, stmtType, periods);
     }
   };
 
   const busy = importing || fetching;
+  const showSpinner = importing || !!quartersStatus;
+  const displayStatus = quartersStatus ?? status;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -128,40 +138,35 @@ export default function Home() {
         className="sticky top-0 z-20 border-b border-white/[0.07] backdrop-blur-md"
         style={{ background: "oklch(0.08 0.008 265 / 85%)" }}
       >
-        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center gap-6">
+        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center gap-4">
           <span className="font-mono text-xs tracking-[0.3em] text-violet-400 font-semibold uppercase shrink-0">
             FinView
           </span>
           <div className="w-px h-4 bg-white/10 shrink-0" />
           <ImportForm onSubmit={handleImport} loading={importing} />
+          {!error && displayStatus && (
+            <>
+              <div className="w-px h-4 bg-white/10 shrink-0" />
+              <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 min-w-0">
+                {showSpinner ? (
+                  <Spinner />
+                ) : (
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                )}
+                <span className="truncate">{displayStatus}</span>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
       {/* Content */}
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-5">
-        {/* Status / error bar */}
-        {(status || error) && (
-          <div
-            className={`mb-3 flex items-center gap-2 text-xs font-mono px-3 py-2 rounded border ${
-              error
-                ? "border-rose-900/50 bg-rose-950/20 text-rose-400"
-                : "border-violet-900/40 bg-violet-950/15 text-violet-300"
-            }`}
-          >
-            <span
-              className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-                error ? "bg-rose-500" : "bg-violet-500"
-              }`}
-            />
-            {error ?? status}
-          </div>
-        )}
-
-        {/* Quarters background import status */}
-        {quartersStatus && (
-          <div className="mb-3 flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded border border-zinc-800/60 bg-zinc-900/20 text-zinc-500">
-            <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-zinc-600 animate-pulse" />
-            {quartersStatus}
+        {/* Error bar */}
+        {error && (
+          <div className="mb-3 flex items-center gap-2 text-xs font-mono px-3 py-2 rounded border border-rose-900/50 bg-rose-950/20 text-rose-400">
+            <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-rose-500" />
+            {error}
           </div>
         )}
 

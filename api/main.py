@@ -47,7 +47,7 @@ app.add_middleware(
 
 class ImportRequest(BaseModel):
     ticker: str
-    periods: int = 5
+    periods: int = 20
     period_type: Literal["FY", "Q"] = "FY"
     force: bool = False
 
