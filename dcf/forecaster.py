@@ -224,19 +224,30 @@ def forecast_assumptions(
     g_lr = float(np.clip(g_lr, -0.10, 0.15))
     rev_y = [rev_y1, rev_y2]
 
-    # COGS % of revenue
+    # COGS % of revenue.
+    # A company is treated as not reporting COGS when both cost_of_revenue and gross_profit
+    # are missing in the most recent annual period (e.g. service cos. like UPS that file only
+    # SG&A + other operating expenses). In that case cogs_pct = 0 and the operating cost
+    # structure is anchored to operating_income via the other_opex residual below.
     cogs_ser = inc_a["cost_of_revenue"] if "cost_of_revenue" in inc_a.columns else pd.Series(dtype=float)
-    if cogs_ser.isna().all() and "gross_profit" in inc_a.columns:
-        # Derive from gross_profit
-        cogs_ser = inc_a["revenue"] - inc_a["gross_profit"]
-    hist_cogs = _safe_ratio(cogs_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
+    gp_ser = inc_a["gross_profit"] if "gross_profit" in inc_a.columns else pd.Series(dtype=float)
+    latest_cogs = cogs_ser.iloc[-1] if len(cogs_ser) else np.nan
+    latest_gp = gp_ser.iloc[-1] if len(gp_ser) else np.nan
+    reports_cogs = pd.notna(latest_cogs) or pd.notna(latest_gp)
+
+    if reports_cogs:
+        if cogs_ser.isna().all() and not gp_ser.isna().all():
+            cogs_ser = inc_a["revenue"] - gp_ser
+        hist_cogs = _safe_ratio(cogs_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
+    else:
+        hist_cogs = np.array([])
 
     # SG&A % of revenue — fall back to gross_profit - operating_income when not reported separately
     sga_ser = inc_a["selling_general_admin"] if "selling_general_admin" in inc_a.columns else pd.Series(dtype=float)
     hist_sga = _safe_ratio(sga_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
     _sga_fallback_used = False
-    if len(hist_sga) < 2 and "gross_profit" in inc_a.columns and "operating_income" in inc_a.columns:
-        residual = (inc_a["gross_profit"] - inc_a["operating_income"]).clip(lower=0)
+    if len(hist_sga) < 2 and reports_cogs and "operating_income" in inc_a.columns:
+        residual = (gp_ser - inc_a["operating_income"]).clip(lower=0)
         inferred = _safe_ratio(residual, inc_a["revenue"]).dropna().values
         if len(inferred) >= 2:
             hist_sga = inferred
@@ -251,16 +262,22 @@ def forecast_assumptions(
     int_ser = inc_a["interest_expense"] if "interest_expense" in inc_a.columns else pd.Series(dtype=float)
     hist_int = _safe_ratio(int_ser.abs().reindex(inc_a.index), inc_a["revenue"]).dropna().values
 
-    # Other operating expense % — residual between gross profit and operating income,
-    # minus SGA and R&D already captured. Absorbs any line items not tagged in those buckets
-    # (e.g. Amazon fulfillment, sales & marketing reported separately from SGA).
-    # Only computed when SGA fallback was NOT used; the fallback already absorbs the full residual.
-    gp_ser = inc_a["gross_profit"] if "gross_profit" in inc_a.columns else pd.Series(dtype=float)
+    # Other operating expense % — residual that absorbs costs not captured by COGS/SGA/R&D.
+    # Anchor depends on what the company reports:
+    #   - reports_cogs: residual against gross profit (captures e.g. Amazon fulfillment, S&M)
+    #   - !reports_cogs: residual against revenue (anchors EBIT margin to actual op_income for
+    #     service cos. that don't split cost of services from SG&A)
+    # Skipped when SGA fallback already absorbed the full gross-to-operating residual.
     op_inc_ser = inc_a["operating_income"] if "operating_income" in inc_a.columns else pd.Series(dtype=float)
-    if not _sga_fallback_used and not op_inc_ser.isna().all() and not gp_ser.isna().all():
+    if not _sga_fallback_used and not op_inc_ser.isna().all():
         sga_raw = sga_ser.abs().reindex(inc_a.index).fillna(0)
         rd_raw = rd_ser.abs().reindex(inc_a.index).fillna(0)
-        other_opex_ser = (gp_ser - op_inc_ser - sga_raw - rd_raw).clip(lower=0)
+        if reports_cogs and not gp_ser.isna().all():
+            other_opex_ser = (gp_ser - op_inc_ser - sga_raw - rd_raw).clip(lower=0)
+        elif not reports_cogs:
+            other_opex_ser = (inc_a["revenue"] - op_inc_ser - sga_raw - rd_raw).clip(lower=0)
+        else:
+            other_opex_ser = pd.Series(dtype=float)
         hist_other_opex = _safe_ratio(other_opex_ser, inc_a["revenue"]).dropna().values
     else:
         hist_other_opex = np.array([])
@@ -279,7 +296,7 @@ def forecast_assumptions(
     da_pct_norm = float(hist_da.mean()) if not hist_da.empty else 0.03
 
     # P&L ratios: historical mean applied flat across all 5 forecast years.
-    cogs_flat = _mean_ratio(hist_cogs, 0.5, 0.0, 1.0)
+    cogs_flat = _mean_ratio(hist_cogs, 0.5, 0.0, 1.0) if reports_cogs else 0.0
     sga_flat  = _mean_ratio(hist_sga,  0.1, 0.0, 0.8)
     rd_flat   = _mean_ratio(hist_rd,   0.0, 0.0, 0.5) if has_rd else None
     int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
@@ -320,6 +337,7 @@ def forecast_assumptions(
                 other_opex_pct=float(other_opex_all[i]),
                 capex_pct_revenue=cx_pct_norm,
                 da_pct=da_pct_norm,
+                reports_cogs=reports_cogs,
             )
         )
 
@@ -379,6 +397,7 @@ def merge_overrides(base: list, overrides) -> list:
                 other_opex_pct=yo.other_opex_pct if yo.other_opex_pct is not None else yf.other_opex_pct,
                 capex_pct_revenue=yo.capex_pct_revenue if yo.capex_pct_revenue is not None else yf.capex_pct_revenue,
                 da_pct=yo.da_pct if yo.da_pct is not None else yf.da_pct,
+                reports_cogs=yf.reports_cogs,
             )
         )
 

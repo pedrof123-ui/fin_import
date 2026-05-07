@@ -287,6 +287,16 @@ export default function DcfStatements({
                             );
                           }
 
+                          // Suppress COGS % input when the company doesn't report a COGS breakdown
+                          // (proforma cost_of_revenue/gross_profit are null in that case).
+                          if (kind === "cogsMargin" && col.cost_of_revenue == null && col.gross_profit == null) {
+                            return (
+                              <td key={col.period_label} className="px-4 py-1 text-right tabular-nums text-[10px] text-zinc-700">
+                                —
+                              </td>
+                            );
+                          }
+
                           const fieldVal = editField ? (yearRows[pi + 1]?.[editField] ?? "") : "";
                           return (
                             <td key={col.period_label} className="px-3 py-0.5">

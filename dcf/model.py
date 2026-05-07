@@ -199,8 +199,12 @@ def _build_proforma_rows(
     rows = []
     for yf, fc in zip(year_forecasts, fcff_series):
         rev = yf.revenue
-        cogs = rev * yf.cogs_pct
-        gross_profit = rev - cogs
+        if yf.reports_cogs:
+            cogs = rev * yf.cogs_pct
+            gross_profit = rev - cogs
+        else:
+            cogs = None
+            gross_profit = None
         rd = yf.rd_pct or 0.0
         interest = rev * yf.interest_pct
         other = rev * yf.other_pct
@@ -439,8 +443,12 @@ def _build_y1_quarter_rows(
                 pretax_income=pretax,
             ))
         else:
-            cogs = rev * year_forecast_y1.cogs_pct
-            gross_profit = rev - cogs
+            if year_forecast_y1.reports_cogs:
+                cogs = rev * year_forecast_y1.cogs_pct
+                gross_profit = rev - cogs
+            else:
+                cogs = None
+                gross_profit = None
             rd = year_forecast_y1.rd_pct or 0.0
             sga = rev * year_forecast_y1.sga_pct
             rd_amt = rev * rd

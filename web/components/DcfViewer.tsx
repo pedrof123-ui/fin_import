@@ -177,7 +177,28 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail ?? `HTTP ${res.status}`);
-      setData(json as DcfData);
+      const d = json as DcfData;
+      setData(d);
+
+      // Re-sync yearRows and modelDefaults from the response so that
+      // analyst-estimated growth rates (and any other model-computed fields)
+      // are reflected in the editable inputs, not just in the proforma revenues.
+      const updatedRows: Record<number, YearRowState> = {};
+      for (const yf of d.year_forecasts) {
+        updatedRows[yf.year] = {
+          revenue_growth:    (yf.revenue_growth    * 100).toFixed(1),
+          cogs_pct:          (yf.cogs_pct           * 100).toFixed(1),
+          sga_pct:           (yf.sga_pct            * 100).toFixed(1),
+          rd_pct:            yf.rd_pct !== null ? (yf.rd_pct * 100).toFixed(1) : "",
+          interest_pct:      (yf.interest_pct       * 100).toFixed(1),
+          other_pct:         (yf.other_pct          * 100).toFixed(1),
+          capex_pct_revenue: (yf.capex_pct_revenue  * 100).toFixed(1),
+        };
+      }
+      setYearRows(updatedRows);
+      if (modelDefaultsRef.current) {
+        modelDefaultsRef.current = { ...modelDefaultsRef.current, yearRows: updatedRows };
+      }
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {

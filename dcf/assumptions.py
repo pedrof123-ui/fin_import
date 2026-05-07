@@ -57,6 +57,7 @@ class YearForecast:
     capex_pct_revenue: float
     da_pct: float = 0.03
     other_opex_pct: float = 0.0  # residual operating costs not in COGS/SGA/R&D
+    reports_cogs: bool = True    # False for service cos. that don't break out cost of revenue
 
 
 @dataclass
