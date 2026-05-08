@@ -1,12 +1,13 @@
 # fin_import2
 
-Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into DuckDB. Includes a web app for single-ticker imports, a DCF valuation engine, and a CLI tool for bulk imports.
+Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into DuckDB. Includes a web app for single-ticker imports, a DCF valuation engine, a CLI tool for bulk imports, and a separate Alpha Vantage financial statements database.
 
 ## Architecture
 
 - **FastAPI backend** (`api/`) — REST API for importing, querying statements, and running DCF valuations
 - **Next.js frontend** (`web/`) — UI to import a ticker, view all 3 statements, switch FY/Q, DCF valuation tab
-- **DuckDB** (`data/financial_statements.duckdb`) — stores income, balance sheet, and cash flow tables
+- **DuckDB** (`data/financial_statements.duckdb`) — stores income, balance sheet, and cash flow tables from SEC EDGAR
+- **DuckDB** (`data/av_financials.duckdb`) — stores income, balance sheet, and cash flow tables from Alpha Vantage API
 - **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 
@@ -113,6 +114,54 @@ Forecasting:
 - Hamada equation unlever/re-lever beta at the current D/E ratio.
 - `DcfResult.warnings` carries a list of data quality messages (e.g. zero market cap, WACC below 5%, terminal growth clamped). Shown as amber banners in the UI.
 
+## Alpha Vantage Financial Statements
+
+A separate pipeline fetches income statements, balance sheets, and cash flow statements directly from the Alpha Vantage API and stores them in `data/av_financials.duckdb`. This database is independent of the SEC EDGAR pipeline.
+
+### .env variables
+
+```
+ALPHA_VANTAGE_API_KEY=<your premium key>
+PRICES_DB_PATH=/path/to/trade_systems/data/prices.duckdb
+AV_DB_PATH=data/av_financials.duckdb   # optional override
+```
+
+### Import
+
+```bash
+# Single or multiple tickers
+uv run scripts/av_import.py AAPL MSFT GOOGL
+
+# From a CSV file (tickers in first column)
+uv run scripts/av_import.py --csv tickers.csv
+
+# All tickers from prices.duckdb
+uv run scripts/av_import.py --from-prices-db
+```
+
+`--force` re-fetches tickers already in the DB. Without it, existing tickers are skipped.
+
+### Query
+
+```bash
+uv run scripts/av_query.py AAPL
+uv run scripts/av_query.py AAPL MSFT --statement income --period annual
+uv run scripts/av_query.py AAPL --start 2020-01-01 --end 2024-12-31
+uv run scripts/av_query.py AAPL --statement balance --out output.csv
+```
+
+### Update (cron)
+
+```bash
+# Refresh all tickers in the DB with latest data
+uv run scripts/av_update.py
+
+# Refresh a single ticker
+uv run scripts/av_update.py --ticker AAPL
+```
+
+The rate limiter enforces the 75 calls/minute premium plan limit with even spacing (~0.8s between calls). Each ticker costs 3 API calls (one per statement type); bulk throughput is ~25 tickers/minute.
+
 ## Tests
 
 ```bash
@@ -160,10 +209,10 @@ web/                   Next.js frontend (port 3000)
     StatementViewer.tsx  Financials table with FY/Q toggle
     DcfViewer.tsx        DCF container: state management, Reset/Update actions
     DcfSummary.tsx       Valuation summary + editable WACC inputs
-    DcfStatements.tsx    Historical & proforma table: EBIT, EBITDA, income tax (effective rate), net income (margin), EPS; editable forecast ratios
-    DcfQuarterly.tsx     Y1 quarterly detail: actuals + seasonality estimates; editable revenue inputs for estimated quarters
+    DcfStatements.tsx    Historical & proforma table with editable forecast ratios
+    DcfQuarterly.tsx     Y1 quarterly detail: actuals + seasonality estimates
     DcfNwcCapex.tsx      DSO/DPO/DIO inputs + projected NWC and CapEx per year
-    DcfFcffTable.tsx     FCFF build-up table (Revenue→EBIT→NOPAT→FCFF→PV) + EV bridge
+    DcfFcffTable.tsx     FCFF build-up table + EV bridge
     DcfTerminalValue.tsx Terminal value decomposition card
     DcfSensitivity.tsx   2D sensitivity table (WACC × terminal growth)
   lib/
@@ -171,15 +220,24 @@ web/                   Next.js frontend (port 3000)
     formatField.ts       blurFormat / focusStrip / parsePct utilities
     useArrowNav.ts       useLinearArrowNav / useGridArrowNav keyboard nav hooks
 extractors/
-  statement_extractor.py   Shared 2-pass extractor core (static + AI fallback)
+  statement_extractor.py          Shared 2-pass extractor core (static + AI fallback)
   income_statement_extractor.py   Thin wrapper — income-specific mapping + validation
   balance_sheet_extractor.py      Thin wrapper — balance sheet
   cash_flow_extractor.py          Thin wrapper — cash flow
 xbrl_mappings/         Static XBRL concept → field mappings
-xbrl_concept_mapper.py AI-assisted fallback mapper (openai-agents)
-financial_statements_db.py  DuckDB schema + insert helpers
-bulk_import_10k.py     Core bulk import logic (async, concurrent)
-run_bulk_import.py     CLI entry point for bulk imports
+scripts/
+  av_import.py         Import AV financial statements (single ticker / CSV / prices.duckdb)
+  av_query.py          Query AV financial statements with optional date range and CSV export
+  av_update.py         Refresh all tickers in av_financials.duckdb with latest AV data
+  update_alpha_vantage_estimates.py  Update analyst EPS/revenue estimates from AV
+xbrl_concept_mapper.py          AI-assisted fallback mapper (openai-agents)
+av_financials_db.py             Alpha Vantage DB class: schema, rate limiter, fetch, upsert, query
+financial_statements_db.py      SEC EDGAR DB class: schema, insert helpers, log_extraction()
+bulk_import_10k.py              Core bulk import logic (async, concurrent)
+run_bulk_import.py              CLI entry point for SEC EDGAR bulk imports
 tests/                 pytest tests
-data/                  DuckDB database files
+data/
+  financial_statements.duckdb   SEC EDGAR financial statements
+  av_financials.duckdb          Alpha Vantage financial statements
+  xbrl_mappings_multi.duckdb    AI-discovered XBRL concept mapping store
 ```

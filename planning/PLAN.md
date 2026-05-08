@@ -164,3 +164,350 @@ Keyboard navigation:
 
 edgartools MCP server configured in `~/.claude.json` with `EDGAR_IDENTITY` env var.
 Supports `edgar_company`, `edgar_filing`, `edgar_compare`, `edgar_trends`, and others.
+
+---
+
+---
+
+# Alpha Vantage Financial Statements Database — Implementation Plan
+
+## Status: Complete (as of 2026-05-08)
+
+---
+
+## Overview
+
+Build a production-grade pipeline to fetch, store, and query financial statements
+(income statement, balance sheet, cash flow) from the Alpha Vantage API into a new
+dedicated DuckDB database. No changes to existing fin_import2 code.
+
+---
+
+## Database Recommendation
+
+**DuckDB** — already used throughout the project. Optimal for this workload:
+- Columnar storage: fast aggregations across thousands of tickers and decades of data
+- Native Python/pandas integration (already in use)
+- Zero server overhead; single file, trivially backed up
+- Scales comfortably to millions of rows (1000 tickers × 80 quarters × 3 statements ≈ 240 000 rows)
+
+**File**: `data/av_financials.duckdb` (separate from the SEC EDGAR `financial_statements.duckdb`)
+
+---
+
+## File Structure
+
+```
+av_financials_db.py               # Core DB class + rate-limited AV fetcher
+scripts/
+    av_import.py                  # CLI: import one ticker / CSV / prices.duckdb
+    av_query.py                   # CLI: query statements with optional date range
+    av_update.py                  # CLI: refresh all tickers already in the DB
+```
+
+---
+
+## Rate Limiting
+
+Alpha Vantage limit: **75 calls/minute**.
+Each ticker requires **3 API calls** (INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW).
+Sustained bulk throughput: 25 tickers/minute.
+
+Implementation: a `RateLimiter` class using a sliding deque of timestamps.
+Before each API call, the limiter checks how many calls have been made in the
+last 60 seconds and sleeps the minimum required to stay under the limit.
+
+```python
+class RateLimiter:
+    def __init__(self, max_calls: int = 75, period: float = 60.0): ...
+    def wait(self) -> None: ...   # blocks until a call slot is available
+```
+
+---
+
+## .env Additions
+
+```
+ALPHA_VANTAGE_API_KEY=<already present>
+PRICES_DB_PATH=/home/pedro/projects/trade_systems/data/prices.duckdb
+AV_DB_PATH=data/av_financials.duckdb    # optional override
+```
+
+---
+
+## Core Module: `av_financials_db.py`
+
+### Class `AVFinancialsDB`
+
+**Responsibilities**:
+- Open/create `data/av_financials.duckdb` and create schema on first use
+- Rate-limited API fetching via `RateLimiter`
+- Insert/upsert all three statement types
+- Query with optional date and period filters
+- Import log tracking
+
+### DB Schema
+
+#### `companies`
+```sql
+ticker          VARCHAR PRIMARY KEY,
+last_updated_at TIMESTAMP,
+total_annual    INTEGER DEFAULT 0,
+total_quarterly INTEGER DEFAULT 0
+```
+
+#### `income_statements`
+```sql
+ticker                              VARCHAR NOT NULL,
+fiscal_date_ending                  DATE NOT NULL,
+period_type                         VARCHAR NOT NULL,   -- 'annual' | 'quarterly'
+reported_currency                   VARCHAR,
+fetched_at                          TIMESTAMP,
+gross_profit                        DOUBLE,
+total_revenue                       DOUBLE,
+cost_of_revenue                     DOUBLE,
+cost_of_goods_and_services_sold     DOUBLE,
+operating_income                    DOUBLE,
+selling_general_and_administrative  DOUBLE,
+research_and_development            DOUBLE,
+operating_expenses                  DOUBLE,
+investment_income_net               DOUBLE,
+net_interest_income                 DOUBLE,
+interest_income                     DOUBLE,
+interest_expense                    DOUBLE,
+non_interest_income                 DOUBLE,
+other_non_operating_income          DOUBLE,
+depreciation                        DOUBLE,
+depreciation_and_amortization       DOUBLE,
+income_before_tax                   DOUBLE,
+income_tax_expense                  DOUBLE,
+interest_and_debt_expense           DOUBLE,
+net_income_from_continuing_ops      DOUBLE,
+comprehensive_income_net_of_tax     DOUBLE,
+ebit                                DOUBLE,
+ebitda                              DOUBLE,
+net_income                          DOUBLE,
+PRIMARY KEY (ticker, fiscal_date_ending, period_type)
+```
+
+#### `balance_sheets`
+```sql
+ticker                                  VARCHAR NOT NULL,
+fiscal_date_ending                      DATE NOT NULL,
+period_type                             VARCHAR NOT NULL,
+reported_currency                       VARCHAR,
+fetched_at                              TIMESTAMP,
+total_assets                            DOUBLE,
+total_current_assets                    DOUBLE,
+cash_and_cash_equivalents               DOUBLE,
+cash_and_short_term_investments         DOUBLE,
+inventory                               DOUBLE,
+current_net_receivables                 DOUBLE,
+total_non_current_assets                DOUBLE,
+property_plant_equipment_net            DOUBLE,
+accumulated_depreciation_amortization   DOUBLE,
+intangible_assets                       DOUBLE,
+intangible_assets_excl_goodwill         DOUBLE,
+goodwill                                DOUBLE,
+investments                             DOUBLE,
+long_term_investments                   DOUBLE,
+short_term_investments                  DOUBLE,
+other_current_assets                    DOUBLE,
+other_non_current_assets                DOUBLE,
+total_liabilities                       DOUBLE,
+total_current_liabilities               DOUBLE,
+current_accounts_payable                DOUBLE,
+deferred_revenue                        DOUBLE,
+current_debt                            DOUBLE,
+short_term_debt                         DOUBLE,
+total_non_current_liabilities           DOUBLE,
+capital_lease_obligations               DOUBLE,
+long_term_debt                          DOUBLE,
+current_long_term_debt                  DOUBLE,
+long_term_debt_noncurrent               DOUBLE,
+short_long_term_debt_total              DOUBLE,
+other_current_liabilities               DOUBLE,
+other_non_current_liabilities           DOUBLE,
+total_shareholder_equity                DOUBLE,
+treasury_stock                          DOUBLE,
+retained_earnings                       DOUBLE,
+common_stock                            DOUBLE,
+common_stock_shares_outstanding         DOUBLE,
+PRIMARY KEY (ticker, fiscal_date_ending, period_type)
+```
+
+#### `cash_flow_statements`
+```sql
+ticker                                          VARCHAR NOT NULL,
+fiscal_date_ending                              DATE NOT NULL,
+period_type                                     VARCHAR NOT NULL,
+reported_currency                               VARCHAR,
+fetched_at                                      TIMESTAMP,
+operating_cashflow                              DOUBLE,
+payments_for_operating_activities               DOUBLE,
+proceeds_from_operating_activities              DOUBLE,
+change_in_operating_liabilities                 DOUBLE,
+change_in_operating_assets                      DOUBLE,
+depreciation_depletion_and_amortization         DOUBLE,
+capital_expenditures                            DOUBLE,
+change_in_receivables                           DOUBLE,
+change_in_inventory                             DOUBLE,
+profit_loss                                     DOUBLE,
+cashflow_from_investment                        DOUBLE,
+cashflow_from_financing                         DOUBLE,
+proceeds_from_repayments_short_term_debt        DOUBLE,
+payments_for_repurchase_common_stock            DOUBLE,
+payments_for_repurchase_equity                  DOUBLE,
+payments_for_repurchase_preferred_stock         DOUBLE,
+dividend_payout                                 DOUBLE,
+dividend_payout_common_stock                    DOUBLE,
+dividend_payout_preferred_stock                 DOUBLE,
+proceeds_from_issuance_common_stock             DOUBLE,
+proceeds_from_issuance_long_term_debt           DOUBLE,
+proceeds_from_issuance_preferred_stock          DOUBLE,
+proceeds_from_repurchase_equity                 DOUBLE,
+proceeds_from_sale_treasury_stock               DOUBLE,
+change_in_cash_and_cash_equivalents             DOUBLE,
+change_in_exchange_rate                         DOUBLE,
+net_income                                      DOUBLE,
+PRIMARY KEY (ticker, fiscal_date_ending, period_type)
+```
+
+#### `import_log`
+```sql
+id               INTEGER PRIMARY KEY,   -- auto-increment
+ticker           VARCHAR NOT NULL,
+run_at           TIMESTAMP NOT NULL,
+success          BOOLEAN NOT NULL,
+statements       VARCHAR,               -- 'income,balance,cashflow' (which succeeded)
+periods_inserted INTEGER,
+error_msg        VARCHAR
+```
+
+### Key Methods
+
+```python
+class AVFinancialsDB:
+    def __init__(self, db_path: str = "data/av_financials.duckdb"): ...
+    def close(self) -> None: ...
+
+    # Fetch + store one ticker (3 API calls); returns rows inserted
+    def import_ticker(self, ticker: str, api_key: str, limiter: RateLimiter) -> int: ...
+
+    # Query: returns dict of DataFrames keyed by 'income' | 'balance' | 'cashflow'
+    def query(
+        self,
+        tickers: list[str],
+        statement: str = "all",       # 'income' | 'balance' | 'cashflow' | 'all'
+        period_type: str = "all",     # 'annual' | 'quarterly' | 'all'
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> dict[str, pd.DataFrame]: ...
+
+    def list_tickers(self) -> list[str]: ...
+    def has_ticker(self, ticker: str) -> bool: ...
+```
+
+---
+
+## Script: `scripts/av_import.py`
+
+### Usage
+
+```
+uv run scripts/av_import.py AAPL
+uv run scripts/av_import.py --csv data/test_tickers.csv
+uv run scripts/av_import.py --from-prices-db
+uv run scripts/av_import.py --csv tickers.csv --force    # re-import existing tickers
+uv run scripts/av_import.py AAPL --db data/custom.duckdb
+```
+
+### Behavior
+- Reads `ALPHA_VANTAGE_API_KEY` and optional `AV_DB_PATH` from `.env`
+- `--from-prices-db`: reads `PRICES_DB_PATH` from `.env`, queries the `stocks` table for tickers
+- `--csv`: first column of CSV, header row auto-detected and skipped if non-ticker
+- Without `--force`, skips tickers that already have data in the DB
+- Logs per-ticker result to stdout and writes to `import_log` table
+- On error for one ticker, logs and continues with the next
+
+---
+
+## Script: `scripts/av_query.py`
+
+### Usage
+
+```
+uv run scripts/av_query.py AAPL
+uv run scripts/av_query.py AAPL MSFT GOOGL --statement income --period annual
+uv run scripts/av_query.py AAPL --start 2020-01-01 --end 2024-12-31
+uv run scripts/av_query.py AAPL --statement balance --out aapl_balance.csv
+```
+
+### Arguments
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `tickers` (positional) | required | One or more ticker symbols |
+| `--statement` | `all` | `income`, `balance`, `cashflow`, or `all` |
+| `--period` | `all` | `annual`, `quarterly`, or `all` |
+| `--start` | none | ISO date filter inclusive |
+| `--end` | none | ISO date filter inclusive |
+| `--out` | none | CSV path; prints to stdout if omitted |
+| `--db` | from `.env` | Override DB path |
+
+---
+
+## Script: `scripts/av_update.py`
+
+Refreshes all tickers in the DB with the latest data from Alpha Vantage.
+Intended to be run on a cron schedule (e.g., weekly after earnings season).
+
+### Usage
+
+```
+uv run scripts/av_update.py
+uv run scripts/av_update.py --ticker AAPL      # update one specific ticker
+uv run scripts/av_update.py --db data/custom.duckdb
+```
+
+### Behavior
+- Queries `companies` for all known tickers (or uses `--ticker` override)
+- Re-fetches all three statements per ticker (AV returns full history per call)
+- Upserts via `INSERT OR REPLACE` so existing rows are overwritten with latest data
+- Logs each ticker: success / new periods added / error
+- Prints a summary at the end: tickers updated, total new periods, errors
+
+---
+
+## Logging
+
+All three scripts use Python `logging`:
+- `INFO` to stdout by default
+- `DEBUG` available via `--verbose` flag
+- Key events logged: ticker started, API call made, rows inserted, ticker skipped,
+  ticker failed, run complete with summary stats
+
+The `import_log` table provides a persistent audit trail per import run.
+
+---
+
+## Implementation Sequence
+
+1. `av_financials_db.py` — `RateLimiter`, schema creation, `_upsert_*` helpers,
+   `import_ticker`, `query`, `list_tickers`
+2. `scripts/av_import.py` — single ticker, then `--csv`, then `--from-prices-db`
+3. `scripts/av_query.py`
+4. `scripts/av_update.py`
+5. Smoke-test with 3–5 tickers before any bulk run
+
+---
+
+## Notes & Constraints
+
+- AV returns `"None"` (string) for missing values; convert to Python `None` on ingest
+- AV returns all numeric values as strings (e.g., `"12345"`); cast to `DOUBLE`
+- Each AV financial statement call returns all available periods (no date range param)
+- The update script always re-fetches full history and upserts — simpler than delta logic
+- `COMPANY_OVERVIEW` is not fetched in this phase; `companies` table is populated from
+  import metadata only
+- No changes to `financial_statements_db.py`, `api/`, or any existing code

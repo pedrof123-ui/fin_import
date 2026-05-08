@@ -53,7 +53,8 @@ fin_import2/
 │   └── test_api.py                      API tests (fast + integration)
 │
 ├── data/
-│   ├── financial_statements.duckdb      Main DuckDB database
+│   ├── financial_statements.duckdb      SEC EDGAR financial statements (income, balance, cashflow)
+│   ├── av_financials.duckdb             Alpha Vantage financial statements (income, balance, cashflow)
 │   └── xbrl_mappings_multi.duckdb       AI-discovered concept mapping store
 │
 ├── docs/
@@ -69,11 +70,12 @@ fin_import2/
 ├── planning/
 │   └── PLAN.md                          Overall project plan
 │
-├── financial_statements_db.py           DuckDB schema, insert helpers, log_extraction()
+├── av_financials_db.py                  Alpha Vantage DB class: schema, RateLimiter, fetch, upsert, query
+├── financial_statements_db.py           SEC EDGAR DB class: schema, insert helpers, log_extraction()
 ├── xbrl_concept_mapper.py               AI fallback mapper via OpenRouter (Claude Haiku)
 ├── xbrl_mapping_manager_multi_statement.py  XBRL mapping persistence, missed_concepts logging
 ├── bulk_import_10k.py                   Core async bulk import logic (concurrent tickers)
-├── run_bulk_import.py                   CLI entry point for bulk imports
+├── run_bulk_import.py                   CLI entry point for SEC EDGAR bulk imports
 ├── pyproject.toml                       Dependencies and pytest config
 └── CLAUDE.md                            Coding standards
 ```
@@ -210,6 +212,18 @@ Per-year: revenue_growth, cogs_pct, sga_pct, rd_pct, interest_pct, other_pct, ca
 Reset button restores all inputs to model-computed defaults without re-fetching.
 
 ## Database tables
+
+### `data/av_financials.duckdb`
+
+| Table | Key columns |
+|-------|-------------|
+| `income_statements` | ticker, fiscal_date_ending, period_type ('annual'/'quarterly'), total_revenue, gross_profit, operating_income, ebit, ebitda, net_income, ... |
+| `balance_sheets` | ticker, fiscal_date_ending, period_type, total_assets, total_liabilities, total_shareholder_equity, long_term_debt, ... |
+| `cash_flow_statements` | ticker, fiscal_date_ending, period_type, operating_cashflow, capital_expenditures, stock_based_compensation, dividend_payout, ... |
+| `companies` | ticker, last_updated_at, total_annual, total_quarterly |
+| `import_log` | ticker, run_at, success, statements, periods_inserted, error_msg |
+
+Primary key on all three statement tables: `(ticker, fiscal_date_ending, period_type)`. All numeric fields stored as DOUBLE; AV `"None"` strings converted to NULL on ingest.
 
 ### `data/financial_statements.duckdb`
 
