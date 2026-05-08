@@ -53,7 +53,7 @@ def _tickers_from_csv(path: str) -> list[str]:
 def _tickers_from_prices_db(prices_db_path: str) -> list[str]:
     conn = duckdb.connect(prices_db_path, read_only=True)
     try:
-        rows = conn.execute("SELECT DISTINCT ticker FROM stocks ORDER BY ticker").fetchall()
+        rows = conn.execute("SELECT DISTINCT ticker FROM stock_prices ORDER BY ticker").fetchall()
         return [r[0] for r in rows if r[0]]
     finally:
         conn.close()
