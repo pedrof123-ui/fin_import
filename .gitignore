@@ -47,6 +47,9 @@ edgartools/
 # Playwright MCP browser session artifacts
 .playwright-mcp/
 
+# Claude Code internal
+.sisyphus/
+
 # Temporary screenshots
 screenshot.png
 screenshots/

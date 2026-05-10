@@ -243,6 +243,72 @@ All three statement insert methods use upsert semantics (`INSERT OR REPLACE`), s
 
 ---
 
+---
+
+## Historic Fundamentals Pipeline
+
+Computes monthly PE timeseries and analyst estimates for all tickers in `av_financials.duckdb`. Stores results in `data/historic_fundamentals.duckdb` (separate from AV and SEC EDGAR databases).
+
+### Entry points
+
+| Script | Purpose | AV calls |
+|--------|---------|----------|
+| `scripts/hf_import.py` | Initial backfill: full PE history + estimates for all tickers | 1/ticker (estimates only) |
+| `scripts/hf_update.py` | Monthly refresh: recompute PE + refresh estimates for all tracked tickers | 1/ticker |
+
+### Data sources
+
+| Data | Source | Notes |
+|------|--------|-------|
+| Net income (TTM) | `av_financials.duckdb / income_statements` (period_type='quarterly') | Sum of last 4 quarters; falls back to annual for pre-quarterly months |
+| Shares outstanding | `av_financials.duckdb / balance_sheets.common_stock_shares_outstanding` | Most recent quarter |
+| Month-end price | `prices.duckdb / stock_prices` (adj_close) | Last trading day of each calendar month |
+| Analyst estimates | Alpha Vantage EARNINGS_ESTIMATES endpoint | 1 AV call/ticker; stored as time-series snapshots |
+
+### Call graph
+
+```
+hf_import.py / hf_update.py
+  ├── for each ticker:
+  │   ├── PE phase (no AV calls — reads local DBs)
+  │   │   ├── _load_av_data(av_conn, ticker)          → quarterly + annual net_income / shares
+  │   │   ├── _load_monthly_prices(prices_conn, ticker) → month_end_date, adj_close
+  │   │   ├── build_monthly_pe(quarterly, annual, prices)
+  │   │   │   ├── TTM EPS: sum last 4 quarterly net_income / shares (or annual fallback)
+  │   │   │   ├── pe_ratio = price / ttm_eps (NULL when ttm_eps ≤ 0)
+  │   │   │   └── rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   ├── compute_pe_stats(ticker, monthly_pe)    → lt_median, p10/p25/p75/p90, current_pe
+  │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
+  │   └── estimates phase (1 AV call per ticker)
+  │       ├── fetch_estimates(ticker, api_key, limiter)  → raw AV EARNINGS_ESTIMATES response
+  │       ├── normalize_estimates(ticker, raw)            → DB-ready dicts
+  │       ├── hf_db.upsert_estimates(ticker, rows)
+  │       ├── compute_forward_eps(conn, ticker)           → sum of next 4 quarterly eps_avg
+  │       └── hf_db.update_forward_pe(ticker, fwd_pe, fwd_eps)
+  └── hf_db.close()
+```
+
+### Rate limit
+
+PE phase is local (no AV calls): < 5 min for all 1,465 tickers. Estimates phase: 1 call/ticker at 75/min = ~20 min. Uses the same shared `RateLimiter` from `av_financials_db.py`.
+
+### Notebook usage
+
+```python
+import sys
+sys.path.insert(0, "..")   # path to project root from notebooks/
+from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates
+
+get_pe_stats("AAPL")                                    # PE stats for one ticker
+get_pe_stats(["AAPL", "MSFT", "GOOGL"])                # multiple tickers
+get_pe_stats()                                          # all tickers
+
+get_pe_history("AAPL", start="2020-01-01")             # monthly PE history
+get_estimates("AAPL", horizon="fiscal quarter")        # analyst estimates
+```
+
+---
+
 ## File Map
 
 ```

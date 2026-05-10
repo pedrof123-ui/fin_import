@@ -55,6 +55,7 @@ fin_import2/
 ├── data/
 │   ├── financial_statements.duckdb      SEC EDGAR financial statements (income, balance, cashflow)
 │   ├── av_financials.duckdb             Alpha Vantage financial statements (income, balance, cashflow)
+│   ├── historic_fundamentals.duckdb     Monthly PE timeseries, PE statistics, analyst estimates snapshots
 │   └── xbrl_mappings_multi.duckdb       AI-discovered concept mapping store
 │
 ├── docs/
@@ -62,10 +63,20 @@ fin_import2/
 │   ├── BULK_IMPORT_GUIDE.md             Bulk import CLI reference
 │   └── MULTI_STATEMENT_EXTRACTOR_GUIDE.md  Extractor internals
 │
+├── historic_fundamentals/               Historic PE and estimates analytics package
+│   ├── __init__.py                      Public API: get_pe_stats, get_pe_history, get_estimates + lower-level exports
+│   ├── db.py                            HistoricFundamentalsDB: schema, upsert, query methods
+│   ├── pe.py                            TTM EPS computation, monthly PE builder, rolling 5yr median, pe_stats aggregation
+│   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE calculation
+│   └── query.py                         Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
+│
 ├── features/
-│   └── dcf/
-│       ├── VISION.md                    Original DCF feature vision
-│       └── PLAN.md                      DCF implementation plan and status
+│   ├── dcf/
+│   │   ├── VISION.md                    Original DCF feature vision
+│   │   └── PLAN.md                      DCF implementation plan and status
+│   └── historic_fundamentals/
+│       ├── VISION.md                    Original historic fundamentals feature vision
+│       └── PLAN.md                      Historic fundamentals implementation plan and status
 │
 ├── planning/
 │   └── PLAN.md                          Overall project plan
@@ -78,6 +89,11 @@ fin_import2/
 ├── run_bulk_import.py                   CLI entry point for SEC EDGAR bulk imports
 ├── pyproject.toml                       Dependencies and pytest config
 └── CLAUDE.md                            Coding standards
+
+scripts/ also contains:
+    hf_import.py                         Bulk backfill: compute PE history for all AV tickers + fetch estimates
+    hf_update.py                         Monthly update: refresh PE + estimates for all tickers in the DB
+    hf_query.py                          CLI query: stats, timeseries, estimates views; CSV export
 ```
 
 ## Data flow
@@ -236,6 +252,16 @@ Primary key on all three statement tables: `(ticker, fiscal_date_ending, period_
 | `companies` | ticker, first_filing_date, last_filing_date, total_filings |
 
 All three statement tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filing_date, period_end_date)` for atomic upserts.
+
+### `data/historic_fundamentals.duckdb`
+
+| Table | Key columns |
+|-------|-------------|
+| `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), rolling_5yr_median (trailing 60-month window; NULL for first 59 months), ttm_source ('quarterly'/'annual'), shares, updated_at |
+| `pe_stats` | ticker (PK), lt_median, p10, p25, p75, p90, months_available, rolling_5yr_median, current_pe, current_ttm_eps, forward_pe, forward_12m_eps, updated_at |
+| `earnings_estimates` | ticker, fiscal_date, horizon ('fiscal quarter'/'fiscal year'), fetched_at (PK together), eps_avg/high/low/count, eps_avg_7d/30d/60d/90d, eps_rev_up/down_7d/30d, rev_avg/high/low/count |
+
+Primary data sources: `av_financials.duckdb` (income_statements + balance_sheets for TTM EPS), `prices.duckdb` (adj_close for month-end price), Alpha Vantage EARNINGS_ESTIMATES endpoint (analyst estimates).
 
 ### `data/xbrl_mappings_multi.duckdb`
 
