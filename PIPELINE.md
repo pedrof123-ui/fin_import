@@ -312,7 +312,7 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 | Table | Key | Computed columns |
 |-------|-----|-----------------|
 | `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue |
-| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/pe_p25/pe_p75/pe_p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est |
+| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/pe_p25/pe_p75/pe_p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est |
 | `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
 
 ### Call graph
@@ -335,21 +335,23 @@ hf_import.py / hf_update.py
   │   │   │   └── ttm_revenue: sum last 4 quarterly total_revenue (or annual fallback)
   │   │   ├── compute_pe_stats(ticker, monthly_pe)      → snapshot of last row + PE percentiles
   │   │   ├── compute_revenue_stats(annual)             → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
+  │   │   ├── compute_earnings_stats(annual)            → earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
   │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
   │   ├── estimates phase (1 AV call per ticker, skipped with --skip-estimates)
   │   │   ├── fetch_estimates(ticker, api_key, limiter)  → AV EARNINGS_ESTIMATES response
   │   │   ├── normalize_estimates(ticker, raw)            → DB-ready dicts
   │   │   └── hf_db.upsert_estimates(ticker, rows)
   │   └── snapshot update phase (no AV calls — reads local DBs)
-  │       ├── _update_forward_pe()       → forward_pe, forward_12m_eps from stored estimates
+  │       ├── _update_forward_pe()         → forward_pe, forward_12m_eps from stored estimates
   │       ├── _update_rev_ntm_growth_est() → NTM rev estimate / TTM actual revenue - 1
-  │       └── _update_market_cap()       → latest price × diluted shares / 1e9 (billions)
+  │       ├── _update_earn_ntm_growth_est() → forward_12m_eps / current_ttm_eps - 1
+  │       └── _update_market_cap()         → latest price × diluted shares / 1e9 (billions)
   └── hf_db.close()
 ```
 
 Note: `upsert_pe_stats` uses `COALESCE` for estimate-derived fields (`forward_pe`, `forward_12m_eps`,
-`rev_ntm_growth_est`, `market_cap_b`) so `--skip-estimates` runs preserve existing analyst data.
-The snapshot update phase always runs regardless of `--skip-estimates`.
+`rev_ntm_growth_est`, `earn_ntm_growth_est`, `market_cap_b`) so `--skip-estimates` runs preserve
+existing analyst data. The snapshot update phase always runs regardless of `--skip-estimates`.
 
 ### Rate limit
 
@@ -363,7 +365,7 @@ import sys
 sys.path.insert(0, "..")   # path to project root from notebooks/
 from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates
 
-get_pe_stats("AAPL")                                    # snapshot: PE, market cap, dividends, revenue growth
+get_pe_stats("AAPL")                                    # snapshot: PE, market cap, dividends, revenue growth, earnings growth
 get_pe_stats(["AAPL", "MSFT", "GOOGL"])                # multiple tickers
 get_pe_stats()                                          # all tickers
 

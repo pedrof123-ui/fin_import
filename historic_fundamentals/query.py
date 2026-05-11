@@ -61,7 +61,8 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         ticker, market_cap_b, current_pe, pe_lt_median, pe_p25, pe_p75, pe_p10, pe_p90,
         pe_rolling_5yr_median, forward_pe, forward_12m_eps,
         current_ttm_eps, months_available, ttm_dividend, dividend_yield,
-        rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est
+        rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est,
+        earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est
 
     Examples:
         get_pe_stats("AAPL")
@@ -81,6 +82,7 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "current_ttm_eps", "months_available",
         "ttm_dividend", "dividend_yield",
         "rev_growth_1yr", "rev_cagr_3yr", "rev_cagr_5yr", "rev_ntm_growth_est",
+        "earn_growth_1yr", "earn_cagr_3yr", "earn_cagr_5yr", "earn_ntm_growth_est",
     ]
     return df[[c for c in cols if c in df.columns]]
 

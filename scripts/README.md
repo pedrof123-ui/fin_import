@@ -23,8 +23,9 @@ All-in-one script for onboarding new tickers. For each ticker it runs in sequenc
 2. Fetches shares outstanding → `av_financials.duckdb`
 3. Fetches dividend history → `av_financials.duckdb`
 4. Computes monthly PE + dividend yield timeseries → `historic_fundamentals.duckdb`
-5. Fetches analyst earnings estimates → `historic_fundamentals.duckdb`
-6. Computes forward PE → `pe_stats`
+5. Computes revenue growth (1yr, 3yr CAGR, 5yr CAGR) + earnings EPS growth (1yr, 3yr CAGR, 5yr CAGR) → `pe_stats`
+6. Fetches analyst earnings estimates → `historic_fundamentals.duckdb`
+7. Computes forward PE, NTM revenue growth estimate, NTM earnings growth estimate → `pe_stats`
 
 This is the recommended way to add new tickers. Running `av_import.py` + `hf_import.py` separately is equivalent but requires two commands.
 
@@ -207,8 +208,9 @@ Estimates phase: 1 AV call/ticker at 75/min = ~20 min for ~1,400 tickers.
 
 Monthly refresh for `data/historic_fundamentals.duckdb`. Reads the list of tickers already in
 `pe_stats`, recomputes their full monthly PE + dividend yield timeseries from updated
-`av_financials.duckdb` data, and refreshes analyst estimates from Alpha Vantage. Intended to
-run at the start of each month after `av_update.py` has refreshed the raw data.
+`av_financials.duckdb` data, recomputes revenue and earnings EPS growth CAGRs, and refreshes
+analyst estimates from Alpha Vantage. Intended to run at the start of each month after
+`av_update.py` has refreshed the raw data.
 
 ```bash
 uv run scripts/hf_update.py                     # update all tickers already in the DB

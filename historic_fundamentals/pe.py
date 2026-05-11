@@ -377,6 +377,52 @@ def compute_revenue_stats(annual: pd.DataFrame) -> dict:
     return result
 
 
+def compute_earnings_stats(annual: pd.DataFrame) -> dict:
+    """
+    Compute EPS growth metrics from annual income statement data.
+
+    Returns dict with any subset of:
+        earn_growth_1yr  — year-over-year EPS growth
+        earn_cagr_3yr    — 3-year EPS CAGR
+        earn_cagr_5yr    — 5-year EPS CAGR
+
+    EPS = net_income / shares (common_stock_shares_outstanding from balance sheet).
+    Only computed when both base and latest annual EPS are positive.
+    All values are decimals (e.g. 0.12 = 12% growth). Returns {} when data is
+    insufficient or EPS is non-positive.
+    """
+    if annual.empty:
+        return {}
+
+    a = annual.copy()
+    a["fiscal_date_ending"] = pd.to_datetime(a["fiscal_date_ending"]).dt.date
+    a = a.dropna(subset=["net_income", "shares"])
+    a = a[(a["net_income"] > 0) & (a["shares"] > 0)].sort_values("fiscal_date_ending").reset_index(drop=True)
+
+    if a.empty:
+        return {}
+
+    a["eps"] = a["net_income"] / a["shares"]
+
+    latest_date: date = a.iloc[-1]["fiscal_date_ending"]
+    latest_eps = float(a.iloc[-1]["eps"])
+    result = {}
+
+    for key, n_years in [("earn_growth_1yr", 1), ("earn_cagr_3yr", 3), ("earn_cagr_5yr", 5)]:
+        target = latest_date - timedelta(days=int(n_years * 365.25))
+        diffs = a["fiscal_date_ending"].apply(lambda d: abs((d - target).days))
+        idx = int(diffs.idxmin())
+        diff_days = int(diffs[idx])
+        base_date: date = a.loc[idx, "fiscal_date_ending"]
+        if diff_days <= 180 and base_date < latest_date:
+            base_eps = float(a.loc[idx, "eps"])
+            actual_years = (latest_date - base_date).days / 365.25
+            if actual_years > 0 and base_eps > 0:
+                result[key] = (latest_eps / base_eps) ** (1.0 / actual_years) - 1.0
+
+    return result
+
+
 def process_ticker(
     ticker: str,
     av_conn: duckdb.DuckDBPyConnection,
@@ -404,4 +450,5 @@ def process_ticker(
     stats = compute_pe_stats(ticker, monthly_pe)
     if stats:
         stats.update(compute_revenue_stats(annual))
+        stats.update(compute_earnings_stats(annual))
     return monthly_pe, stats

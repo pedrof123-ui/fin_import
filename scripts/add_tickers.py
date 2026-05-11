@@ -115,6 +115,18 @@ def _update_rev_ntm_growth_est(hf_db: HistoricFundamentalsDB, av_db, ticker: str
     hf_db.update_rev_ntm_growth_est(ticker, growth)
 
 
+def _update_earn_ntm_growth_est(hf_db: HistoricFundamentalsDB, ticker: str) -> None:
+    row = hf_db.conn.execute(
+        "SELECT forward_12m_eps, current_ttm_eps FROM pe_stats WHERE ticker = ?", [ticker]
+    ).fetchone()
+    if not row or row[0] is None:
+        hf_db.update_earn_ntm_growth_est(ticker, None)
+        return
+    forward_eps, current_ttm_eps = row
+    growth = (forward_eps / current_ttm_eps - 1.0) if current_ttm_eps and current_ttm_eps > 0 else None
+    hf_db.update_earn_ntm_growth_est(ticker, growth)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Add new tickers: fetch all AV data and compute all derived metrics."
@@ -228,6 +240,7 @@ def main() -> int:
                     hf_db.upsert_estimates(ticker, est_rows)
                     _update_forward_pe(hf_db, prices_conn, ticker)
                     _update_rev_ntm_growth_est(hf_db, av_db, ticker)
+                    _update_earn_ntm_growth_est(hf_db, ticker)
                     _update_market_cap(hf_db, av_db, prices_conn, ticker)
                     log.debug("%s %s — estimates: %d rows", prefix, ticker, len(est_rows))
                 except Exception as exc:
