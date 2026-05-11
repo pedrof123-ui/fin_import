@@ -123,6 +123,50 @@ def normalize_estimates(ticker: str, raw: list[dict]) -> list[dict]:
     return rows
 
 
+def compute_ntm_revenue(
+    conn: duckdb.DuckDBPyConnection,
+    ticker: str,
+    as_of_date: date | None = None,
+) -> float | None:
+    """
+    Next-12-month estimated revenue from the most recent estimate snapshot.
+    Sums the next 4 quarterly rev_avg values; falls back to the next annual
+    rev_avg if fewer than 4 quarterly estimates are available.
+    Returns None if no future revenue estimates exist.
+    """
+    if as_of_date is None:
+        as_of_date = date.today()
+
+    quarterly = conn.execute("""
+        SELECT fiscal_date, rev_avg
+        FROM earnings_estimates
+        WHERE ticker = ?
+          AND horizon = 'fiscal quarter'
+          AND fiscal_date > ?
+          AND rev_avg IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY fiscal_date ORDER BY fetched_at DESC) = 1
+        ORDER BY fiscal_date
+        LIMIT 4
+    """, [ticker, as_of_date]).fetchall()
+
+    if len(quarterly) >= 4:
+        return sum(r[1] for r in quarterly)
+
+    annual = conn.execute("""
+        SELECT fiscal_date, rev_avg
+        FROM earnings_estimates
+        WHERE ticker = ?
+          AND horizon = 'fiscal year'
+          AND fiscal_date > ?
+          AND rev_avg IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY fiscal_date ORDER BY fetched_at DESC) = 1
+        ORDER BY fiscal_date
+        LIMIT 1
+    """, [ticker, as_of_date]).fetchone()
+
+    return annual[1] if annual else None
+
+
 def compute_forward_eps(
     conn: duckdb.DuckDBPyConnection,
     ticker: str,

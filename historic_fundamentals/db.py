@@ -66,10 +66,17 @@ class HistoricFundamentalsDB:
                 rolling_5yr_median   DOUBLE,
                 ttm_source           VARCHAR,
                 shares               DOUBLE,
+                ttm_dividend         DOUBLE,
+                dividend_yield       DOUBLE,
+                ttm_revenue          DOUBLE,
                 updated_at           TIMESTAMP,
                 PRIMARY KEY (ticker, month_end_date)
             )
         """)
+        # Migration: add columns introduced after initial schema
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_dividend DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_revenue DOUBLE")
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
                 ticker              VARCHAR  PRIMARY KEY,
@@ -84,9 +91,22 @@ class HistoricFundamentalsDB:
                 current_pe          DOUBLE,
                 current_ttm_eps     DOUBLE,
                 forward_pe          DOUBLE,
-                forward_12m_eps     DOUBLE
+                forward_12m_eps     DOUBLE,
+                ttm_dividend        DOUBLE,
+                dividend_yield      DOUBLE,
+                rev_growth_1yr      DOUBLE,
+                rev_cagr_3yr        DOUBLE,
+                rev_cagr_5yr        DOUBLE,
+                rev_ntm_growth_est  DOUBLE
             )
         """)
+        # Migration: add columns introduced after initial schema
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ttm_dividend DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_growth_1yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_cagr_3yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_cagr_5yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_ntm_growth_est DOUBLE")
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS earnings_estimates (
                 ticker              VARCHAR   NOT NULL,
@@ -122,17 +142,23 @@ class HistoricFundamentalsDB:
         data = df.copy()
         data.insert(0, "ticker", ticker)
         data["updated_at"] = now
-        for col in ("price", "ttm_eps", "pe_ratio", "rolling_5yr_median", "ttm_source", "shares"):
+        for col in ("price", "ttm_eps", "pe_ratio", "rolling_5yr_median", "ttm_source",
+                    "shares", "ttm_dividend", "dividend_yield", "ttm_revenue"):
             if col not in data.columns:
                 data[col] = None
         cols = ["ticker", "month_end_date", "price", "ttm_eps", "pe_ratio",
-                "rolling_5yr_median", "ttm_source", "shares", "updated_at"]
+                "rolling_5yr_median", "ttm_source", "shares", "ttm_dividend",
+                "dividend_yield", "ttm_revenue", "updated_at"]
         self.conn.register("_tmp_pe", data[cols])
         try:
             self.conn.execute("""
                 INSERT OR REPLACE INTO monthly_pe
+                (ticker, month_end_date, price, ttm_eps, pe_ratio,
+                 rolling_5yr_median, ttm_source, shares, ttm_dividend,
+                 dividend_yield, ttm_revenue, updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
-                       rolling_5yr_median, ttm_source, shares, updated_at
+                       rolling_5yr_median, ttm_source, shares, ttm_dividend,
+                       dividend_yield, ttm_revenue, updated_at
                 FROM _tmp_pe
             """)
         finally:
@@ -140,11 +166,34 @@ class HistoricFundamentalsDB:
         return len(data)
 
     def upsert_pe_stats(self, stats: dict) -> None:
+        # ON CONFLICT preserves estimate-derived fields when the incoming value is NULL
+        # so that --skip-estimates runs don't wipe analyst data.
         self.conn.execute("""
-            INSERT OR REPLACE INTO pe_stats
+            INSERT INTO pe_stats
             (ticker, updated_at, lt_median, p10, p25, p75, p90, months_available,
-             rolling_5yr_median, current_pe, current_ttm_eps, forward_pe, forward_12m_eps)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             rolling_5yr_median, current_pe, current_ttm_eps, forward_pe, forward_12m_eps,
+             ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr,
+             rev_ntm_growth_est)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ticker) DO UPDATE SET
+                updated_at         = excluded.updated_at,
+                lt_median          = excluded.lt_median,
+                p10                = excluded.p10,
+                p25                = excluded.p25,
+                p75                = excluded.p75,
+                p90                = excluded.p90,
+                months_available   = excluded.months_available,
+                rolling_5yr_median = excluded.rolling_5yr_median,
+                current_pe         = excluded.current_pe,
+                current_ttm_eps    = excluded.current_ttm_eps,
+                forward_pe         = COALESCE(excluded.forward_pe,     pe_stats.forward_pe),
+                forward_12m_eps    = COALESCE(excluded.forward_12m_eps, pe_stats.forward_12m_eps),
+                ttm_dividend       = excluded.ttm_dividend,
+                dividend_yield     = excluded.dividend_yield,
+                rev_growth_1yr     = excluded.rev_growth_1yr,
+                rev_cagr_3yr       = excluded.rev_cagr_3yr,
+                rev_cagr_5yr       = excluded.rev_cagr_5yr,
+                rev_ntm_growth_est = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est)
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -159,6 +208,12 @@ class HistoricFundamentalsDB:
             stats.get("current_ttm_eps"),
             stats.get("forward_pe"),
             stats.get("forward_12m_eps"),
+            stats.get("ttm_dividend"),
+            stats.get("dividend_yield"),
+            stats.get("rev_growth_1yr"),
+            stats.get("rev_cagr_3yr"),
+            stats.get("rev_cagr_5yr"),
+            stats.get("rev_ntm_growth_est"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -187,6 +242,12 @@ class HistoricFundamentalsDB:
             UPDATE pe_stats SET forward_pe = ?, forward_12m_eps = ?, updated_at = ?
             WHERE ticker = ?
         """, [forward_pe, forward_12m_eps, datetime.now(UTC), ticker])
+
+    def update_rev_ntm_growth_est(self, ticker: str, rev_ntm_growth_est: float | None) -> None:
+        self.conn.execute("""
+            UPDATE pe_stats SET rev_ntm_growth_est = ?, updated_at = ?
+            WHERE ticker = ?
+        """, [rev_ntm_growth_est, datetime.now(UTC), ticker])
 
     # ── Query ─────────────────────────────────────────────────────────────────
 

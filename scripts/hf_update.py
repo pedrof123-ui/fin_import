@@ -52,7 +52,7 @@ from av_financials_db import DEFAULT_DB_PATH as AV_DB_PATH, RateLimiter  # noqa:
 from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB_PATH, HistoricFundamentalsDB  # noqa: E402
 from historic_fundamentals.pe import process_ticker  # noqa: E402
 from historic_fundamentals.estimates import (  # noqa: E402
-    fetch_estimates, normalize_estimates, compute_forward_eps,
+    fetch_estimates, normalize_estimates, compute_forward_eps, compute_ntm_revenue,
 )
 
 log = logging.getLogger(__name__)
@@ -70,6 +70,23 @@ def _update_forward_pe(hf_db: HistoricFundamentalsDB, prices_conn, ticker: str) 
     else:
         forward_pe = None
     hf_db.update_forward_pe(ticker, forward_pe, forward_eps)
+
+
+def _update_rev_ntm_growth_est(hf_db: HistoricFundamentalsDB, av_conn, ticker: str) -> None:
+    ntm_rev = compute_ntm_revenue(hf_db.conn, ticker)
+    if ntm_rev is None:
+        hf_db.update_rev_ntm_growth_est(ticker, None)
+        return
+    row = av_conn.execute("""
+        SELECT SUM(total_revenue) FROM (
+            SELECT total_revenue FROM income_statements
+            WHERE ticker = ? AND period_type = 'quarterly' AND total_revenue IS NOT NULL
+            ORDER BY fiscal_date_ending DESC LIMIT 4
+        )
+    """, [ticker]).fetchone()
+    ttm_rev = row[0] if row and row[0] else None
+    growth = (ntm_rev / ttm_rev - 1.0) if ttm_rev and ttm_rev > 0 else None
+    hf_db.update_rev_ntm_growth_est(ticker, growth)
 
 
 def parse_args() -> argparse.Namespace:
@@ -136,7 +153,8 @@ def main() -> int:
                     raw = fetch_estimates(ticker, api_key, limiter)
                     rows = normalize_estimates(ticker, raw)
                     hf_db.upsert_estimates(ticker, rows)
-                    _update_forward_pe(hf_db, prices_conn, ticker)
+                _update_forward_pe(hf_db, prices_conn, ticker)
+                _update_rev_ntm_growth_est(hf_db, av_conn, ticker)
 
                 ok += 1
                 log.info("%s %s — updated", prefix, ticker)

@@ -60,7 +60,8 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
     Returns DataFrame with columns:
         ticker, current_pe, lt_median, p25, p75, p10, p90,
         rolling_5yr_median, forward_pe, forward_12m_eps,
-        current_ttm_eps, months_available
+        current_ttm_eps, months_available, ttm_dividend, dividend_yield,
+        rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est
 
     Examples:
         get_pe_stats("AAPL")
@@ -78,6 +79,8 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "p25", "p75", "p10", "p90",
         "rolling_5yr_median", "forward_pe", "forward_12m_eps",
         "current_ttm_eps", "months_available",
+        "ttm_dividend", "dividend_yield",
+        "rev_growth_1yr", "rev_cagr_3yr", "rev_cagr_5yr", "rev_ntm_growth_est",
     ]
     return df[[c for c in cols if c in df.columns]]
 
@@ -93,7 +96,7 @@ def get_pe_history(tickers, start: str | None = None, end: str | None = None) ->
 
     Returns DataFrame with columns:
         ticker, month_end_date, price, ttm_eps, pe_ratio,
-        rolling_5yr_median, ttm_source
+        rolling_5yr_median, ttm_source, ttm_dividend, dividend_yield, ttm_revenue
 
     Examples:
         get_pe_history("AAPL")
@@ -113,6 +116,7 @@ def get_pe_history(tickers, start: str | None = None, end: str | None = None) ->
     cols = [
         "ticker", "month_end_date", "price", "ttm_eps",
         "pe_ratio", "rolling_5yr_median", "ttm_source",
+        "ttm_dividend", "dividend_yield", "ttm_revenue",
     ]
     return df[[c for c in cols if c in df.columns]]
 
