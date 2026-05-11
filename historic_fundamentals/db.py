@@ -107,7 +107,8 @@ class HistoricFundamentalsDB:
                 rev_growth_1yr        DOUBLE,
                 rev_cagr_3yr          DOUBLE,
                 rev_cagr_5yr          DOUBLE,
-                rev_ntm_growth_est    DOUBLE
+                rev_ntm_growth_est    DOUBLE,
+                market_cap_b          DOUBLE
             )
         """)
         # Migration: add/rename columns introduced after initial schema
@@ -117,6 +118,7 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_cagr_3yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_cagr_5yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_ntm_growth_est DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS market_cap_b DOUBLE")
         self._rename_column_if_exists("pe_stats", "lt_median",          "pe_lt_median")
         self._rename_column_if_exists("pe_stats", "p10",                "pe_p10")
         self._rename_column_if_exists("pe_stats", "p25",                "pe_p25")
@@ -190,8 +192,9 @@ class HistoricFundamentalsDB:
             (ticker, updated_at, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
              months_available, pe_rolling_5yr_median, current_pe, current_ttm_eps,
              forward_pe, forward_12m_eps, ttm_dividend, dividend_yield,
-             rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est,
+             market_cap_b)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at            = excluded.updated_at,
                 pe_lt_median          = excluded.pe_lt_median,
@@ -210,7 +213,8 @@ class HistoricFundamentalsDB:
                 rev_growth_1yr        = excluded.rev_growth_1yr,
                 rev_cagr_3yr          = excluded.rev_cagr_3yr,
                 rev_cagr_5yr          = excluded.rev_cagr_5yr,
-                rev_ntm_growth_est    = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est)
+                rev_ntm_growth_est    = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est),
+                market_cap_b          = COALESCE(excluded.market_cap_b, pe_stats.market_cap_b)
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -231,6 +235,7 @@ class HistoricFundamentalsDB:
             stats.get("rev_cagr_3yr"),
             stats.get("rev_cagr_5yr"),
             stats.get("rev_ntm_growth_est"),
+            stats.get("market_cap_b"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -265,6 +270,12 @@ class HistoricFundamentalsDB:
             UPDATE pe_stats SET rev_ntm_growth_est = ?, updated_at = ?
             WHERE ticker = ?
         """, [rev_ntm_growth_est, datetime.now(UTC), ticker])
+
+    def update_market_cap(self, ticker: str, market_cap_b: float | None) -> None:
+        self.conn.execute("""
+            UPDATE pe_stats SET market_cap_b = ?, updated_at = ?
+            WHERE ticker = ?
+        """, [market_cap_b, datetime.now(UTC), ticker])
 
     # ── Query ─────────────────────────────────────────────────────────────────
 

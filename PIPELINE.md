@@ -245,52 +245,116 @@ All three statement insert methods use upsert semantics (`INSERT OR REPLACE`), s
 
 ---
 
-## Historic Fundamentals Pipeline
+## Alpha Vantage Raw Data Pipeline
 
-Computes monthly PE timeseries and analyst estimates for all tickers in `av_financials.duckdb`. Stores results in `data/historic_fundamentals.duckdb` (separate from AV and SEC EDGAR databases).
+Downloads and refreshes all Alpha Vantage raw data into `data/av_financials.duckdb`.
 
 ### Entry points
 
-| Script | Purpose | AV calls |
-|--------|---------|----------|
-| `scripts/hf_import.py` | Initial backfill: full PE history + estimates for all tickers | 1/ticker (estimates only) |
-| `scripts/hf_update.py` | Monthly refresh: recompute PE + refresh estimates for all tracked tickers | 1/ticker |
+| Script | Purpose | AV calls/ticker |
+|--------|---------|----------------|
+| `scripts/add_tickers.py` | Add new tickers: all AV data + all derived metrics in one pass | 6 (statements + shares + dividends + estimates) |
+| `scripts/av_update.py` | Monthly refresh for all tickers in DB | 5 |
+
+`add_tickers.py` is the recommended way to onboard new tickers. It fetches all AV raw data and
+immediately computes PE history, dividend yield, and analyst estimates so the ticker is fully
+populated in both `av_financials.duckdb` and `historic_fundamentals.duckdb` after a single command.
+It skips tickers already in the DB unless `--force` is passed.
+
+`scripts/av_import.py` and `scripts/hf_import.py` remain available as standalone tools for
+targeted raw-data or derived-metrics work respectively.
+
+### Tables in av_financials.duckdb
+
+| Table | Source endpoint | Key |
+|-------|----------------|-----|
+| `income_statements` | INCOME_STATEMENT | (ticker, fiscal_date_ending, period_type) |
+| `balance_sheets` | BALANCE_SHEET | (ticker, fiscal_date_ending, period_type) |
+| `cash_flow_statements` | CASH_FLOW | (ticker, fiscal_date_ending, period_type) |
+| `shares_outstanding` | SHARES_OUTSTANDING | (ticker, date) |
+| `dividends` | DIVIDENDS | (ticker, ex_dividend_date) |
+| `companies` | — | ticker registry |
+| `import_log` | — | audit trail |
+
+### Rate limit
+
+5 AV calls per ticker × 75/min ≈ 95 min for ~1,400 tickers.
+
+---
+
+## Historic Fundamentals Pipeline
+
+Computes derived metrics for all tickers and stores them in `data/historic_fundamentals.duckdb`.
+
+### Entry points
+
+| Script | Purpose | AV calls/ticker |
+|--------|---------|----------------|
+| `scripts/hf_import.py` | Initial backfill: PE history + estimates | 1 (estimates only) |
+| `scripts/hf_update.py` | Monthly refresh: recompute all metrics + refresh estimates | 1 |
+
+`hf_import.py` skips tickers already in the DB unless `--force` is passed.
+Both scripts support `--skip-estimates` to skip the AV estimates call (PE/dividend recompute only, no API calls).
 
 ### Data sources
 
 | Data | Source | Notes |
 |------|--------|-------|
-| Net income (TTM) | `av_financials.duckdb / income_statements` (period_type='quarterly') | Sum of last 4 quarters; falls back to annual for pre-quarterly months |
-| Shares outstanding | `av_financials.duckdb / balance_sheets.common_stock_shares_outstanding` | Most recent quarter |
-| Month-end price | `prices.duckdb / stock_prices` (adj_close) | Last trading day of each calendar month |
-| Analyst estimates | Alpha Vantage EARNINGS_ESTIMATES endpoint | 1 AV call/ticker; stored as time-series snapshots |
+| Net income (TTM) | `av_financials.duckdb / income_statements` | Sum of last 4 quarterly; annual fallback |
+| Shares (primary) | `av_financials.duckdb / shares_outstanding.shares_outstanding_diluted` | Most recent entry ≤ month_end |
+| Shares (fallback) | `av_financials.duckdb / balance_sheets.common_stock_shares_outstanding` | Used when shares_outstanding table has no data |
+| Month-end price | `prices.duckdb / stock_prices.adj_close` | Last trading day of each calendar month |
+| Dividends | `av_financials.duckdb / dividends` | TTM sum of ex_dividend_date ≤ month_end |
+| Analyst estimates | Alpha Vantage EARNINGS_ESTIMATES | 1 AV call/ticker; stored as time-series snapshots |
+
+### Tables in historic_fundamentals.duckdb
+
+| Table | Key | Computed columns |
+|-------|-----|-----------------|
+| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue |
+| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/pe_p25/pe_p75/pe_p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est |
+| `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
 
 ### Call graph
 
 ```
 hf_import.py / hf_update.py
   ├── for each ticker:
-  │   ├── PE phase (no AV calls — reads local DBs)
-  │   │   ├── _load_av_data(av_conn, ticker)          → quarterly + annual net_income / shares
+  │   ├── PE + revenue phase (no AV calls — reads local DBs)
+  │   │   ├── _load_av_data(av_conn, ticker)            → quarterly + annual net_income, total_revenue, shares
+  │   │   ├── _load_shares_ts(av_conn, ticker)          → shares_outstanding timeseries (primary shares source)
+  │   │   ├── _load_dividends(av_conn, ticker)          → dividend event history
   │   │   ├── _load_monthly_prices(prices_conn, ticker) → month_end_date, adj_close
-  │   │   ├── build_monthly_pe(quarterly, annual, prices)
+  │   │   ├── build_monthly_pe(quarterly, annual, prices, shares_ts, dividends)
+  │   │   │   ├── shares: shares_outstanding_diluted (fallback: balance sheet)
   │   │   │   ├── TTM EPS: sum last 4 quarterly net_income / shares (or annual fallback)
   │   │   │   ├── pe_ratio = price / ttm_eps (NULL when ttm_eps ≤ 0)
-  │   │   │   └── rolling_5yr_median: rolling(60, min_periods=60).median()
-  │   │   ├── compute_pe_stats(ticker, monthly_pe)    → lt_median, p10/p25/p75/p90, current_pe
+  │   │   │   ├── pe_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── ttm_dividend: sum of dividends with ex_date in trailing 365 days
+  │   │   │   ├── dividend_yield: ttm_dividend / price
+  │   │   │   └── ttm_revenue: sum last 4 quarterly total_revenue (or annual fallback)
+  │   │   ├── compute_pe_stats(ticker, monthly_pe)      → snapshot of last row + PE percentiles
+  │   │   ├── compute_revenue_stats(annual)             → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
   │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
-  │   └── estimates phase (1 AV call per ticker)
-  │       ├── fetch_estimates(ticker, api_key, limiter)  → raw AV EARNINGS_ESTIMATES response
-  │       ├── normalize_estimates(ticker, raw)            → DB-ready dicts
-  │       ├── hf_db.upsert_estimates(ticker, rows)
-  │       ├── compute_forward_eps(conn, ticker)           → sum of next 4 quarterly eps_avg
-  │       └── hf_db.update_forward_pe(ticker, fwd_pe, fwd_eps)
+  │   ├── estimates phase (1 AV call per ticker, skipped with --skip-estimates)
+  │   │   ├── fetch_estimates(ticker, api_key, limiter)  → AV EARNINGS_ESTIMATES response
+  │   │   ├── normalize_estimates(ticker, raw)            → DB-ready dicts
+  │   │   └── hf_db.upsert_estimates(ticker, rows)
+  │   └── snapshot update phase (no AV calls — reads local DBs)
+  │       ├── _update_forward_pe()       → forward_pe, forward_12m_eps from stored estimates
+  │       ├── _update_rev_ntm_growth_est() → NTM rev estimate / TTM actual revenue - 1
+  │       └── _update_market_cap()       → latest price × diluted shares / 1e9 (billions)
   └── hf_db.close()
 ```
 
+Note: `upsert_pe_stats` uses `COALESCE` for estimate-derived fields (`forward_pe`, `forward_12m_eps`,
+`rev_ntm_growth_est`, `market_cap_b`) so `--skip-estimates` runs preserve existing analyst data.
+The snapshot update phase always runs regardless of `--skip-estimates`.
+
 ### Rate limit
 
-PE phase is local (no AV calls): < 5 min for all 1,465 tickers. Estimates phase: 1 call/ticker at 75/min = ~20 min. Uses the same shared `RateLimiter` from `av_financials_db.py`.
+PE + revenue phase is local (no AV calls): a few minutes for all tickers.
+Estimates phase: 1 call/ticker at 75/min ≈ 20 min.
 
 ### Notebook usage
 
@@ -299,12 +363,43 @@ import sys
 sys.path.insert(0, "..")   # path to project root from notebooks/
 from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates
 
-get_pe_stats("AAPL")                                    # PE stats for one ticker
+get_pe_stats("AAPL")                                    # snapshot: PE, market cap, dividends, revenue growth
 get_pe_stats(["AAPL", "MSFT", "GOOGL"])                # multiple tickers
 get_pe_stats()                                          # all tickers
 
-get_pe_history("AAPL", start="2020-01-01")             # monthly PE history
-get_estimates("AAPL", horizon="fiscal quarter")        # analyst estimates
+get_pe_history("AAPL", start="2020-01-01")             # monthly PE, dividend yield, TTM revenue
+get_estimates("AAPL", horizon="fiscal quarter")        # analyst EPS + revenue estimates
+```
+
+---
+
+## Adding New Tickers
+
+Run once per new ticker (or batch of tickers):
+
+```bash
+# All-in-one: AV raw data + PE history + estimates
+uv run scripts/add_tickers.py AAPL MSFT GOOGL
+
+# From a CSV file
+uv run scripts/add_tickers.py --csv data/new_tickers.csv
+
+# Skip estimates calls (PE + dividends only, no AV rate limit pressure)
+uv run scripts/add_tickers.py AAPL --skip-estimates
+```
+
+---
+
+## Monthly Update Workflow
+
+Run once per month after earnings season, in order:
+
+```bash
+# 1. Refresh all AV raw data (statements + shares + dividends) — ~95 min
+uv run scripts/av_update.py
+
+# 2. Recompute all derived metrics + refresh analyst estimates — ~20 min
+uv run scripts/hf_update.py
 ```
 
 ---

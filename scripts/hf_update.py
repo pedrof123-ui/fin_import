@@ -72,6 +72,32 @@ def _update_forward_pe(hf_db: HistoricFundamentalsDB, prices_conn, ticker: str) 
     hf_db.update_forward_pe(ticker, forward_pe, forward_eps)
 
 
+def _update_market_cap(hf_db: HistoricFundamentalsDB, av_conn, prices_conn, ticker: str) -> None:
+    row = prices_conn.execute(
+        "SELECT adj_close FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+        [ticker],
+    ).fetchone()
+    price = row[0] if row else None
+    if not price:
+        hf_db.update_market_cap(ticker, None)
+        return
+    row = av_conn.execute("""
+        SELECT shares_outstanding_diluted FROM shares_outstanding
+        WHERE ticker = ? AND shares_outstanding_diluted IS NOT NULL
+        ORDER BY date DESC LIMIT 1
+    """, [ticker]).fetchone()
+    if not row:
+        row = av_conn.execute("""
+            SELECT common_stock_shares_outstanding FROM balance_sheets
+            WHERE ticker = ? AND period_type = 'quarterly'
+                AND common_stock_shares_outstanding IS NOT NULL
+            ORDER BY fiscal_date_ending DESC LIMIT 1
+        """, [ticker]).fetchone()
+    shares = row[0] if row else None
+    market_cap_b = (price * shares / 1e9) if shares and shares > 0 else None
+    hf_db.update_market_cap(ticker, market_cap_b)
+
+
 def _update_rev_ntm_growth_est(hf_db: HistoricFundamentalsDB, av_conn, ticker: str) -> None:
     ntm_rev = compute_ntm_revenue(hf_db.conn, ticker)
     if ntm_rev is None:
@@ -155,6 +181,7 @@ def main() -> int:
                     hf_db.upsert_estimates(ticker, rows)
                 _update_forward_pe(hf_db, prices_conn, ticker)
                 _update_rev_ntm_growth_est(hf_db, av_conn, ticker)
+                _update_market_cap(hf_db, av_conn, prices_conn, ticker)
 
                 ok += 1
                 log.info("%s %s — updated", prefix, ticker)
