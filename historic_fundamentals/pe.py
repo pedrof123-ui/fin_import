@@ -17,10 +17,10 @@ Usage:
 
     # monthly_pe columns:
     #   month_end_date, price, ttm_eps, pe_ratio,
-    #   rolling_5yr_median, ttm_source, shares, ttm_dividend, dividend_yield
+    #   pe_rolling_5yr_median, ttm_source, shares, ttm_dividend, dividend_yield
     # stats keys:
-    #   ticker, lt_median, p10, p25, p75, p90, months_available,
-    #   rolling_5yr_median, current_pe, current_ttm_eps,
+    #   ticker, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available,
+    #   pe_rolling_5yr_median, current_pe, current_ttm_eps,
     #   ttm_dividend, dividend_yield
 
     av_conn.close()
@@ -193,7 +193,7 @@ def build_monthly_pe(
     - ttm_revenue: sum of last 4 quarters total_revenue; fallback to most recent annual total_revenue
 
     Returns DataFrame with columns:
-    month_end_date, price, ttm_eps, pe_ratio, rolling_5yr_median, ttm_source,
+    month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median, ttm_source,
     shares, ttm_dividend, dividend_yield, ttm_revenue
     """
     if prices.empty:
@@ -294,7 +294,7 @@ def build_monthly_pe(
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values("month_end_date").reset_index(drop=True)
-    df["rolling_5yr_median"] = df["pe_ratio"].rolling(60, min_periods=60).median()
+    df["pe_rolling_5yr_median"] = df["pe_ratio"].rolling(60, min_periods=60).median()
     return df
 
 
@@ -312,7 +312,6 @@ def compute_pe_stats(
         return None
 
     last = monthly_pe.iloc[-1]
-    r5 = last.get("rolling_5yr_median")
 
     def _f(v) -> float | None:
         return float(v) if pd.notna(v) else None
@@ -320,13 +319,13 @@ def compute_pe_stats(
     return {
         "ticker": ticker,
         "updated_at": datetime.now(UTC),
-        "lt_median": _f(pe_series.median()),
-        "p10": _f(pe_series.quantile(0.10)),
-        "p25": _f(pe_series.quantile(0.25)),
-        "p75": _f(pe_series.quantile(0.75)),
-        "p90": _f(pe_series.quantile(0.90)),
+        "pe_lt_median": _f(pe_series.median()),
+        "pe_p10": _f(pe_series.quantile(0.10)),
+        "pe_p25": _f(pe_series.quantile(0.25)),
+        "pe_p75": _f(pe_series.quantile(0.75)),
+        "pe_p90": _f(pe_series.quantile(0.90)),
         "months_available": int(len(pe_series)),
-        "rolling_5yr_median": _f(r5),
+        "pe_rolling_5yr_median": _f(last.get("pe_rolling_5yr_median")),
         "current_pe": _f(last.get("pe_ratio")),
         "current_ttm_eps": _f(last.get("ttm_eps")),
         "forward_pe": forward_pe,

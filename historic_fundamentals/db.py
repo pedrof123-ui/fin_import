@@ -26,11 +26,11 @@ Usage:
     db.close()
 
 Typical columns returned:
-    query_pe_stats:      ticker, current_pe, lt_median, p10, p25, p75, p90,
-                         rolling_5yr_median, forward_pe, forward_12m_eps,
+    query_pe_stats:      ticker, current_pe, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
+                         pe_rolling_5yr_median, forward_pe, forward_12m_eps,
                          current_ttm_eps, months_available, updated_at
     query_pe_timeseries: ticker, month_end_date, price, ttm_eps, pe_ratio,
-                         rolling_5yr_median, ttm_source, shares, updated_at
+                         pe_rolling_5yr_median, ttm_source, shares, updated_at
     query_estimates:     ticker, fiscal_date, horizon, eps_avg/high/low/count,
                          rev_avg/high/low/count, fetched_at
 """
@@ -55,58 +55,75 @@ class HistoricFundamentalsDB:
         self._create_schema()
         log.debug("Connected to %s", db_path)
 
+    def _rename_column_if_exists(self, table: str, old: str, new: str) -> None:
+        exists = self.conn.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+            [table, old],
+        ).fetchone()
+        if exists:
+            self.conn.execute(f'ALTER TABLE {table} RENAME COLUMN "{old}" TO "{new}"')
+
     def _create_schema(self) -> None:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS monthly_pe (
-                ticker               VARCHAR  NOT NULL,
-                month_end_date       DATE     NOT NULL,
-                price                DOUBLE,
-                ttm_eps              DOUBLE,
-                pe_ratio             DOUBLE,
-                rolling_5yr_median   DOUBLE,
-                ttm_source           VARCHAR,
-                shares               DOUBLE,
-                ttm_dividend         DOUBLE,
-                dividend_yield       DOUBLE,
-                ttm_revenue          DOUBLE,
-                updated_at           TIMESTAMP,
+                ticker                VARCHAR  NOT NULL,
+                month_end_date        DATE     NOT NULL,
+                price                 DOUBLE,
+                ttm_eps               DOUBLE,
+                pe_ratio              DOUBLE,
+                pe_rolling_5yr_median DOUBLE,
+                ttm_source            VARCHAR,
+                shares                DOUBLE,
+                ttm_dividend          DOUBLE,
+                dividend_yield        DOUBLE,
+                ttm_revenue           DOUBLE,
+                updated_at            TIMESTAMP,
                 PRIMARY KEY (ticker, month_end_date)
             )
         """)
-        # Migration: add columns introduced after initial schema
+        # Migration: add/rename columns introduced after initial schema
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_dividend DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_revenue DOUBLE")
+        self._rename_column_if_exists("monthly_pe", "rolling_5yr_median", "pe_rolling_5yr_median")
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
-                ticker              VARCHAR  PRIMARY KEY,
-                updated_at          TIMESTAMP,
-                lt_median           DOUBLE,
-                p10                 DOUBLE,
-                p25                 DOUBLE,
-                p75                 DOUBLE,
-                p90                 DOUBLE,
-                months_available    INTEGER,
-                rolling_5yr_median  DOUBLE,
-                current_pe          DOUBLE,
-                current_ttm_eps     DOUBLE,
-                forward_pe          DOUBLE,
-                forward_12m_eps     DOUBLE,
-                ttm_dividend        DOUBLE,
-                dividend_yield      DOUBLE,
-                rev_growth_1yr      DOUBLE,
-                rev_cagr_3yr        DOUBLE,
-                rev_cagr_5yr        DOUBLE,
-                rev_ntm_growth_est  DOUBLE
+                ticker                VARCHAR  PRIMARY KEY,
+                updated_at            TIMESTAMP,
+                pe_lt_median          DOUBLE,
+                pe_p10                DOUBLE,
+                pe_p25                DOUBLE,
+                pe_p75                DOUBLE,
+                pe_p90                DOUBLE,
+                months_available      INTEGER,
+                pe_rolling_5yr_median DOUBLE,
+                current_pe            DOUBLE,
+                current_ttm_eps       DOUBLE,
+                forward_pe            DOUBLE,
+                forward_12m_eps       DOUBLE,
+                ttm_dividend          DOUBLE,
+                dividend_yield        DOUBLE,
+                rev_growth_1yr        DOUBLE,
+                rev_cagr_3yr          DOUBLE,
+                rev_cagr_5yr          DOUBLE,
+                rev_ntm_growth_est    DOUBLE
             )
         """)
-        # Migration: add columns introduced after initial schema
+        # Migration: add/rename columns introduced after initial schema
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ttm_dividend DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_growth_1yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_cagr_3yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_cagr_5yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rev_ntm_growth_est DOUBLE")
+        self._rename_column_if_exists("pe_stats", "lt_median",          "pe_lt_median")
+        self._rename_column_if_exists("pe_stats", "p10",                "pe_p10")
+        self._rename_column_if_exists("pe_stats", "p25",                "pe_p25")
+        self._rename_column_if_exists("pe_stats", "p75",                "pe_p75")
+        self._rename_column_if_exists("pe_stats", "p90",                "pe_p90")
+        self._rename_column_if_exists("pe_stats", "rolling_5yr_median", "pe_rolling_5yr_median")
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS earnings_estimates (
                 ticker              VARCHAR   NOT NULL,
@@ -142,22 +159,22 @@ class HistoricFundamentalsDB:
         data = df.copy()
         data.insert(0, "ticker", ticker)
         data["updated_at"] = now
-        for col in ("price", "ttm_eps", "pe_ratio", "rolling_5yr_median", "ttm_source",
+        for col in ("price", "ttm_eps", "pe_ratio", "pe_rolling_5yr_median", "ttm_source",
                     "shares", "ttm_dividend", "dividend_yield", "ttm_revenue"):
             if col not in data.columns:
                 data[col] = None
         cols = ["ticker", "month_end_date", "price", "ttm_eps", "pe_ratio",
-                "rolling_5yr_median", "ttm_source", "shares", "ttm_dividend",
+                "pe_rolling_5yr_median", "ttm_source", "shares", "ttm_dividend",
                 "dividend_yield", "ttm_revenue", "updated_at"]
         self.conn.register("_tmp_pe", data[cols])
         try:
             self.conn.execute("""
                 INSERT OR REPLACE INTO monthly_pe
                 (ticker, month_end_date, price, ttm_eps, pe_ratio,
-                 rolling_5yr_median, ttm_source, shares, ttm_dividend,
+                 pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
                  dividend_yield, ttm_revenue, updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
-                       rolling_5yr_median, ttm_source, shares, ttm_dividend,
+                       pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
                        dividend_yield, ttm_revenue, updated_at
                 FROM _tmp_pe
             """)
@@ -170,40 +187,40 @@ class HistoricFundamentalsDB:
         # so that --skip-estimates runs don't wipe analyst data.
         self.conn.execute("""
             INSERT INTO pe_stats
-            (ticker, updated_at, lt_median, p10, p25, p75, p90, months_available,
-             rolling_5yr_median, current_pe, current_ttm_eps, forward_pe, forward_12m_eps,
-             ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr,
-             rev_ntm_growth_est)
+            (ticker, updated_at, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
+             months_available, pe_rolling_5yr_median, current_pe, current_ttm_eps,
+             forward_pe, forward_12m_eps, ttm_dividend, dividend_yield,
+             rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
-                updated_at         = excluded.updated_at,
-                lt_median          = excluded.lt_median,
-                p10                = excluded.p10,
-                p25                = excluded.p25,
-                p75                = excluded.p75,
-                p90                = excluded.p90,
-                months_available   = excluded.months_available,
-                rolling_5yr_median = excluded.rolling_5yr_median,
-                current_pe         = excluded.current_pe,
-                current_ttm_eps    = excluded.current_ttm_eps,
-                forward_pe         = COALESCE(excluded.forward_pe,     pe_stats.forward_pe),
-                forward_12m_eps    = COALESCE(excluded.forward_12m_eps, pe_stats.forward_12m_eps),
-                ttm_dividend       = excluded.ttm_dividend,
-                dividend_yield     = excluded.dividend_yield,
-                rev_growth_1yr     = excluded.rev_growth_1yr,
-                rev_cagr_3yr       = excluded.rev_cagr_3yr,
-                rev_cagr_5yr       = excluded.rev_cagr_5yr,
-                rev_ntm_growth_est = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est)
+                updated_at            = excluded.updated_at,
+                pe_lt_median          = excluded.pe_lt_median,
+                pe_p10                = excluded.pe_p10,
+                pe_p25                = excluded.pe_p25,
+                pe_p75                = excluded.pe_p75,
+                pe_p90                = excluded.pe_p90,
+                months_available      = excluded.months_available,
+                pe_rolling_5yr_median = excluded.pe_rolling_5yr_median,
+                current_pe            = excluded.current_pe,
+                current_ttm_eps       = excluded.current_ttm_eps,
+                forward_pe            = COALESCE(excluded.forward_pe,     pe_stats.forward_pe),
+                forward_12m_eps       = COALESCE(excluded.forward_12m_eps, pe_stats.forward_12m_eps),
+                ttm_dividend          = excluded.ttm_dividend,
+                dividend_yield        = excluded.dividend_yield,
+                rev_growth_1yr        = excluded.rev_growth_1yr,
+                rev_cagr_3yr          = excluded.rev_cagr_3yr,
+                rev_cagr_5yr          = excluded.rev_cagr_5yr,
+                rev_ntm_growth_est    = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est)
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
-            stats.get("lt_median"),
-            stats.get("p10"),
-            stats.get("p25"),
-            stats.get("p75"),
-            stats.get("p90"),
+            stats.get("pe_lt_median"),
+            stats.get("pe_p10"),
+            stats.get("pe_p25"),
+            stats.get("pe_p75"),
+            stats.get("pe_p90"),
             stats.get("months_available"),
-            stats.get("rolling_5yr_median"),
+            stats.get("pe_rolling_5yr_median"),
             stats.get("current_pe"),
             stats.get("current_ttm_eps"),
             stats.get("forward_pe"),
