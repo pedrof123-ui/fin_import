@@ -318,6 +318,30 @@ class AVFinancialsDB:
         """)
 
         self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS shares_outstanding (
+                ticker                       VARCHAR NOT NULL,
+                date                         DATE    NOT NULL,
+                shares_outstanding_diluted   DOUBLE,
+                shares_outstanding_basic     DOUBLE,
+                fetched_at                   TIMESTAMP,
+                PRIMARY KEY (ticker, date)
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS dividends (
+                ticker            VARCHAR NOT NULL,
+                ex_dividend_date  DATE    NOT NULL,
+                declaration_date  DATE,
+                record_date       DATE,
+                payment_date      DATE,
+                amount            DOUBLE,
+                fetched_at        TIMESTAMP,
+                PRIMARY KEY (ticker, ex_dividend_date)
+            )
+        """)
+
+        self.conn.execute("""
             CREATE SEQUENCE IF NOT EXISTS import_log_seq START 1
         """)
         self.conn.execute("""
@@ -547,6 +571,56 @@ class AVFinancialsDB:
         return results
 
     # ── Public: helpers ───────────────────────────────────────────────────────
+
+    def import_shares_outstanding(self, ticker: str, api_key: str, limiter: RateLimiter) -> int:
+        """Fetch SHARES_OUTSTANDING and upsert into shares_outstanding table. Returns row count."""
+        payload = self._fetch("SHARES_OUTSTANDING", ticker, api_key, limiter)
+        records = payload.get("data", [])
+        fetched_at = datetime.now(UTC)
+        count = 0
+        for row in records:
+            d = row.get("date")
+            if not d:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO shares_outstanding
+                (ticker, date, shares_outstanding_diluted, shares_outstanding_basic, fetched_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [ticker, d, _v(row.get("shares_outstanding_diluted")),
+                 _v(row.get("shares_outstanding_basic")), fetched_at],
+            )
+            count += 1
+        return count
+
+    def import_dividends(self, ticker: str, api_key: str, limiter: RateLimiter) -> int:
+        """Fetch DIVIDENDS and upsert into dividends table. Returns row count."""
+        payload = self._fetch("DIVIDENDS", ticker, api_key, limiter)
+        records = payload.get("data", [])
+        fetched_at = datetime.now(UTC)
+
+        def _d(v: Any) -> str | None:
+            return v if v and v != "None" else None
+
+        count = 0
+        for row in records:
+            ex_date = row.get("ex_dividend_date")
+            if not ex_date or ex_date == "None":
+                continue
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO dividends
+                (ticker, ex_dividend_date, declaration_date, record_date,
+                 payment_date, amount, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [ticker, ex_date, _d(row.get("declaration_date")),
+                 _d(row.get("record_date")), _d(row.get("payment_date")),
+                 _v(row.get("amount")), fetched_at],
+            )
+            count += 1
+        return count
 
     def list_tickers(self) -> list[str]:
         return [r[0] for r in self.conn.execute("SELECT ticker FROM companies ORDER BY ticker").fetchall()]

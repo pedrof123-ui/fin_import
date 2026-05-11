@@ -3,7 +3,9 @@
 ## Status
 
 **Phase 1 — COMPLETE** (2026-05-10): Database + PE timeseries + CLI scripts
+**Phase 1.5 — COMPLETE** (2026-05-11): Shares outstanding + dividends + dividend yield
 **Phase 2 — COMPLETE** (2026-05-10): Query interface and Python API
+**Phase 2.5 — COMPLETE** (2026-05-11): Revenue growth metrics + market cap + PE column renames
 **Phase 3 — PENDING**: FastAPI router (future, when UI integration needed)
 
 ---
@@ -40,15 +42,18 @@ Primary timeseries. One row per (ticker, month-end).
 
 ```sql
 CREATE TABLE monthly_pe (
-    ticker               VARCHAR  NOT NULL,
-    month_end_date       DATE     NOT NULL,   -- last calendar day of the month
-    price                DOUBLE,              -- adj_close on last trading day of month
-    ttm_eps              DOUBLE,              -- sum of 4 most recent quarterly net_income / shares
-    pe_ratio             DOUBLE,              -- price / ttm_eps; NULL when ttm_eps <= 0
-    rolling_5yr_median   DOUBLE,              -- median pe_ratio over trailing 60 months; NULL if <60 months available
-    ttm_source           VARCHAR,             -- 'quarterly' or 'annual' (see Historical Depth below)
-    shares               DOUBLE,              -- shares_outstanding used for EPS
-    updated_at           TIMESTAMP,
+    ticker                VARCHAR  NOT NULL,
+    month_end_date        DATE     NOT NULL,   -- last calendar day of the month
+    price                 DOUBLE,              -- adj_close on last trading day of month
+    ttm_eps               DOUBLE,              -- sum of 4 most recent quarterly net_income / shares
+    pe_ratio              DOUBLE,              -- price / ttm_eps; NULL when ttm_eps <= 0
+    pe_rolling_5yr_median DOUBLE,              -- median pe_ratio over trailing 60 months; NULL if <60 months available
+    ttm_source            VARCHAR,             -- 'quarterly' or 'annual' (see Historical Depth below)
+    shares                DOUBLE,              -- shares_outstanding used for EPS (diluted preferred)
+    ttm_dividend          DOUBLE,              -- sum of dividends with ex_date in trailing 365 days
+    dividend_yield        DOUBLE,              -- ttm_dividend / price; NULL when no dividend data
+    ttm_revenue           DOUBLE,              -- sum of 4 most recent quarterly total_revenue (or annual fallback)
+    updated_at            TIMESTAMP,
     PRIMARY KEY (ticker, month_end_date)
 )
 ```
@@ -58,23 +63,33 @@ Pre-computed statistics snapshot, refreshed on each monthly update.
 
 ```sql
 CREATE TABLE pe_stats (
-    ticker              VARCHAR  PRIMARY KEY,
-    updated_at          TIMESTAMP,
-    -- Long-term (all available months)
-    lt_median           DOUBLE,
-    p10                 DOUBLE,
-    p25                 DOUBLE,
-    p75                 DOUBLE,
-    p90                 DOUBLE,
-    months_available    INTEGER,
-    -- Rolling 5-year (last 60 months)
-    rolling_5yr_median  DOUBLE,
-    -- Current
-    current_pe          DOUBLE,          -- most recent month's pe_ratio
-    current_ttm_eps     DOUBLE,
-    -- Forward (from latest analyst estimates)
-    forward_pe          DOUBLE,          -- current price / forward_12m_eps
-    forward_12m_eps     DOUBLE
+    ticker                VARCHAR  PRIMARY KEY,
+    updated_at            TIMESTAMP,
+    -- Market cap
+    market_cap_b          DOUBLE,              -- latest price × diluted shares / 1e9 (billions)
+    -- Current PE
+    current_pe            DOUBLE,              -- most recent month's pe_ratio
+    current_ttm_eps       DOUBLE,
+    -- Long-term PE stats (all available months)
+    pe_lt_median          DOUBLE,
+    pe_p10                DOUBLE,
+    pe_p25                DOUBLE,
+    pe_p75                DOUBLE,
+    pe_p90                DOUBLE,
+    months_available      INTEGER,
+    -- Rolling 5-year PE (last 60 months)
+    pe_rolling_5yr_median DOUBLE,
+    -- Forward PE (from latest analyst estimates)
+    forward_pe            DOUBLE,              -- current price / forward_12m_eps
+    forward_12m_eps       DOUBLE,
+    -- Dividend
+    ttm_dividend          DOUBLE,              -- most recent month's TTM dividend per share
+    dividend_yield        DOUBLE,              -- most recent month's dividend_yield
+    -- Revenue growth
+    rev_growth_1yr        DOUBLE,              -- (latest annual rev / prior year) - 1
+    rev_cagr_3yr          DOUBLE,              -- 3-year revenue CAGR from annual data
+    rev_cagr_5yr          DOUBLE,              -- 5-year revenue CAGR from annual data
+    rev_ntm_growth_est    DOUBLE               -- (NTM estimated rev / TTM actual rev) - 1
 )
 ```
 
@@ -113,14 +128,22 @@ CREATE TABLE earnings_estimates (
 
 ### EPS source: `av_financials.duckdb` (no extra API calls)
 
-TTM EPS = `SUM(net_income for last 4 quarterly periods) / latest shares_outstanding`
+TTM EPS = `SUM(net_income for last 4 quarterly periods) / latest shares_outstanding_diluted`
 
 - `net_income` from `income_statements` (period_type = 'quarterly')
-- `shares` from `balance_sheets.common_stock_shares_outstanding` (most recent quarter)
-- Both are already present for all tickers in `av_financials.duckdb`
-- No additional Alpha Vantage API calls required
+- `shares` from `shares_outstanding.shares_outstanding_diluted` (most recent entry ≤ month_end) — primary source
+- Fallback: `balance_sheets.common_stock_shares_outstanding` (quarterly, then annual)
+- No additional Alpha Vantage API calls required for the PE computation phase
+
+Diluted shares are preferred over balance sheet basic shares because they include dilutive instruments (options, convertibles) and are the standard denominator for EPS in equity analysis.
 
 **Why not AV EARNINGS endpoint**: Would cost 1 extra call per ticker (1,465 calls = 20 min additional). The data we need is already available.
+
+### Dividend yield source: `av_financials.duckdb / dividends`
+
+TTM dividend per share = sum of `amount` where `ex_dividend_date` is within the trailing 365 days of each month-end.
+
+Dividend yield = `ttm_dividend / price` (NULL when no dividend data available).
 
 ### Historical depth
 
@@ -244,10 +267,29 @@ Pre-compute stats rationale: with 1,465 tickers × ~240 monthly PE rows each = ~
 - [x] `scripts/hf_import.py`: bulk backfill (PE history + estimates, with `--skip-estimates`)
 - [x] `scripts/hf_update.py`: monthly update (latest month PE + estimates refresh)
 
+### Phase 1.5 — Shares outstanding + dividends (COMPLETE 2026-05-11)
+- [x] `av_financials_db.py`: `shares_outstanding` and `dividends` tables + `import_shares_outstanding()` and `import_dividends()` methods
+- [x] `historic_fundamentals/pe.py`: `_load_shares_ts()` — primary diluted shares from `shares_outstanding`; `_load_dividends()` — dividend event history; `build_monthly_pe()` extended with `ttm_dividend` and `dividend_yield` computation
+- [x] `historic_fundamentals/db.py`: `ttm_dividend` and `dividend_yield` added to `monthly_pe` and `pe_stats` schemas; upsert uses COALESCE to preserve `forward_pe`/`forward_12m_eps` on non-estimates runs
+- [x] `historic_fundamentals/query.py`: `ttm_dividend` and `dividend_yield` exposed in `get_pe_stats()` and `get_pe_history()`
+- [x] `scripts/av_import.py`: shares + dividends added (5 calls/ticker total)
+- [x] `scripts/av_update.py`: shares + dividends added (5 calls/ticker total); `--skip-shares` and `--skip-dividends` flags
+- [x] `scripts/av_import_shares.py`: standalone backfill for `shares_outstanding`
+- [x] `scripts/av_import_dividends.py`: standalone backfill for `dividends`
+- [x] `scripts/add_tickers.py`: all-in-one new-ticker onboarding (raw AV + PE + estimates in one pass)
+
 ### Phase 2 — Query interface (COMPLETE 2026-05-10)
 - [x] `scripts/hf_query.py`: CLI (`--view stats|timeseries|estimates`, `--all`, `--start`, `--end`, `--out`)
 - [x] `historic_fundamentals/query.py`: notebook-friendly functions `get_pe_stats()`, `get_pe_history()`, `get_estimates()` — no SQL, self-contained DB connections
 - [x] `historic_fundamentals/__init__.py`: clean public API for programmatic access by other apps and agents
+
+### Phase 2.5 — Revenue growth metrics + market cap (COMPLETE 2026-05-11)
+- [x] `historic_fundamentals/pe.py`: `_load_av_data()` fetches `total_revenue`; `build_monthly_pe()` adds `ttm_revenue`; `compute_revenue_stats()` computes rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr from annual data using actual elapsed years
+- [x] `historic_fundamentals/estimates.py`: `compute_ntm_revenue()` — sum next 4 quarterly rev_avg, fallback to annual
+- [x] `historic_fundamentals/db.py`: `ttm_revenue` in `monthly_pe`; `rev_growth_1yr`, `rev_cagr_3yr`, `rev_cagr_5yr`, `rev_ntm_growth_est`, `market_cap_b` in `pe_stats`; all with ALTER TABLE IF NOT EXISTS migrations; COALESCE on estimate-derived fields
+- [x] `historic_fundamentals/db.py`: PE column renames — `lt_median→pe_lt_median`, `p10/p25/p75/p90→pe_p10/p25/p75/p90`, `rolling_5yr_median→pe_rolling_5yr_median` in both tables; idempotent RENAME COLUMN via information_schema check
+- [x] `scripts/hf_update.py` + `scripts/add_tickers.py`: `_update_rev_ntm_growth_est()` and `_update_market_cap()` helpers; all snapshot updates run unconditionally (not gated by --skip-estimates)
+- [x] `historic_fundamentals/query.py`: `get_pe_stats()` returns all new columns; `get_pe_history()` returns `ttm_revenue`
 
 ### Phase 3 — FastAPI router (future, when UI integration needed)
 - [ ] `api/hf_router.py`: REST endpoints over the library
@@ -256,11 +298,11 @@ Pre-compute stats rationale: with 1,465 tickers × ~240 monthly PE rows each = ~
 
 ## Rate limit budget
 
-| Operation                  | AV calls/ticker | Tickers | Total calls | Time at 75/min |
-|----------------------------|-----------------|---------|-------------|----------------|
-| hf_import.py PE phase      | 0               | 1,465   | 0           | <5 min (local) |
-| hf_import.py estimates     | 1               | 1,465   | 1,465       | ~20 min        |
-| hf_update.py PE phase      | 0               | 1,465   | 0           | <1 min (local) |
-| hf_update.py estimates     | 1               | 1,465   | 1,465       | ~20 min        |
+| Operation                          | AV calls/ticker | Tickers | Total calls | Time at 75/min |
+|------------------------------------|-----------------|---------|-------------|----------------|
+| av_update.py (statements + shares + dividends) | 5   | 1,400   | 7,000       | ~95 min        |
+| hf_import.py / hf_update.py PE phase | 0            | 1,400   | 0           | <5 min (local) |
+| hf_update.py estimates             | 1               | 1,400   | 1,400       | ~20 min        |
+| add_tickers.py per new ticker      | 6               | varies  | 6×N         | ~12 tickers/min |
 
-Total monthly budget: ~1,465 calls for estimates refresh. Full initial backfill: ~1,465 calls + local compute. Both are well within the 75 calls/min limit.
+Monthly update total: ~95 min (av_update.py) + ~20 min (hf_update.py) = ~115 min for ~1,400 tickers.

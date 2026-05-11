@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Download Alpha Vantage financial statements into data/av_financials.duckdb.
+Download Alpha Vantage financial data into data/av_financials.duckdb.
+
+Fetches financial statements (income, balance, cashflow), shares outstanding,
+and dividend history for each ticker.
 
 Source (pick one):
     uv run scripts/av_import.py AAPL [MSFT ...]     # one or more tickers
@@ -8,10 +11,12 @@ Source (pick one):
     uv run scripts/av_import.py --from-prices-db    # all tickers from prices.duckdb
 
 Options (work with any source):
-    --force     Re-fetch and overwrite tickers already in the DB.
-                Without this, existing tickers are skipped.
-    --verbose   Show DEBUG-level output (individual API call details).
-    --db PATH   Use a different DuckDB file instead of data/av_financials.duckdb.
+    --force            Re-fetch and overwrite tickers already in the DB.
+                       Without this, existing tickers are skipped.
+    --skip-shares      Skip SHARES_OUTSTANDING calls.
+    --skip-dividends   Skip DIVIDENDS calls.
+    --verbose          Show DEBUG-level output (individual API call details).
+    --db PATH          Use a different DuckDB file instead of data/av_financials.duckdb.
 
 Examples:
     uv run scripts/av_import.py AAPL MSFT GOOGL
@@ -44,7 +49,6 @@ def _tickers_from_csv(path: str) -> list[str]:
             val = line.split(",")[0].strip().strip('"').upper()
             if val and not val.startswith("#"):
                 tickers.append(val)
-    # Drop header if first value looks like a label rather than a ticker
     if tickers and not tickers[0].isalpha():
         tickers = tickers[1:]
     return tickers
@@ -60,13 +64,15 @@ def _tickers_from_prices_db(prices_db_path: str) -> list[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Import Alpha Vantage financial statements.")
+    parser = argparse.ArgumentParser(description="Import Alpha Vantage financial data.")
     parser.add_argument("tickers", nargs="*", metavar="TICKER", help="One or more ticker symbols")
-    parser.add_argument("--csv", metavar="FILE", help="CSV file with tickers in the first column")
-    parser.add_argument("--from-prices-db", action="store_true", help="Import all tickers from prices.duckdb")
-    parser.add_argument("--force", action="store_true", help="Re-import tickers already in the DB")
-    parser.add_argument("--db", default=None, metavar="PATH", help="Override DB path")
-    parser.add_argument("--verbose", action="store_true", help="Enable DEBUG logging")
+    parser.add_argument("--csv",             metavar="FILE",   help="CSV file with tickers in the first column")
+    parser.add_argument("--from-prices-db",  action="store_true", help="Import all tickers from prices.duckdb")
+    parser.add_argument("--force",           action="store_true", help="Re-import tickers already in the DB")
+    parser.add_argument("--skip-shares",     action="store_true", help="Skip SHARES_OUTSTANDING calls")
+    parser.add_argument("--skip-dividends",  action="store_true", help="Skip DIVIDENDS calls")
+    parser.add_argument("--db",              default=None, metavar="PATH", help="Override DB path")
+    parser.add_argument("--verbose",         action="store_true", help="Enable DEBUG logging")
     return parser.parse_args()
 
 
@@ -87,7 +93,6 @@ def main() -> int:
 
     db_path = args.db or os.getenv("AV_DB_PATH") or DEFAULT_DB_PATH
 
-    # Resolve ticker list (tickers, --csv, and --from-prices-db are mutually exclusive)
     sources = sum([bool(args.tickers), bool(args.csv), args.from_prices_db])
     if sources > 1:
         log.error("Provide only one of: tickers, --csv, or --from-prices-db")
@@ -118,10 +123,7 @@ def main() -> int:
     db = AVFinancialsDB(db_path)
     limiter = RateLimiter()
 
-    succeeded = 0
-    skipped = 0
-    failed = 0
-    total_rows = 0
+    succeeded = skipped = failed = 0
 
     try:
         for i, ticker in enumerate(tickers, 1):
@@ -132,21 +134,44 @@ def main() -> int:
                 skipped += 1
                 continue
 
+            ticker_ok = True
+
             try:
                 rows = db.import_ticker(ticker, api_key, limiter)
-                total_rows += rows
-                succeeded += 1
-                log.info("%s %s — done (%d rows)", prefix, ticker, rows)
+                log.debug("%s %s — statements: %d rows", prefix, ticker, rows)
             except Exception as exc:
-                log.error("%s %s — failed: %s", prefix, ticker, exc)
+                log.error("%s %s — statements failed: %s", prefix, ticker, exc)
+                ticker_ok = False
+
+            if not args.skip_shares:
+                try:
+                    n = db.import_shares_outstanding(ticker, api_key, limiter)
+                    log.debug("%s %s — shares: %d rows", prefix, ticker, n)
+                except Exception as exc:
+                    log.error("%s %s — shares failed: %s", prefix, ticker, exc)
+                    ticker_ok = False
+
+            if not args.skip_dividends:
+                try:
+                    n = db.import_dividends(ticker, api_key, limiter)
+                    log.debug("%s %s — dividends: %d rows", prefix, ticker, n)
+                except Exception as exc:
+                    log.error("%s %s — dividends failed: %s", prefix, ticker, exc)
+                    ticker_ok = False
+
+            if ticker_ok:
+                succeeded += 1
+                log.info("%s %s — done", prefix, ticker)
+            else:
                 failed += 1
+                log.info("%s %s — partial failure (see errors above)", prefix, ticker)
 
     finally:
         db.close()
 
     log.info(
-        "Import complete: %d succeeded, %d skipped, %d failed, %d total rows",
-        succeeded, skipped, failed, total_rows,
+        "Import complete: %d succeeded, %d skipped, %d failed",
+        succeeded, skipped, failed,
     )
     return 0 if failed == 0 else 1
 

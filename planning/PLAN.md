@@ -199,10 +199,21 @@ dedicated DuckDB database. No changes to existing fin_import2 code.
 
 ```
 av_financials_db.py               # Core DB class + rate-limited AV fetcher
+historic_fundamentals/            # Derived analytics package
+    db.py                         # HistoricFundamentalsDB: schema, upsert, query
+    pe.py                         # TTM EPS + PE + dividend yield, rolling 5yr median
+    estimates.py                  # EARNINGS_ESTIMATES fetch, forward PE
+    query.py                      # Notebook-friendly wrappers
 scripts/
+    add_tickers.py                # All-in-one: AV raw data + PE history + estimates (recommended for new tickers)
     av_import.py                  # CLI: import one ticker / CSV / prices.duckdb
+    av_import_shares.py           # Standalone backfill: shares_outstanding
+    av_import_dividends.py        # Standalone backfill: dividends
     av_query.py                   # CLI: query statements with optional date range
-    av_update.py                  # CLI: refresh all tickers already in the DB
+    av_update.py                  # CLI: monthly refresh (statements + shares + dividends)
+    hf_import.py                  # Bulk backfill: PE + yield history + estimates
+    hf_update.py                  # Monthly refresh: PE + yield + estimates
+    hf_query.py                   # CLI query: stats, timeseries, estimates views
 ```
 
 ---
@@ -210,8 +221,8 @@ scripts/
 ## Rate Limiting
 
 Alpha Vantage limit: **75 calls/minute**.
-Each ticker requires **3 API calls** (INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW).
-Sustained bulk throughput: 25 tickers/minute.
+Each ticker requires **5 API calls** for raw data (INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW + SHARES_OUTSTANDING + DIVIDENDS) plus 1 for estimates (EARNINGS_ESTIMATES).
+Sustained bulk throughput: ~15 tickers/minute for raw data, ~75 tickers/minute for estimates only.
 
 Implementation: a `RateLimiter` class using a sliding deque of timestamps.
 Before each API call, the limiter checks how many calls have been made in the
@@ -373,6 +384,28 @@ net_income                                      DOUBLE,
 PRIMARY KEY (ticker, fiscal_date_ending, period_type)
 ```
 
+#### `shares_outstanding`
+```sql
+ticker                       VARCHAR NOT NULL,
+date                         DATE NOT NULL,
+shares_outstanding_diluted   DOUBLE,
+shares_outstanding_basic     DOUBLE,
+fetched_at                   TIMESTAMP,
+PRIMARY KEY (ticker, date)
+```
+
+#### `dividends`
+```sql
+ticker              VARCHAR NOT NULL,
+ex_dividend_date    DATE NOT NULL,
+declaration_date    DATE,
+record_date         DATE,
+payment_date        DATE,
+amount              DOUBLE,
+fetched_at          TIMESTAMP,
+PRIMARY KEY (ticker, ex_dividend_date)
+```
+
 #### `import_log`
 ```sql
 id               INTEGER PRIMARY KEY,   -- auto-increment
@@ -391,8 +424,14 @@ class AVFinancialsDB:
     def __init__(self, db_path: str = "data/av_financials.duckdb"): ...
     def close(self) -> None: ...
 
-    # Fetch + store one ticker (3 API calls); returns rows inserted
+    # Fetch + store one ticker's statements (3 API calls); returns rows inserted
     def import_ticker(self, ticker: str, api_key: str, limiter: RateLimiter) -> int: ...
+
+    # Fetch + store shares outstanding (1 API call); returns rows inserted
+    def import_shares_outstanding(self, ticker: str, api_key: str, limiter: RateLimiter) -> int: ...
+
+    # Fetch + store dividend history (1 API call); returns rows inserted
+    def import_dividends(self, ticker: str, api_key: str, limiter: RateLimiter) -> int: ...
 
     # Query: returns dict of DataFrames keyed by 'income' | 'balance' | 'cashflow'
     def query(
@@ -410,6 +449,21 @@ class AVFinancialsDB:
 
 ---
 
+## Script: `scripts/add_tickers.py` (recommended for new tickers)
+
+All-in-one onboarding: fetches all AV raw data (statements + shares + dividends) and immediately
+computes PE history, dividend yield timeseries, and analyst estimates. Populates both
+`av_financials.duckdb` and `historic_fundamentals.duckdb` in a single pass.
+
+```
+uv run scripts/add_tickers.py AAPL MSFT GOOGL
+uv run scripts/add_tickers.py --csv data/new_tickers.csv
+uv run scripts/add_tickers.py AAPL --force          # re-import even if in DB
+uv run scripts/add_tickers.py AAPL --skip-estimates # skip EARNINGS_ESTIMATES call
+```
+
+---
+
 ## Script: `scripts/av_import.py`
 
 ### Usage
@@ -418,16 +472,18 @@ class AVFinancialsDB:
 uv run scripts/av_import.py AAPL
 uv run scripts/av_import.py --csv data/test_tickers.csv
 uv run scripts/av_import.py --from-prices-db
-uv run scripts/av_import.py --csv tickers.csv --force    # re-import existing tickers
+uv run scripts/av_import.py --csv tickers.csv --force         # re-import existing tickers
+uv run scripts/av_import.py AAPL --skip-shares --skip-dividends
 uv run scripts/av_import.py AAPL --db data/custom.duckdb
 ```
 
 ### Behavior
 - Reads `ALPHA_VANTAGE_API_KEY` and optional `AV_DB_PATH` from `.env`
-- `--from-prices-db`: reads `PRICES_DB_PATH` from `.env`, queries the `stocks` table for tickers
+- `--from-prices-db`: reads `PRICES_DB_PATH` from `.env`, queries the `stock_prices` table for tickers
 - `--csv`: first column of CSV, header row auto-detected and skipped if non-ticker
 - Without `--force`, skips tickers that already have data in the DB
-- Logs per-ticker result to stdout and writes to `import_log` table
+- Fetches 5 AV endpoints per ticker: income, balance, cashflow, shares_outstanding, dividends
+- Logs per-ticker result to stdout
 - On error for one ticker, logs and continues with the next
 
 ---
@@ -459,23 +515,25 @@ uv run scripts/av_query.py AAPL --statement balance --out aapl_balance.csv
 
 ## Script: `scripts/av_update.py`
 
-Refreshes all tickers in the DB with the latest data from Alpha Vantage.
-Intended to be run on a cron schedule (e.g., weekly after earnings season).
+Monthly refresh: re-fetches all data for every ticker already in `av_financials.duckdb`.
+Intended to run once per month (first business day), followed by `hf_update.py`.
 
 ### Usage
 
 ```
 uv run scripts/av_update.py
-uv run scripts/av_update.py --ticker AAPL      # update one specific ticker
+uv run scripts/av_update.py --ticker AAPL          # update one specific ticker
+uv run scripts/av_update.py --skip-shares          # skip SHARES_OUTSTANDING calls
+uv run scripts/av_update.py --skip-dividends       # skip DIVIDENDS calls
 uv run scripts/av_update.py --db data/custom.duckdb
 ```
 
 ### Behavior
 - Queries `companies` for all known tickers (or uses `--ticker` override)
-- Re-fetches all three statements per ticker (AV returns full history per call)
+- Re-fetches 5 endpoints per ticker: income, balance, cashflow, shares_outstanding, dividends
 - Upserts via `INSERT OR REPLACE` so existing rows are overwritten with latest data
-- Logs each ticker: success / new periods added / error
-- Prints a summary at the end: tickers updated, total new periods, errors
+- Logs each ticker: success / partial failure / error
+- Prints a summary: tickers ok, tickers failed
 
 ---
 

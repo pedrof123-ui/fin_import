@@ -2,12 +2,19 @@
 """
 Refresh all tickers in data/av_financials.duckdb with the latest Alpha Vantage data.
 
-Intended to run on a cron schedule (e.g., weekly after earnings season).
+Fetches financial statements (income, balance, cashflow), shares outstanding,
+and dividend history for every ticker in the database.
 
 Usage:
-    uv run scripts/av_update.py
-    uv run scripts/av_update.py --ticker AAPL
-    uv run scripts/av_update.py --db data/custom.duckdb --verbose
+    uv run scripts/av_update.py                    # update all tickers, all data
+    uv run scripts/av_update.py --ticker AAPL      # single ticker
+    uv run scripts/av_update.py --skip-shares      # skip SHARES_OUTSTANDING calls
+    uv run scripts/av_update.py --skip-dividends   # skip DIVIDENDS calls
+    uv run scripts/av_update.py --db PATH --verbose
+
+Rate: 5 AV API calls per ticker (3 statements + 1 shares + 1 dividends).
+At 75 calls/min: ~95 min for ~1400 tickers.
+After running, execute hf_update.py to recompute derived metrics in historic_fundamentals.duckdb.
 """
 
 import argparse
@@ -27,10 +34,12 @@ log = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Refresh Alpha Vantage financial statements for all tickers in DB.")
-    parser.add_argument("--ticker", metavar="TICKER", help="Update a single ticker instead of all")
-    parser.add_argument("--db",     metavar="PATH",   help="Override DB path")
-    parser.add_argument("--verbose", action="store_true", help="Enable DEBUG logging")
+    parser = argparse.ArgumentParser(description="Refresh all Alpha Vantage data for all tickers in DB.")
+    parser.add_argument("--ticker",          metavar="TICKER", help="Update a single ticker instead of all")
+    parser.add_argument("--skip-shares",     action="store_true", help="Skip SHARES_OUTSTANDING calls")
+    parser.add_argument("--skip-dividends",  action="store_true", help="Skip DIVIDENDS calls")
+    parser.add_argument("--db",              metavar="PATH",   help="Override DB path")
+    parser.add_argument("--verbose",         action="store_true", help="Enable DEBUG logging")
     return parser.parse_args()
 
 
@@ -52,41 +61,61 @@ def main() -> int:
     db_path = args.db or os.getenv("AV_DB_PATH") or DEFAULT_DB_PATH
     db = AVFinancialsDB(db_path)
 
-    if args.ticker:
-        tickers = [args.ticker.upper()]
-    else:
-        tickers = db.list_tickers()
-
+    tickers = [args.ticker.upper()] if args.ticker else db.list_tickers()
     if not tickers:
         log.warning("No tickers in DB. Run av_import.py first.")
         db.close()
         return 1
 
-    log.info("Updating %d ticker(s)", len(tickers))
-    limiter = RateLimiter()
+    phases = ["statements"]
+    if not args.skip_shares:
+        phases.append("shares")
+    if not args.skip_dividends:
+        phases.append("dividends")
+    log.info("Updating %d ticker(s): %s", len(tickers), ", ".join(phases))
 
-    succeeded = 0
-    failed = 0
-    total_rows = 0
+    limiter = RateLimiter()
+    ok = failed = 0
 
     try:
         for i, ticker in enumerate(tickers, 1):
             prefix = f"[{i}/{len(tickers)}]"
+            ticker_ok = True
+
             try:
                 rows = db.import_ticker(ticker, api_key, limiter)
-                total_rows += rows
-                succeeded += 1
-                log.info("%s %s — updated (%d rows)", prefix, ticker, rows)
+                log.debug("%s %s — statements: %d rows", prefix, ticker, rows)
             except Exception as exc:
-                log.error("%s %s — failed: %s", prefix, ticker, exc)
+                log.error("%s %s — statements failed: %s", prefix, ticker, exc)
+                ticker_ok = False
+
+            if not args.skip_shares:
+                try:
+                    n = db.import_shares_outstanding(ticker, api_key, limiter)
+                    log.debug("%s %s — shares: %d rows", prefix, ticker, n)
+                except Exception as exc:
+                    log.error("%s %s — shares failed: %s", prefix, ticker, exc)
+                    ticker_ok = False
+
+            if not args.skip_dividends:
+                try:
+                    n = db.import_dividends(ticker, api_key, limiter)
+                    log.debug("%s %s — dividends: %d rows", prefix, ticker, n)
+                except Exception as exc:
+                    log.error("%s %s — dividends failed: %s", prefix, ticker, exc)
+                    ticker_ok = False
+
+            if ticker_ok:
+                ok += 1
+                log.info("%s %s — ok", prefix, ticker)
+            else:
                 failed += 1
+                log.info("%s %s — partial failure (see errors above)", prefix, ticker)
+
     finally:
         db.close()
 
-    log.info(
-        "Update complete: %d succeeded, %d failed, %d total rows upserted",
-        succeeded, failed, total_rows,
-    )
+    log.info("Update complete: %d ok, %d failed", ok, failed)
     return 0 if failed == 0 else 1
 
 

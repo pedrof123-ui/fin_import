@@ -114,34 +114,42 @@ Forecasting:
 - Hamada equation unlever/re-lever beta at the current D/E ratio.
 - `DcfResult.warnings` carries a list of data quality messages (e.g. zero market cap, WACC below 5%, terminal growth clamped). Shown as amber banners in the UI.
 
-## Alpha Vantage Financial Statements
+## Alpha Vantage Pipeline
 
-A separate pipeline fetches income statements, balance sheets, and cash flow statements directly from the Alpha Vantage API and stores them in `data/av_financials.duckdb`. This database is independent of the SEC EDGAR pipeline.
+Two databases driven by the Alpha Vantage API, both independent of the SEC EDGAR pipeline.
 
 ### .env variables
 
 ```
 ALPHA_VANTAGE_API_KEY=<your premium key>
 PRICES_DB_PATH=/path/to/trade_systems/data/prices.duckdb
-AV_DB_PATH=data/av_financials.duckdb   # optional override
+AV_DB_PATH=data/av_financials.duckdb              # optional override
+HF_DB_PATH=data/historic_fundamentals.duckdb      # optional override
 ```
 
-### Import
+### Adding new tickers (all-in-one)
 
 ```bash
-# Single or multiple tickers
-uv run scripts/av_import.py AAPL MSFT GOOGL
+# Fetches all AV data + computes PE history + analyst estimates in one pass
+uv run scripts/add_tickers.py AAPL MSFT GOOGL
 
-# From a CSV file (tickers in first column)
-uv run scripts/av_import.py --csv tickers.csv
-
-# All tickers from prices.duckdb
-uv run scripts/av_import.py --from-prices-db
+# From a CSV file
+uv run scripts/add_tickers.py --csv tickers.csv
 ```
 
-`--force` re-fetches tickers already in the DB. Without it, existing tickers are skipped.
+This is the recommended way to onboard new tickers. It populates both `av_financials.duckdb` and `historic_fundamentals.duckdb` with a single command (6 AV calls/ticker).
 
-### Query
+### Monthly update
+
+```bash
+# 1. Refresh all AV raw data (statements + shares + dividends) — ~95 min
+uv run scripts/av_update.py
+
+# 2. Recompute all derived metrics + refresh analyst estimates — ~20 min
+uv run scripts/hf_update.py
+```
+
+### Query raw financials
 
 ```bash
 uv run scripts/av_query.py AAPL
@@ -150,17 +158,16 @@ uv run scripts/av_query.py AAPL --start 2020-01-01 --end 2024-12-31
 uv run scripts/av_query.py AAPL --statement balance --out output.csv
 ```
 
-### Update (cron)
+### Query historic fundamentals (PE, market cap, revenue growth, estimates)
 
 ```bash
-# Refresh all tickers in the DB with latest data
-uv run scripts/av_update.py
-
-# Refresh a single ticker
-uv run scripts/av_update.py --ticker AAPL
+uv run scripts/hf_query.py AAPL                              # PE + market cap + revenue growth stats
+uv run scripts/hf_query.py AAPL --view timeseries           # monthly PE + TTM revenue history
+uv run scripts/hf_query.py AAPL --view estimates            # analyst estimates
+uv run scripts/hf_query.py --all --out output.csv           # export all tickers
 ```
 
-The rate limiter enforces the 75 calls/minute premium plan limit with even spacing (~0.8s between calls). Each ticker costs 3 API calls (one per statement type); bulk throughput is ~25 tickers/minute.
+The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker costs 5 AV calls for raw data (3 statements + shares + dividends); bulk throughput is ~15 tickers/minute.
 
 ## Tests
 
@@ -225,10 +232,22 @@ extractors/
   balance_sheet_extractor.py      Thin wrapper — balance sheet
   cash_flow_extractor.py          Thin wrapper — cash flow
 xbrl_mappings/         Static XBRL concept → field mappings
+historic_fundamentals/         Monthly PE/yield/revenue timeseries + market cap + analyst estimates analytics package
+  __init__.py                  Public API: get_pe_stats, get_pe_history, get_estimates
+  db.py                        HistoricFundamentalsDB: schema, upsert, query
+  pe.py                        TTM EPS/revenue + PE + dividend yield + revenue growth stats computation
+  estimates.py                 EARNINGS_ESTIMATES fetch, normalize, forward PE/NTM revenue calculation
+  query.py                     Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
 scripts/
-  av_import.py         Import AV financial statements (single ticker / CSV / prices.duckdb)
-  av_query.py          Query AV financial statements with optional date range and CSV export
-  av_update.py         Refresh all tickers in av_financials.duckdb with latest AV data
+  add_tickers.py               All-in-one: AV raw data + PE history + estimates for new tickers
+  av_import.py                 Import AV financials + shares + dividends (single/CSV/prices.duckdb)
+  av_import_shares.py          Standalone backfill: shares_outstanding for existing tickers
+  av_import_dividends.py       Standalone backfill: dividends for existing tickers
+  av_query.py                  Query AV financial statements with optional date range and CSV export
+  av_update.py                 Monthly refresh: all AV data (statements + shares + dividends)
+  hf_import.py                 Bulk backfill: PE history + estimates for all AV tickers
+  hf_update.py                 Monthly update: recompute PE/yield + refresh estimates
+  hf_query.py                  CLI query: stats, timeseries, estimates views; CSV export
   update_alpha_vantage_estimates.py  Update analyst EPS/revenue estimates from AV
 xbrl_concept_mapper.py          AI-assisted fallback mapper (openai-agents)
 av_financials_db.py             Alpha Vantage DB class: schema, rate limiter, fetch, upsert, query
@@ -237,7 +256,8 @@ bulk_import_10k.py              Core bulk import logic (async, concurrent)
 run_bulk_import.py              CLI entry point for SEC EDGAR bulk imports
 tests/                 pytest tests
 data/
-  financial_statements.duckdb   SEC EDGAR financial statements
-  av_financials.duckdb          Alpha Vantage financial statements
-  xbrl_mappings_multi.duckdb    AI-discovered XBRL concept mapping store
+  financial_statements.duckdb       SEC EDGAR financial statements
+  av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends
+  historic_fundamentals.duckdb      Monthly PE/yield timeseries, PE stats, analyst estimates
+  xbrl_mappings_multi.duckdb        AI-discovered XBRL concept mapping store
 ```

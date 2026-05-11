@@ -63,11 +63,11 @@ fin_import2/
 │   ├── BULK_IMPORT_GUIDE.md             Bulk import CLI reference
 │   └── MULTI_STATEMENT_EXTRACTOR_GUIDE.md  Extractor internals
 │
-├── historic_fundamentals/               Historic PE and estimates analytics package
+├── historic_fundamentals/               Historic PE, revenue growth, market cap, and estimates analytics package
 │   ├── __init__.py                      Public API: get_pe_stats, get_pe_history, get_estimates + lower-level exports
 │   ├── db.py                            HistoricFundamentalsDB: schema, upsert, query methods
-│   ├── pe.py                            TTM EPS computation, monthly PE builder, rolling 5yr median, pe_stats aggregation
-│   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE calculation
+│   ├── pe.py                            TTM EPS/revenue + PE + dividend yield + revenue CAGR computation
+│   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE + NTM revenue calculation
 │   └── query.py                         Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
 │
 ├── features/
@@ -91,9 +91,12 @@ fin_import2/
 └── CLAUDE.md                            Coding standards
 
 scripts/ also contains:
-    hf_import.py                         Bulk backfill: compute PE history for all AV tickers + fetch estimates
-    hf_update.py                         Monthly update: refresh PE + estimates for all tickers in the DB
+    add_tickers.py                       All-in-one: AV raw data + PE history + estimates for new tickers (recommended)
+    hf_import.py                         Bulk backfill: compute PE + yield history for all AV tickers + fetch estimates
+    hf_update.py                         Monthly update: refresh PE + yield + estimates for all tickers in the DB
     hf_query.py                          CLI query: stats, timeseries, estimates views; CSV export
+    av_import_shares.py                  Standalone backfill: shares_outstanding for existing tickers
+    av_import_dividends.py               Standalone backfill: dividends for existing tickers
 ```
 
 ## Data flow
@@ -234,8 +237,10 @@ Reset button restores all inputs to model-computed defaults without re-fetching.
 | Table | Key columns |
 |-------|-------------|
 | `income_statements` | ticker, fiscal_date_ending, period_type ('annual'/'quarterly'), total_revenue, gross_profit, operating_income, ebit, ebitda, net_income, ... |
-| `balance_sheets` | ticker, fiscal_date_ending, period_type, total_assets, total_liabilities, total_shareholder_equity, long_term_debt, ... |
+| `balance_sheets` | ticker, fiscal_date_ending, period_type, total_assets, total_liabilities, total_shareholder_equity, long_term_debt, common_stock_shares_outstanding, ... |
 | `cash_flow_statements` | ticker, fiscal_date_ending, period_type, operating_cashflow, capital_expenditures, stock_based_compensation, dividend_payout, ... |
+| `shares_outstanding` | ticker, date, shares_outstanding_diluted, shares_outstanding_basic, fetched_at |
+| `dividends` | ticker, ex_dividend_date, declaration_date, record_date, payment_date, amount, fetched_at |
 | `companies` | ticker, last_updated_at, total_annual, total_quarterly |
 | `import_log` | ticker, run_at, success, statements, periods_inserted, error_msg |
 
@@ -257,11 +262,16 @@ All three statement tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filin
 
 | Table | Key columns |
 |-------|-------------|
-| `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), rolling_5yr_median (trailing 60-month window; NULL for first 59 months), ttm_source ('quarterly'/'annual'), shares, updated_at |
-| `pe_stats` | ticker (PK), lt_median, p10, p25, p75, p90, months_available, rolling_5yr_median, current_pe, current_ttm_eps, forward_pe, forward_12m_eps, updated_at |
+| `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), pe_rolling_5yr_median (trailing 60-month window), ttm_source ('quarterly'/'annual'), shares, ttm_dividend, dividend_yield, ttm_revenue, updated_at |
+| `pe_stats` | ticker (PK), market_cap_b, current_pe, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est, updated_at |
 | `earnings_estimates` | ticker, fiscal_date, horizon ('fiscal quarter'/'fiscal year'), fetched_at (PK together), eps_avg/high/low/count, eps_avg_7d/30d/60d/90d, eps_rev_up/down_7d/30d, rev_avg/high/low/count |
 
-Primary data sources: `av_financials.duckdb` (income_statements + balance_sheets for TTM EPS), `prices.duckdb` (adj_close for month-end price), Alpha Vantage EARNINGS_ESTIMATES endpoint (analyst estimates).
+Primary data sources:
+- `av_financials.duckdb / income_statements` — net_income for TTM EPS; total_revenue for TTM revenue and CAGR
+- `av_financials.duckdb / shares_outstanding` — diluted shares (primary); balance_sheets fallback
+- `av_financials.duckdb / dividends` — ex-dividend history for TTM dividend computation
+- `prices.duckdb / stock_prices` — adj_close for month-end price and current market cap
+- Alpha Vantage EARNINGS_ESTIMATES endpoint — analyst EPS + revenue estimates
 
 ### `data/xbrl_mappings_multi.duckdb`
 
