@@ -1,5 +1,5 @@
 """
-PE, P/FCF, and EV/EBITDA calculation engine for historic fundamentals.
+PE, P/FCF, EV/EBITDA, and valuation goal calculation engine for historic fundamentals.
 
 Computes monthly timeseries and statistics for a ticker using data already
 present in av_financials.duckdb and prices.duckdb. No Alpha Vantage API calls
@@ -7,12 +7,15 @@ are made.
 
 Usage:
     import duckdb
-    from historic_fundamentals.pe import process_ticker, compute_pe_stats
+    from historic_fundamentals.pe import process_ticker, enrich_goals, extract_goal_stats
 
     av_conn     = duckdb.connect("data/av_financials.duckdb", read_only=True)
     prices_conn = duckdb.connect("/path/to/prices.duckdb", read_only=True)
+    hf_conn     = duckdb.connect("data/historic_fundamentals.duckdb")
 
     monthly_pe, stats = process_ticker("AAPL", av_conn, prices_conn)
+    monthly_pe = enrich_goals(monthly_pe, stats, hf_conn, "AAPL")
+    stats.update(extract_goal_stats(monthly_pe))
 
     av_conn.close()
     prices_conn.close()
@@ -25,11 +28,12 @@ monthly_pe columns:
     ps_ratio, ps_rolling_5yr_median,
     roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median,
     roic, roic_rolling_5yr_median,
-    pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median
+    pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median,
+    goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high
 
 stats keys (PE):
-    ticker, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available,
-    pe_rolling_5yr_median, current_pe, current_ttm_eps,
+    ticker, current_price, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
+    months_available, pe_rolling_5yr_median, current_pe, current_ttm_eps,
     forward_pe, forward_12m_eps, ttm_dividend, dividend_yield
 
 stats keys (FCF):
@@ -53,6 +57,9 @@ stats keys (P/BV, P/TBV):
     current_pbv, pbv_lt_median, pbv_p25, pbv_p75, pbv_rolling_5yr_median
     current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median
 
+stats keys (Goals):
+    goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high
+
 TTM EPS method:
     Shares source (primary): shares_outstanding.shares_outstanding_diluted
     Shares source (fallback): balance_sheets.common_stock_shares_outstanding
@@ -74,6 +81,18 @@ EV/EBITDA:
 
 Rolling 5yr medians:
     Require 60 consecutive monthly rows (min_periods=60). NULL for first 59 months.
+
+Goal prices (enrich_goals):
+    Fair-value price implied by trading at the long-term median multiple.
+    goal_pe  = ttm_eps x pe_lt_median
+    goal_pcf = (ttm_fcf / shares) x pfcf_lt_median
+    goal_peg = forward_12m_eps (as-of month) x pe_lt_median
+    goal_bv  = (price / pbv) x pbv_lt_median
+    goal_2x  = 2 x price
+    goal_low = min(avg of valid goals, goal_peg)   valid = non-null and > 0
+    goal_high= max of valid goals
+    goal_peg is NULL for months with no stored earnings_estimates.
+    Requires hf_conn (historic_fundamentals DB) for historical forward EPS lookup.
 """
 
 import logging
@@ -625,6 +644,7 @@ def compute_pe_stats(
     result = {
         "ticker":                 ticker,
         "updated_at":             datetime.now(UTC),
+        "current_price":          _f(last.get("price")),
         # PE
         "pe_lt_median":           _f(pe_series.median()),
         "pe_p10":                 _f(pe_series.quantile(0.10)),
@@ -852,6 +872,171 @@ def compute_fcf_stats(cashflow_annual: pd.DataFrame, income_annual: pd.DataFrame
                 result["ebitda_margin_5yr_median"] = float(eb_margins.median())
 
     return result
+
+
+def _compute_peg_eps_series(
+    hf_conn: duckdb.DuckDBPyConnection,
+    ticker: str,
+    month_end_dates: list,
+) -> dict:
+    """
+    {month_end_date: forward_12m_eps} using earnings_estimates stored in hf_conn.
+    For each date, uses the most recent snapshot available as of that date.
+    Sums next 4 quarterly eps_avg; falls back to next annual estimate.
+    Returns empty dict when no estimates exist.
+    """
+    try:
+        q_df = hf_conn.execute("""
+            SELECT fiscal_date::DATE AS fiscal_date,
+                   fetched_at::DATE AS fetched_date,
+                   eps_avg
+            FROM earnings_estimates
+            WHERE ticker = ? AND horizon = 'fiscal quarter' AND eps_avg IS NOT NULL
+        """, [ticker]).df()
+        a_df = hf_conn.execute("""
+            SELECT fiscal_date::DATE AS fiscal_date,
+                   fetched_at::DATE AS fetched_date,
+                   eps_avg
+            FROM earnings_estimates
+            WHERE ticker = ? AND horizon = 'fiscal year' AND eps_avg IS NOT NULL
+        """, [ticker]).df()
+    except Exception:
+        return {}
+
+    if q_df.empty and a_df.empty:
+        return {}
+
+    for df in (q_df, a_df):
+        if not df.empty:
+            df["fiscal_date"] = pd.to_datetime(df["fiscal_date"]).dt.date
+            df["fetched_date"] = pd.to_datetime(df["fetched_date"]).dt.date
+
+    result: dict = {}
+    for month_end in month_end_dates:
+        fwd_eps = None
+
+        if not q_df.empty:
+            avail = q_df[q_df["fetched_date"] <= month_end]
+            if not avail.empty:
+                latest = (
+                    avail.sort_values("fetched_date")
+                    .groupby("fiscal_date", sort=False)
+                    .last()
+                    .reset_index()
+                )
+                future = latest[latest["fiscal_date"] > month_end].sort_values("fiscal_date")
+                if len(future) >= 4:
+                    fwd_eps = float(future.head(4)["eps_avg"].sum())
+
+        if fwd_eps is None and not a_df.empty:
+            avail = a_df[a_df["fetched_date"] <= month_end]
+            if not avail.empty:
+                latest = (
+                    avail.sort_values("fetched_date")
+                    .groupby("fiscal_date", sort=False)
+                    .last()
+                    .reset_index()
+                )
+                future = latest[latest["fiscal_date"] > month_end].sort_values("fiscal_date")
+                if not future.empty:
+                    fwd_eps = float(future.iloc[0]["eps_avg"])
+
+        result[month_end] = fwd_eps
+
+    return result
+
+
+def enrich_goals(
+    monthly_pe: pd.DataFrame,
+    stats: dict,
+    hf_conn: duckdb.DuckDBPyConnection,
+    ticker: str,
+) -> pd.DataFrame:
+    """
+    Add goal price columns to the monthly timeseries.
+
+    Goals are the implied fair-value price if the stock traded at its historical
+    median multiple:
+        goal_pe  = ttm_eps × pe_lt_median
+        goal_pcf = (ttm_fcf / shares) × pfcf_lt_median
+        goal_peg = forward_12m_eps (as-of month) × pe_lt_median
+        goal_bv  = (price / pbv) × pbv_lt_median
+        goal_2x  = 2 × price
+        goal_low = min(avg of valid goals, goal_peg)
+        goal_high= max of valid goals  [valid = non-null and > 0]
+
+    goal_peg is NULL for months without stored earnings_estimates.
+    """
+    if monthly_pe.empty or not stats:
+        return monthly_pe
+
+    pe_lt   = stats.get("pe_lt_median")
+    pfcf_lt = stats.get("pfcf_lt_median")
+    pbv_lt  = stats.get("pbv_lt_median")
+
+    month_end_dates = list(monthly_pe["month_end_date"])
+    peg_map = _compute_peg_eps_series(hf_conn, ticker, month_end_dates) if hf_conn is not None else {}
+
+    rows_out = []
+    for row in monthly_pe.itertuples(index=False):
+        month_end = row.month_end_date
+        price     = float(row.price)
+
+        g_pe = None
+        eps = getattr(row, "ttm_eps", None)
+        if pe_lt and eps is not None and pd.notna(eps) and float(eps) > 0:
+            g_pe = float(eps) * pe_lt
+
+        g_pcf = None
+        fcf = getattr(row, "ttm_fcf", None)
+        sh  = getattr(row, "shares", None)
+        if (pfcf_lt and fcf is not None and sh is not None
+                and pd.notna(fcf) and pd.notna(sh)
+                and float(fcf) > 0 and float(sh) > 0):
+            g_pcf = (float(fcf) / float(sh)) * pfcf_lt
+
+        g_peg = None
+        fwd = peg_map.get(month_end)
+        if pe_lt and fwd is not None and fwd > 0:
+            g_peg = fwd * pe_lt
+
+        g_bv = None
+        pbv = getattr(row, "pbv", None)
+        if pbv_lt and pbv is not None and pd.notna(pbv) and float(pbv) > 0:
+            g_bv = (price / float(pbv)) * pbv_lt
+
+        g_2x = price * 2.0
+
+        valid = [g for g in (g_pe, g_pcf, g_peg, g_bv) if g is not None and g > 0]
+        if valid:
+            avg    = sum(valid) / len(valid)
+            g_low  = min(avg, g_peg) if (g_peg is not None and g_peg > 0) else avg
+            g_high = max(valid)
+        else:
+            g_low = g_high = None
+
+        rows_out.append({
+            **row._asdict(),
+            "goal_pe":   g_pe,
+            "goal_pcf":  g_pcf,
+            "goal_peg":  g_peg,
+            "goal_bv":   g_bv,
+            "goal_2x":   g_2x,
+            "goal_low":  g_low,
+            "goal_high": g_high,
+        })
+
+    return pd.DataFrame(rows_out)
+
+
+def extract_goal_stats(monthly_pe: pd.DataFrame) -> dict:
+    """Extract current (latest row) goal values for merging into pe_stats."""
+    if monthly_pe.empty:
+        return {}
+    last = monthly_pe.iloc[-1]
+    def _f(v):
+        return float(v) if pd.notna(v) else None
+    return {k: _f(last.get(k)) for k in ("goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high")}
 
 
 def process_ticker(

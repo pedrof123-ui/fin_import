@@ -82,7 +82,7 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         db.close()
 
     cols = [
-        "ticker", "market_cap_b",
+        "ticker", "market_cap_b", "current_price",
         "current_pe", "pe_lt_median", "pe_p25", "pe_p75", "pe_p10", "pe_p90",
         "pe_rolling_5yr_median", "forward_pe", "forward_12m_eps",
         "current_ttm_eps", "months_available",
@@ -100,6 +100,7 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "current_roic", "roic_lt_median", "roic_p25", "roic_p75", "roic_rolling_5yr_median",
         "current_pbv", "pbv_lt_median", "pbv_p25", "pbv_p75", "pbv_rolling_5yr_median",
         "current_ptbv", "ptbv_lt_median", "ptbv_p25", "ptbv_p75", "ptbv_rolling_5yr_median",
+        "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
     ]
     return df[[c for c in cols if c in df.columns]]
 
@@ -144,6 +145,7 @@ def get_pe_history(tickers, start: str | None = None, end: str | None = None) ->
         "roic", "roic_rolling_5yr_median",
         "pbv", "pbv_rolling_5yr_median",
         "ptbv", "ptbv_rolling_5yr_median",
+        "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
     ]
     return df[[c for c in cols if c in df.columns]]
 

@@ -1,18 +1,22 @@
-VISION:
+VISION: [IMPLEMENTED]
 
-1. Following the same approach that we used for P/E, P/FCF and EV/EBITDA, the next steps is to calculate historical, current and next 12 months for the following:
-    - Return on Assets (ROA)                [IMPLEMENTED 2026-05-12]
-    - Return on Equity (ROE)                [IMPLEMENTED 2026-05-12]
-    - Return on Invested Capital (ROIC)     [IMPLEMENTED 2026-05-12]
-    - Price per Tangible Book Value (P/TBV) [IMPLEMENTED 2026-05-12]
-    - Price per Book Value (P/BV)           [IMPLEMENTED 2026-05-12]
-    - Price per Sales (P/S)                 [IMPLEMENTED 2026-05-12]
+Goal prices are fair-value price targets implied by trading at the long-term median multiple.
+Stored per-month in monthly_pe (full history) and as current values in pe_stats.
+Exposed via get_pe_stats() and get_pe_history().
 
-3. As a securities financial analyst working for hedge fund or mutual fund, please make are recommendation on a framework or methods including computational formulas to track the above FCF
+Columns (monthly_pe and pe_stats):
+    goal_pe  = ttm_eps x pe_lt_median
+    goal_pcf = (ttm_fcf / shares) x pfcf_lt_median
+    goal_peg = forward_12m_eps (as-of month) x pe_lt_median
+    goal_bv  = (price / pbv) x pbv_lt_median
+    goal_2x  = 2 x price
+    goal_low = min(avg of valid goals, goal_peg)   valid = non-null and > 0
+    goal_high= max of valid goals
 
-4. Make recommendations for the code architecture, scaffold, integration with the AV historical fundamentals workfolw and pipeline and implementation PLAN.
+Notes:
+    - goal_peg is NULL for months without stored earnings_estimates
+    - hf_update.py fetches estimates before computing goals so goal_peg uses fresh data
+    - Run: uv run scripts/hf_update.py --skip-estimates to back-fill all historical rows
 
-5, Make sure the metrics can be updated during the monthly update and the user can retrive as part of get_pe_stats
-
-6. Stock closing prices tare available in ../trade_systems/data/prices.duckdb stock_prices
+Also added: current_price to pe_stats (latest month-end adjusted close)
 

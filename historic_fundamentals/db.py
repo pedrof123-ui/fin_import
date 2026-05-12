@@ -133,6 +133,13 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ptbv DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ptbv_rolling_5yr_median DOUBLE")
         self._rename_column_if_exists("monthly_pe", "rolling_5yr_median", "pe_rolling_5yr_median")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_pe   DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_pcf  DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_peg  DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_bv   DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_2x   DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_low  DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_high DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -278,6 +285,14 @@ class HistoricFundamentalsDB:
         self._rename_column_if_exists("pe_stats", "p75",                "pe_p75")
         self._rename_column_if_exists("pe_stats", "p90",                "pe_p90")
         self._rename_column_if_exists("pe_stats", "rolling_5yr_median", "pe_rolling_5yr_median")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_price DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_pe   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_pcf  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_peg  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_bv   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_2x   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_low  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_high DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS earnings_estimates (
@@ -326,6 +341,7 @@ class HistoricFundamentalsDB:
             "roic", "roic_rolling_5yr_median",
             "pbv", "pbv_rolling_5yr_median",
             "ptbv", "ptbv_rolling_5yr_median",
+            "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
             "updated_at",
         ]
         for col in cols:
@@ -346,6 +362,7 @@ class HistoricFundamentalsDB:
                  roic, roic_rolling_5yr_median,
                  pbv, pbv_rolling_5yr_median,
                  ptbv, ptbv_rolling_5yr_median,
+                 goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -358,6 +375,7 @@ class HistoricFundamentalsDB:
                        roic, roic_rolling_5yr_median,
                        pbv, pbv_rolling_5yr_median,
                        ptbv, ptbv_rolling_5yr_median,
+                       goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -370,7 +388,7 @@ class HistoricFundamentalsDB:
         # the incoming value is NULL (--skip-estimates runs don't wipe analyst data).
         self.conn.execute("""
             INSERT INTO pe_stats
-            (ticker, updated_at, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
+            (ticker, updated_at, current_price, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
              months_available, pe_rolling_5yr_median, current_pe, current_ttm_eps,
              forward_pe, forward_12m_eps, ttm_dividend, dividend_yield,
              rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est,
@@ -387,17 +405,20 @@ class HistoricFundamentalsDB:
              current_roe, roe_lt_median, roe_p25, roe_p75, roe_rolling_5yr_median,
              current_roic, roic_lt_median, roic_p25, roic_p75, roic_rolling_5yr_median,
              current_pbv, pbv_lt_median, pbv_p25, pbv_p75, pbv_rolling_5yr_median,
-             current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+             current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median,
+             goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
+                current_price              = excluded.current_price,
                 pe_lt_median               = excluded.pe_lt_median,
                 pe_p10                     = excluded.pe_p10,
                 pe_p25                     = excluded.pe_p25,
@@ -468,10 +489,18 @@ class HistoricFundamentalsDB:
                 ptbv_lt_median             = excluded.ptbv_lt_median,
                 ptbv_p25                   = excluded.ptbv_p25,
                 ptbv_p75                   = excluded.ptbv_p75,
-                ptbv_rolling_5yr_median    = excluded.ptbv_rolling_5yr_median
+                ptbv_rolling_5yr_median    = excluded.ptbv_rolling_5yr_median,
+                goal_pe                    = excluded.goal_pe,
+                goal_pcf                   = excluded.goal_pcf,
+                goal_peg                   = excluded.goal_peg,
+                goal_bv                    = excluded.goal_bv,
+                goal_2x                    = excluded.goal_2x,
+                goal_low                   = excluded.goal_low,
+                goal_high                  = excluded.goal_high
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
+            stats.get("current_price"),
             stats.get("pe_lt_median"),
             stats.get("pe_p10"),
             stats.get("pe_p25"),
@@ -543,6 +572,13 @@ class HistoricFundamentalsDB:
             stats.get("ptbv_p25"),
             stats.get("ptbv_p75"),
             stats.get("ptbv_rolling_5yr_median"),
+            stats.get("goal_pe"),
+            stats.get("goal_pcf"),
+            stats.get("goal_peg"),
+            stats.get("goal_bv"),
+            stats.get("goal_2x"),
+            stats.get("goal_low"),
+            stats.get("goal_high"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:

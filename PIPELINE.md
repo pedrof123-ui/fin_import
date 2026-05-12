@@ -291,7 +291,7 @@ Computes derived metrics for all tickers and stores them in `data/historic_funda
 | Script | Purpose | AV calls/ticker |
 |--------|---------|----------------|
 | `scripts/hf_import.py` | Initial backfill: PE history + estimates | 1 (estimates only) |
-| `scripts/hf_update.py` | Monthly refresh: recompute all metrics + refresh estimates | 1 |
+| `scripts/hf_update.py` | Monthly refresh: recompute all metrics + refresh estimates + goal prices | 1 |
 
 `hf_import.py` skips tickers already in the DB unless `--force` is passed.
 Both scripts support `--skip-estimates` to skip the AV estimates call (PE/dividend recompute only, no API calls).
@@ -321,8 +321,8 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 
 | Table | Key | Computed columns |
 |-------|-----|-----------------|
-| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median, roic, roic_rolling_5yr_median, pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median |
-| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda, current_ps, ps_lt_median, ps_p25/p75, ps_rolling_5yr_median, forward_ps, current_roa, roa_lt_median, roa_p25/p75, roa_rolling_5yr_median, current_roe, roe_lt_median, roe_p25/p75, roe_rolling_5yr_median, current_roic, roic_lt_median, roic_p25/p75, roic_rolling_5yr_median, current_pbv, pbv_lt_median, pbv_p25/p75, pbv_rolling_5yr_median, current_ptbv, ptbv_lt_median, ptbv_p25/p75, ptbv_rolling_5yr_median |
+| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median, roic, roic_rolling_5yr_median, pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
+| `pe_stats` | ticker | market_cap_b, current_price, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda, current_ps, ps_lt_median, ps_p25/p75, ps_rolling_5yr_median, forward_ps, current_roa, roa_lt_median, roa_p25/p75, roa_rolling_5yr_median, current_roe, roe_lt_median, roe_p25/p75, roe_rolling_5yr_median, current_roic, roic_lt_median, roic_p25/p75, roic_rolling_5yr_median, current_pbv, pbv_lt_median, pbv_p25/p75, pbv_rolling_5yr_median, current_ptbv, ptbv_lt_median, ptbv_p25/p75, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
 | `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
 
 ### Call graph
@@ -371,18 +371,31 @@ hf_import.py / hf_update.py
   │   │   │   │     (NULL when TBV ≤ 0)
   │   │   │   └── ptbv_rolling_5yr_median: rolling(60, min_periods=60).median()
   │   │   ├── compute_pe_stats(ticker, monthly_pe)
-  │   │   │     → PE percentiles + current snapshot + FCF/EV/EBITDA/P/S/ROA/ROE/ROIC/P/BV/P/TBV lt_median/p25/p75
+  │   │   │     → current_price + PE percentiles + current snapshot +
+  │   │   │       FCF/EV/EBITDA/P/S/ROA/ROE/ROIC/P/BV/P/TBV lt_median/p25/p75
   │   │   ├── compute_revenue_stats(annual)   → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
   │   │   ├── compute_earnings_stats(annual)  → earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
-  │   │   ├── compute_fcf_stats(cashflow_a, annual)
-  │   │   │     → fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median,
-  │   │   │       ebitda_margin_5yr_median
-  │   │   │       (only positive FCF/EBITDA years used; margins = metric / revenue, last 5 annual)
-  │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
+  │   │   └── compute_fcf_stats(cashflow_a, annual)
+  │   │         → fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median,
+  │   │           ebitda_margin_5yr_median
+  │   │           (only positive FCF/EBITDA years used; margins = metric / revenue, last 5 annual)
   │   ├── estimates phase (1 AV call per ticker, skipped with --skip-estimates)
   │   │   ├── fetch_estimates(ticker, api_key, limiter)  → AV EARNINGS_ESTIMATES response
   │   │   ├── normalize_estimates(ticker, raw)            → DB-ready dicts
   │   │   └── hf_db.upsert_estimates(ticker, rows)
+  │   │     [estimates stored before goals so PEG goal uses fresh data]
+  │   ├── goal enrichment phase (no AV calls)
+  │   │   ├── enrich_goals(monthly_pe, stats, hf_db.conn, ticker)
+  │   │   │   ├── goal_pe   = ttm_eps × pe_lt_median
+  │   │   │   ├── goal_pcf  = (ttm_fcf / shares) × pfcf_lt_median
+  │   │   │   ├── goal_peg  = forward_12m_eps (as-of month) × pe_lt_median
+  │   │   │   │     (looks up earnings_estimates; NULL for months without stored estimates)
+  │   │   │   ├── goal_bv   = (price / pbv) × pbv_lt_median
+  │   │   │   ├── goal_2x   = 2 × price
+  │   │   │   ├── goal_low  = min(avg of valid goals, goal_peg)
+  │   │   │   └── goal_high = max of valid goals  [valid = non-null and > 0]
+  │   │   ├── extract_goal_stats(monthly_pe)  → current goal values for pe_stats
+  │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
   │   └── snapshot update phase (no AV calls — reads local DBs)
   │       ├── _update_forward_pe()         → forward_pe, forward_12m_eps from stored estimates
   │       ├── _update_rev_ntm_growth_est() → NTM rev estimate / TTM actual revenue − 1
@@ -419,15 +432,19 @@ from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates
 import pandas as pd
 pd.set_option('display.max_columns', None)   # 39 columns — prevent truncation
 
-get_pe_stats("AAPL")                          # snapshot: PE, P/FCF, EV/EBITDA, P/S,
-                                              #   ROA, ROE, ROIC, P/BV, P/TBV,
-                                              #   market cap, dividends, revenue/earnings/FCF growth
+get_pe_stats("AAPL")                          # snapshot: current_price, PE, P/FCF, EV/EBITDA,
+                                              #   P/S, ROA, ROE, ROIC, P/BV, P/TBV,
+                                              #   market cap, dividends, revenue/earnings/FCF growth,
+                                              #   goal_pe, goal_pcf, goal_peg, goal_bv,
+                                              #   goal_2x, goal_low, goal_high
 get_pe_stats(["AAPL", "MSFT", "GOOGL"])      # multiple tickers
 get_pe_stats()                                # all tickers
 
 get_pe_history("AAPL", start="2020-01-01")   # monthly timeseries: PE, P/FCF, EV/EBITDA,
                                               #   P/S, ROA, ROE, ROIC, P/BV, P/TBV,
-                                              #   FCF yield, dividend yield, TTM revenue/FCF/EBITDA
+                                              #   FCF yield, dividend yield, TTM revenue/FCF/EBITDA,
+                                              #   goal_pe, goal_pcf, goal_peg, goal_bv,
+                                              #   goal_2x, goal_low, goal_high
 get_estimates("AAPL", horizon="fiscal quarter")  # analyst EPS + revenue estimates
 ```
 

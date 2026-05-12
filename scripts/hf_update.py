@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT))
 
 from av_financials_db import DEFAULT_DB_PATH as AV_DB_PATH, RateLimiter  # noqa: E402
 from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB_PATH, HistoricFundamentalsDB  # noqa: E402
-from historic_fundamentals.pe import process_ticker  # noqa: E402
+from historic_fundamentals.pe import process_ticker, enrich_goals, extract_goal_stats  # noqa: E402
 from historic_fundamentals.estimates import (  # noqa: E402
     fetch_estimates, normalize_estimates, compute_forward_eps, compute_ntm_revenue,
 )
@@ -371,15 +371,21 @@ def main() -> int:
             prefix = f"[{i}/{len(tickers)}]"
             try:
                 monthly_pe, stats = process_ticker(ticker, av_conn, prices_conn)
-                if not monthly_pe.empty:
-                    hf_db.upsert_monthly_pe(ticker, monthly_pe)
-                    if stats:
-                        hf_db.upsert_pe_stats(stats)
 
+                # Fetch estimates before goal enrichment so PEG goal uses fresh data.
                 if not args.skip_estimates:
                     raw = fetch_estimates(ticker, api_key, limiter)
                     rows = normalize_estimates(ticker, raw)
                     hf_db.upsert_estimates(ticker, rows)
+
+                if not monthly_pe.empty:
+                    if stats:
+                        monthly_pe = enrich_goals(monthly_pe, stats, hf_db.conn, ticker)
+                        stats.update(extract_goal_stats(monthly_pe))
+                    hf_db.upsert_monthly_pe(ticker, monthly_pe)
+                    if stats:
+                        hf_db.upsert_pe_stats(stats)
+
                 _update_forward_pe(hf_db, prices_conn, ticker)
                 _update_rev_ntm_growth_est(hf_db, av_conn, ticker)
                 _update_earn_ntm_growth_est(hf_db, ticker)
