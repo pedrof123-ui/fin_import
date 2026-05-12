@@ -317,7 +317,7 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 | Table | Key | Computed columns |
 |-------|-----|-----------------|
 | `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median |
-| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median |
+| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda |
 | `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
 
 ### Call graph
@@ -356,8 +356,9 @@ hf_import.py / hf_update.py
   │   │   ├── compute_revenue_stats(annual)   → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
   │   │   ├── compute_earnings_stats(annual)  → earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
   │   │   ├── compute_fcf_stats(cashflow_a, annual)
-  │   │   │     → fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median
-  │   │   │       (only positive FCF years used; FCF margin = FCF / revenue, last 5 annual)
+  │   │   │     → fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median,
+  │   │   │       ebitda_margin_5yr_median
+  │   │   │       (only positive FCF/EBITDA years used; margins = metric / revenue, last 5 annual)
   │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
   │   ├── estimates phase (1 AV call per ticker, skipped with --skip-estimates)
   │   │   ├── fetch_estimates(ticker, api_key, limiter)  → AV EARNINGS_ESTIMATES response
@@ -369,14 +370,17 @@ hf_import.py / hf_update.py
   │       ├── _update_earn_ntm_growth_est() → forward_12m_eps / current_ttm_eps − 1
   │       ├── _update_forward_pfcf()       → price / (NTM_revenue × fcf_margin_5yr_median / shares)
   │       │     (NULL when no NTM revenue estimate or fcf_margin_5yr_median is unavailable)
+  │       ├── _update_forward_evebitda()   → current_EV / (NTM_revenue × ebitda_margin_5yr_median)
+  │       │     current_EV = price × shares + total_debt − cash (latest quarterly balance sheet)
+  │       │     (NULL when EV ≤ 0, no NTM revenue estimate, or ebitda_margin_5yr_median unavailable)
   │       └── _update_market_cap()         → latest price × diluted shares / 1e9 (billions)
   └── hf_db.close()
 ```
 
 Note: `upsert_pe_stats` uses `COALESCE` for estimate-derived and externally-set fields
-(`forward_pe`, `forward_12m_eps`, `forward_pfcf`, `rev_ntm_growth_est`, `earn_ntm_growth_est`,
-`market_cap_b`) so `--skip-estimates` runs preserve existing analyst data. The snapshot update
-phase always runs regardless of `--skip-estimates`.
+(`forward_pe`, `forward_12m_eps`, `forward_pfcf`, `forward_evebitda`, `rev_ntm_growth_est`,
+`earn_ntm_growth_est`, `market_cap_b`) so `--skip-estimates` runs preserve existing analyst data.
+The snapshot update phase always runs regardless of `--skip-estimates`.
 
 ### Rate limit
 

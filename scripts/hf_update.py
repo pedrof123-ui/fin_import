@@ -127,6 +127,92 @@ def _update_earn_ntm_growth_est(hf_db: HistoricFundamentalsDB, ticker: str) -> N
     hf_db.update_earn_ntm_growth_est(ticker, growth)
 
 
+def _update_forward_evebitda(
+    hf_db: HistoricFundamentalsDB,
+    av_conn,
+    prices_conn,
+    ticker: str,
+) -> None:
+    """
+    Compute forward EV/EBITDA using the 5yr median EBITDA margin applied to NTM revenue.
+    forward_EBITDA = NTM_revenue * ebitda_margin_5yr_median
+    forward_EV/EBITDA = current_EV / forward_EBITDA
+    current_EV = price * shares + total_debt - cash
+    """
+    row = hf_db.conn.execute(
+        "SELECT ebitda_margin_5yr_median FROM pe_stats WHERE ticker = ?", [ticker]
+    ).fetchone()
+    if not row or row[0] is None:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+    ebitda_margin = row[0]
+
+    ntm_rev = compute_ntm_revenue(hf_db.conn, ticker)
+    if not ntm_rev or ntm_rev <= 0:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+
+    forward_ebitda = ntm_rev * ebitda_margin
+    if forward_ebitda <= 0:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+
+    price_row = prices_conn.execute(
+        "SELECT adj_close FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+        [ticker],
+    ).fetchone()
+    if not price_row:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+    price = price_row[0]
+
+    shares_row = av_conn.execute("""
+        SELECT shares_outstanding_diluted FROM shares_outstanding
+        WHERE ticker = ? AND shares_outstanding_diluted IS NOT NULL
+        ORDER BY date DESC LIMIT 1
+    """, [ticker]).fetchone()
+    if not shares_row:
+        shares_row = av_conn.execute("""
+            SELECT common_stock_shares_outstanding FROM balance_sheets
+            WHERE ticker = ? AND period_type = 'quarterly'
+                AND common_stock_shares_outstanding IS NOT NULL
+            ORDER BY fiscal_date_ending DESC LIMIT 1
+        """, [ticker]).fetchone()
+    shares = shares_row[0] if shares_row else None
+
+    if not shares or shares <= 0:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+
+    # total_debt = long_term_debt_noncurrent + short_term_debt + current_long_term_debt
+    debt_row = av_conn.execute("""
+        SELECT
+            COALESCE(long_term_debt_noncurrent, 0) +
+            COALESCE(short_term_debt, 0) +
+            COALESCE(current_long_term_debt, 0) AS total_debt,
+            cash_and_short_term_investments
+        FROM balance_sheets
+        WHERE ticker = ? AND period_type = 'quarterly'
+            AND (long_term_debt_noncurrent IS NOT NULL
+                 OR short_term_debt IS NOT NULL
+                 OR current_long_term_debt IS NOT NULL)
+        ORDER BY fiscal_date_ending DESC LIMIT 1
+    """, [ticker]).fetchone()
+    if not debt_row:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+    total_debt = debt_row[0] or 0.0
+    cash = debt_row[1] or 0.0
+
+    ev = price * shares + total_debt - cash
+    if ev <= 0:
+        hf_db.update_forward_evebitda(ticker, None)
+        return
+
+    forward_evebitda = ev / forward_ebitda
+    hf_db.update_forward_evebitda(ticker, forward_evebitda)
+
+
 def _update_forward_pfcf(
     hf_db: HistoricFundamentalsDB,
     av_conn,
@@ -256,6 +342,7 @@ def main() -> int:
                 _update_rev_ntm_growth_est(hf_db, av_conn, ticker)
                 _update_earn_ntm_growth_est(hf_db, ticker)
                 _update_forward_pfcf(hf_db, av_conn, prices_conn, ticker)
+                _update_forward_evebitda(hf_db, av_conn, prices_conn, ticker)
                 _update_market_cap(hf_db, av_conn, prices_conn, ticker)
 
                 ok += 1

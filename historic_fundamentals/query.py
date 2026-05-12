@@ -93,7 +93,7 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "pfcf_rolling_5yr_median", "current_fcf_yield", "forward_pfcf",
         "fcf_growth_1yr", "fcf_cagr_3yr", "fcf_cagr_5yr", "fcf_margin_5yr_median",
         "current_evebitda", "evebitda_lt_median", "evebitda_p25", "evebitda_p75",
-        "evebitda_rolling_5yr_median",
+        "evebitda_rolling_5yr_median", "ebitda_margin_5yr_median", "forward_evebitda",
     ]
     return df[[c for c in cols if c in df.columns]]
 

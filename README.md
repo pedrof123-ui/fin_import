@@ -161,7 +161,7 @@ uv run scripts/av_query.py AAPL --statement balance --out output.csv
 ### Query historic fundamentals (PE, P/FCF, EV/EBITDA, market cap, growth, estimates)
 
 ```bash
-uv run scripts/hf_query.py AAPL                              # PE, P/FCF, EV/EBITDA, FCF yield, market cap, growth stats
+uv run scripts/hf_query.py AAPL                              # PE, P/FCF, EV/EBITDA, FCF yield, forward P/FCF, forward EV/EBITDA, market cap, growth stats
 uv run scripts/hf_query.py AAPL --view timeseries           # monthly PE, P/FCF, EV/EBITDA, FCF yield, TTM revenue/FCF/EBITDA
 uv run scripts/hf_query.py AAPL --view estimates            # analyst estimates
 uv run scripts/hf_query.py --all --out output.csv           # export all tickers

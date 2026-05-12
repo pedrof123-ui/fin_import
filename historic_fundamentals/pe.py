@@ -644,19 +644,28 @@ def compute_fcf_stats(cashflow_annual: pd.DataFrame, income_annual: pd.DataFrame
             if actual_years > 0 and base_fcf > 0:
                 result[key] = (latest_fcf / base_fcf) ** (1.0 / actual_years) - 1.0
 
-    # 5yr median FCF margin
     if not income_annual.empty:
         ia = income_annual.copy()
         ia["fiscal_date_ending"] = pd.to_datetime(ia["fiscal_date_ending"]).dt.date
         ia = ia.dropna(subset=["total_revenue"])
         ia = ia[ia["total_revenue"] > 0]
+
+        # 5yr median FCF margin
         merged = cf.merge(ia[["fiscal_date_ending", "total_revenue"]], on="fiscal_date_ending", how="inner")
-        merged = merged.sort_values("fiscal_date_ending")
-        last5 = merged.tail(5)
-        if not last5.empty:
-            margins = (last5["fcf"] / last5["total_revenue"]).dropna()
+        last5_fcf = merged.sort_values("fiscal_date_ending").tail(5)
+        if not last5_fcf.empty:
+            margins = (last5_fcf["fcf"] / last5_fcf["total_revenue"]).dropna()
             if not margins.empty:
                 result["fcf_margin_5yr_median"] = float(margins.median())
+
+        # 5yr median EBITDA margin
+        ia_ebitda = ia.dropna(subset=["ebitda"])
+        ia_ebitda = ia_ebitda[ia_ebitda["ebitda"] > 0].sort_values("fiscal_date_ending")
+        last5_eb = ia_ebitda.tail(5)
+        if not last5_eb.empty:
+            eb_margins = (last5_eb["ebitda"] / last5_eb["total_revenue"]).dropna()
+            if not eb_margins.empty:
+                result["ebitda_margin_5yr_median"] = float(eb_margins.median())
 
     return result
 

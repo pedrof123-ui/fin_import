@@ -145,7 +145,9 @@ class HistoricFundamentalsDB:
                 evebitda_lt_median         DOUBLE,
                 evebitda_p25               DOUBLE,
                 evebitda_p75               DOUBLE,
-                evebitda_rolling_5yr_median DOUBLE
+                evebitda_rolling_5yr_median DOUBLE,
+                ebitda_margin_5yr_median   DOUBLE,
+                forward_evebitda           DOUBLE
             )
         """)
         # Migration: add/rename columns introduced after initial schema
@@ -176,6 +178,8 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_p25 DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_p75 DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ebitda_margin_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_evebitda DOUBLE")
         self._rename_column_if_exists("pe_stats", "lt_median",          "pe_lt_median")
         self._rename_column_if_exists("pe_stats", "p10",                "pe_p10")
         self._rename_column_if_exists("pe_stats", "p25",                "pe_p25")
@@ -267,9 +271,9 @@ class HistoricFundamentalsDB:
              forward_pfcf, fcf_margin_5yr_median,
              fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
              current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
-             evebitda_rolling_5yr_median)
+             evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
                 pe_lt_median               = excluded.pe_lt_median,
@@ -309,7 +313,9 @@ class HistoricFundamentalsDB:
                 evebitda_lt_median         = excluded.evebitda_lt_median,
                 evebitda_p25               = excluded.evebitda_p25,
                 evebitda_p75               = excluded.evebitda_p75,
-                evebitda_rolling_5yr_median = excluded.evebitda_rolling_5yr_median
+                evebitda_rolling_5yr_median = excluded.evebitda_rolling_5yr_median,
+                ebitda_margin_5yr_median    = excluded.ebitda_margin_5yr_median,
+                forward_evebitda           = COALESCE(excluded.forward_evebitda, pe_stats.forward_evebitda)
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -351,6 +357,8 @@ class HistoricFundamentalsDB:
             stats.get("evebitda_p25"),
             stats.get("evebitda_p75"),
             stats.get("evebitda_rolling_5yr_median"),
+            stats.get("ebitda_margin_5yr_median"),
+            stats.get("forward_evebitda"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -397,6 +405,12 @@ class HistoricFundamentalsDB:
             UPDATE pe_stats SET forward_pfcf = ?, updated_at = ?
             WHERE ticker = ?
         """, [forward_pfcf, datetime.now(UTC), ticker])
+
+    def update_forward_evebitda(self, ticker: str, forward_evebitda: float | None) -> None:
+        self.conn.execute("""
+            UPDATE pe_stats SET forward_evebitda = ?, updated_at = ?
+            WHERE ticker = ?
+        """, [forward_evebitda, datetime.now(UTC), ticker])
 
     def update_market_cap(self, ticker: str, market_cap_b: float | None) -> None:
         self.conn.execute("""
