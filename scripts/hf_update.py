@@ -127,6 +127,67 @@ def _update_earn_ntm_growth_est(hf_db: HistoricFundamentalsDB, ticker: str) -> N
     hf_db.update_earn_ntm_growth_est(ticker, growth)
 
 
+def _update_forward_pfcf(
+    hf_db: HistoricFundamentalsDB,
+    av_conn,
+    prices_conn,
+    ticker: str,
+) -> None:
+    """
+    Compute forward P/FCF using the 5yr median FCF margin applied to NTM revenue.
+    forward_FCF = NTM_revenue * fcf_margin_5yr_median
+    forward_P/FCF = current_price / (forward_FCF / shares)
+    """
+    row = hf_db.conn.execute(
+        "SELECT fcf_margin_5yr_median FROM pe_stats WHERE ticker = ?", [ticker]
+    ).fetchone()
+    if not row or row[0] is None:
+        hf_db.update_forward_pfcf(ticker, None)
+        return
+    fcf_margin = row[0]
+
+    ntm_rev = compute_ntm_revenue(hf_db.conn, ticker)
+    if not ntm_rev or ntm_rev <= 0:
+        hf_db.update_forward_pfcf(ticker, None)
+        return
+
+    forward_fcf = ntm_rev * fcf_margin
+    if forward_fcf <= 0:
+        hf_db.update_forward_pfcf(ticker, None)
+        return
+
+    price_row = prices_conn.execute(
+        "SELECT adj_close FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+        [ticker],
+    ).fetchone()
+    if not price_row:
+        hf_db.update_forward_pfcf(ticker, None)
+        return
+    price = price_row[0]
+
+    shares_row = av_conn.execute("""
+        SELECT shares_outstanding_diluted FROM shares_outstanding
+        WHERE ticker = ? AND shares_outstanding_diluted IS NOT NULL
+        ORDER BY date DESC LIMIT 1
+    """, [ticker]).fetchone()
+    if not shares_row:
+        shares_row = av_conn.execute("""
+            SELECT common_stock_shares_outstanding FROM balance_sheets
+            WHERE ticker = ? AND period_type = 'quarterly'
+                AND common_stock_shares_outstanding IS NOT NULL
+            ORDER BY fiscal_date_ending DESC LIMIT 1
+        """, [ticker]).fetchone()
+    shares = shares_row[0] if shares_row else None
+
+    if not shares or shares <= 0:
+        hf_db.update_forward_pfcf(ticker, None)
+        return
+
+    forward_fcf_per_share = forward_fcf / shares
+    forward_pfcf = price / forward_fcf_per_share if forward_fcf_per_share > 0 else None
+    hf_db.update_forward_pfcf(ticker, forward_pfcf)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Monthly update of historic fundamentals.")
     parser.add_argument("--ticker", metavar="TICKER", help="Update a single ticker")
@@ -194,6 +255,7 @@ def main() -> int:
                 _update_forward_pe(hf_db, prices_conn, ticker)
                 _update_rev_ntm_growth_est(hf_db, av_conn, ticker)
                 _update_earn_ntm_growth_est(hf_db, ticker)
+                _update_forward_pfcf(hf_db, av_conn, prices_conn, ticker)
                 _update_market_cap(hf_db, av_conn, prices_conn, ticker)
 
                 ok += 1

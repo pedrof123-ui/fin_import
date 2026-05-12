@@ -2,8 +2,8 @@
 Historic fundamentals database: data/historic_fundamentals.duckdb
 
 Three tables:
-    monthly_pe       Monthly PE timeseries per ticker (~20 years, one row per month)
-    pe_stats         Pre-computed statistics snapshot per ticker (median, percentiles, etc.)
+    monthly_pe       Monthly PE/P/FCF/EV/EBITDA timeseries (~20 years, one row per month)
+    pe_stats         Pre-computed statistics snapshot per ticker
     earnings_estimates  Time-series snapshots of analyst EPS/revenue estimates
 
 Usage:
@@ -11,28 +11,31 @@ Usage:
 
     db = HistoricFundamentalsDB()
 
-    # Query PE statistics for one or more tickers
     stats_df = db.query_pe_stats(["AAPL", "MSFT"])
-
-    # Query monthly PE timeseries with optional date range
-    ts_df = db.query_pe_timeseries(["AAPL"], start_date=date(2020, 1, 1))
-
-    # Query latest analyst estimates
-    est_df = db.query_estimates(["AAPL"], horizon="fiscal quarter")
-
-    # List all tickers with computed stats
-    tickers = db.list_tickers()
+    ts_df    = db.query_pe_timeseries(["AAPL"], start_date=date(2020, 1, 1))
+    est_df   = db.query_estimates(["AAPL"], horizon="fiscal quarter")
+    tickers  = db.list_tickers()
 
     db.close()
 
 Typical columns returned:
-    query_pe_stats:      ticker, current_pe, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
-                         pe_rolling_5yr_median, forward_pe, forward_12m_eps,
-                         current_ttm_eps, months_available, updated_at
-    query_pe_timeseries: ticker, month_end_date, price, ttm_eps, pe_ratio,
-                         pe_rolling_5yr_median, ttm_source, shares, updated_at
-    query_estimates:     ticker, fiscal_date, horizon, eps_avg/high/low/count,
-                         rev_avg/high/low/count, fetched_at
+    query_pe_stats:
+        ticker, current_pe, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
+        pe_rolling_5yr_median, forward_pe, forward_12m_eps,
+        current_ttm_eps, months_available, updated_at,
+        current_pfcf, pfcf_lt_median, pfcf_p25, pfcf_p75, pfcf_rolling_5yr_median,
+        current_fcf_yield, forward_pfcf, fcf_margin_5yr_median,
+        fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
+        current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
+        evebitda_rolling_5yr_median
+    query_pe_timeseries:
+        ticker, month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median,
+        ttm_source, shares, ttm_dividend, dividend_yield, ttm_revenue,
+        ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
+        ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, updated_at
+    query_estimates:
+        ticker, fiscal_date, horizon, eps_avg/high/low/count,
+        rev_avg/high/low/count, fetched_at
 """
 
 import logging
@@ -66,18 +69,25 @@ class HistoricFundamentalsDB:
     def _create_schema(self) -> None:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS monthly_pe (
-                ticker                VARCHAR  NOT NULL,
-                month_end_date        DATE     NOT NULL,
-                price                 DOUBLE,
-                ttm_eps               DOUBLE,
-                pe_ratio              DOUBLE,
-                pe_rolling_5yr_median DOUBLE,
-                ttm_source            VARCHAR,
-                shares                DOUBLE,
-                ttm_dividend          DOUBLE,
-                dividend_yield        DOUBLE,
-                ttm_revenue           DOUBLE,
-                updated_at            TIMESTAMP,
+                ticker                     VARCHAR  NOT NULL,
+                month_end_date             DATE     NOT NULL,
+                price                      DOUBLE,
+                ttm_eps                    DOUBLE,
+                pe_ratio                   DOUBLE,
+                pe_rolling_5yr_median      DOUBLE,
+                ttm_source                 VARCHAR,
+                shares                     DOUBLE,
+                ttm_dividend               DOUBLE,
+                dividend_yield             DOUBLE,
+                ttm_revenue                DOUBLE,
+                ttm_fcf                    DOUBLE,
+                pfcf_ratio                 DOUBLE,
+                pfcf_rolling_5yr_median    DOUBLE,
+                fcf_yield                  DOUBLE,
+                ttm_ebitda                 DOUBLE,
+                ev_ebitda                  DOUBLE,
+                ev_ebitda_rolling_5yr_median DOUBLE,
+                updated_at                 TIMESTAMP,
                 PRIMARY KEY (ticker, month_end_date)
             )
         """)
@@ -85,34 +95,57 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_dividend DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_revenue DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_fcf DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS pfcf_ratio DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS pfcf_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_yield DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_ebitda DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ev_ebitda DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ev_ebitda_rolling_5yr_median DOUBLE")
         self._rename_column_if_exists("monthly_pe", "rolling_5yr_median", "pe_rolling_5yr_median")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
-                ticker                VARCHAR  PRIMARY KEY,
-                updated_at            TIMESTAMP,
-                pe_lt_median          DOUBLE,
-                pe_p10                DOUBLE,
-                pe_p25                DOUBLE,
-                pe_p75                DOUBLE,
-                pe_p90                DOUBLE,
-                months_available      INTEGER,
-                pe_rolling_5yr_median DOUBLE,
-                current_pe            DOUBLE,
-                current_ttm_eps       DOUBLE,
-                forward_pe            DOUBLE,
-                forward_12m_eps       DOUBLE,
-                ttm_dividend          DOUBLE,
-                dividend_yield        DOUBLE,
-                rev_growth_1yr        DOUBLE,
-                rev_cagr_3yr          DOUBLE,
-                rev_cagr_5yr          DOUBLE,
-                rev_ntm_growth_est    DOUBLE,
-                market_cap_b          DOUBLE,
-                earn_growth_1yr       DOUBLE,
-                earn_cagr_3yr         DOUBLE,
-                earn_cagr_5yr         DOUBLE,
-                earn_ntm_growth_est   DOUBLE
+                ticker                     VARCHAR  PRIMARY KEY,
+                updated_at                 TIMESTAMP,
+                pe_lt_median               DOUBLE,
+                pe_p10                     DOUBLE,
+                pe_p25                     DOUBLE,
+                pe_p75                     DOUBLE,
+                pe_p90                     DOUBLE,
+                months_available           INTEGER,
+                pe_rolling_5yr_median      DOUBLE,
+                current_pe                 DOUBLE,
+                current_ttm_eps            DOUBLE,
+                forward_pe                 DOUBLE,
+                forward_12m_eps            DOUBLE,
+                ttm_dividend               DOUBLE,
+                dividend_yield             DOUBLE,
+                rev_growth_1yr             DOUBLE,
+                rev_cagr_3yr               DOUBLE,
+                rev_cagr_5yr               DOUBLE,
+                rev_ntm_growth_est         DOUBLE,
+                market_cap_b               DOUBLE,
+                earn_growth_1yr            DOUBLE,
+                earn_cagr_3yr              DOUBLE,
+                earn_cagr_5yr              DOUBLE,
+                earn_ntm_growth_est        DOUBLE,
+                current_pfcf               DOUBLE,
+                pfcf_lt_median             DOUBLE,
+                pfcf_p25                   DOUBLE,
+                pfcf_p75                   DOUBLE,
+                pfcf_rolling_5yr_median    DOUBLE,
+                current_fcf_yield          DOUBLE,
+                forward_pfcf               DOUBLE,
+                fcf_margin_5yr_median      DOUBLE,
+                fcf_growth_1yr             DOUBLE,
+                fcf_cagr_3yr               DOUBLE,
+                fcf_cagr_5yr               DOUBLE,
+                current_evebitda           DOUBLE,
+                evebitda_lt_median         DOUBLE,
+                evebitda_p25               DOUBLE,
+                evebitda_p75               DOUBLE,
+                evebitda_rolling_5yr_median DOUBLE
             )
         """)
         # Migration: add/rename columns introduced after initial schema
@@ -127,6 +160,22 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earn_cagr_3yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earn_cagr_5yr DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earn_ntm_growth_est DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_pfcf DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pfcf_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pfcf_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pfcf_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pfcf_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_fcf_yield DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_pfcf DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_margin_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_growth_1yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_cagr_3yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_cagr_5yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_evebitda DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_rolling_5yr_median DOUBLE")
         self._rename_column_if_exists("pe_stats", "lt_median",          "pe_lt_median")
         self._rename_column_if_exists("pe_stats", "p10",                "pe_p10")
         self._rename_column_if_exists("pe_stats", "p25",                "pe_p25")
@@ -169,23 +218,33 @@ class HistoricFundamentalsDB:
         data = df.copy()
         data.insert(0, "ticker", ticker)
         data["updated_at"] = now
-        for col in ("price", "ttm_eps", "pe_ratio", "pe_rolling_5yr_median", "ttm_source",
-                    "shares", "ttm_dividend", "dividend_yield", "ttm_revenue"):
+        cols = [
+            "ticker", "month_end_date", "price", "ttm_eps", "pe_ratio",
+            "pe_rolling_5yr_median", "ttm_source", "shares", "ttm_dividend",
+            "dividend_yield", "ttm_revenue",
+            "ttm_fcf", "pfcf_ratio", "pfcf_rolling_5yr_median", "fcf_yield",
+            "ttm_ebitda", "ev_ebitda", "ev_ebitda_rolling_5yr_median",
+            "updated_at",
+        ]
+        for col in cols:
             if col not in data.columns:
                 data[col] = None
-        cols = ["ticker", "month_end_date", "price", "ttm_eps", "pe_ratio",
-                "pe_rolling_5yr_median", "ttm_source", "shares", "ttm_dividend",
-                "dividend_yield", "ttm_revenue", "updated_at"]
         self.conn.register("_tmp_pe", data[cols])
         try:
             self.conn.execute("""
                 INSERT OR REPLACE INTO monthly_pe
                 (ticker, month_end_date, price, ttm_eps, pe_ratio,
                  pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
-                 dividend_yield, ttm_revenue, updated_at)
+                 dividend_yield, ttm_revenue,
+                 ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
+                 ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+                 updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
-                       dividend_yield, ttm_revenue, updated_at
+                       dividend_yield, ttm_revenue,
+                       ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
+                       ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+                       updated_at
                 FROM _tmp_pe
             """)
         finally:
@@ -193,8 +252,8 @@ class HistoricFundamentalsDB:
         return len(data)
 
     def upsert_pe_stats(self, stats: dict) -> None:
-        # ON CONFLICT preserves estimate-derived fields when the incoming value is NULL
-        # so that --skip-estimates runs don't wipe analyst data.
+        # ON CONFLICT preserves estimate-derived and externally-set fields when
+        # the incoming value is NULL (--skip-estimates runs don't wipe analyst data).
         self.conn.execute("""
             INSERT INTO pe_stats
             (ticker, updated_at, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
@@ -202,32 +261,55 @@ class HistoricFundamentalsDB:
              forward_pe, forward_12m_eps, ttm_dividend, dividend_yield,
              rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est,
              market_cap_b,
-             earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est,
+             current_pfcf, pfcf_lt_median, pfcf_p25, pfcf_p75,
+             pfcf_rolling_5yr_median, current_fcf_yield,
+             forward_pfcf, fcf_margin_5yr_median,
+             fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
+             current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
+             evebitda_rolling_5yr_median)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
-                updated_at            = excluded.updated_at,
-                pe_lt_median          = excluded.pe_lt_median,
-                pe_p10                = excluded.pe_p10,
-                pe_p25                = excluded.pe_p25,
-                pe_p75                = excluded.pe_p75,
-                pe_p90                = excluded.pe_p90,
-                months_available      = excluded.months_available,
-                pe_rolling_5yr_median = excluded.pe_rolling_5yr_median,
-                current_pe            = excluded.current_pe,
-                current_ttm_eps       = excluded.current_ttm_eps,
-                forward_pe            = COALESCE(excluded.forward_pe,     pe_stats.forward_pe),
-                forward_12m_eps       = COALESCE(excluded.forward_12m_eps, pe_stats.forward_12m_eps),
-                ttm_dividend          = excluded.ttm_dividend,
-                dividend_yield        = excluded.dividend_yield,
-                rev_growth_1yr        = excluded.rev_growth_1yr,
-                rev_cagr_3yr          = excluded.rev_cagr_3yr,
-                rev_cagr_5yr          = excluded.rev_cagr_5yr,
-                rev_ntm_growth_est    = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est),
-                market_cap_b          = COALESCE(excluded.market_cap_b, pe_stats.market_cap_b),
-                earn_growth_1yr       = excluded.earn_growth_1yr,
-                earn_cagr_3yr         = excluded.earn_cagr_3yr,
-                earn_cagr_5yr         = excluded.earn_cagr_5yr,
-                earn_ntm_growth_est   = COALESCE(excluded.earn_ntm_growth_est, pe_stats.earn_ntm_growth_est)
+                updated_at                 = excluded.updated_at,
+                pe_lt_median               = excluded.pe_lt_median,
+                pe_p10                     = excluded.pe_p10,
+                pe_p25                     = excluded.pe_p25,
+                pe_p75                     = excluded.pe_p75,
+                pe_p90                     = excluded.pe_p90,
+                months_available           = excluded.months_available,
+                pe_rolling_5yr_median      = excluded.pe_rolling_5yr_median,
+                current_pe                 = excluded.current_pe,
+                current_ttm_eps            = excluded.current_ttm_eps,
+                forward_pe                 = COALESCE(excluded.forward_pe, pe_stats.forward_pe),
+                forward_12m_eps            = COALESCE(excluded.forward_12m_eps, pe_stats.forward_12m_eps),
+                ttm_dividend               = excluded.ttm_dividend,
+                dividend_yield             = excluded.dividend_yield,
+                rev_growth_1yr             = excluded.rev_growth_1yr,
+                rev_cagr_3yr               = excluded.rev_cagr_3yr,
+                rev_cagr_5yr               = excluded.rev_cagr_5yr,
+                rev_ntm_growth_est         = COALESCE(excluded.rev_ntm_growth_est, pe_stats.rev_ntm_growth_est),
+                market_cap_b               = COALESCE(excluded.market_cap_b, pe_stats.market_cap_b),
+                earn_growth_1yr            = excluded.earn_growth_1yr,
+                earn_cagr_3yr              = excluded.earn_cagr_3yr,
+                earn_cagr_5yr              = excluded.earn_cagr_5yr,
+                earn_ntm_growth_est        = COALESCE(excluded.earn_ntm_growth_est, pe_stats.earn_ntm_growth_est),
+                current_pfcf               = excluded.current_pfcf,
+                pfcf_lt_median             = excluded.pfcf_lt_median,
+                pfcf_p25                   = excluded.pfcf_p25,
+                pfcf_p75                   = excluded.pfcf_p75,
+                pfcf_rolling_5yr_median    = excluded.pfcf_rolling_5yr_median,
+                current_fcf_yield          = excluded.current_fcf_yield,
+                forward_pfcf               = COALESCE(excluded.forward_pfcf, pe_stats.forward_pfcf),
+                fcf_margin_5yr_median      = excluded.fcf_margin_5yr_median,
+                fcf_growth_1yr             = excluded.fcf_growth_1yr,
+                fcf_cagr_3yr               = excluded.fcf_cagr_3yr,
+                fcf_cagr_5yr               = excluded.fcf_cagr_5yr,
+                current_evebitda           = excluded.current_evebitda,
+                evebitda_lt_median         = excluded.evebitda_lt_median,
+                evebitda_p25               = excluded.evebitda_p25,
+                evebitda_p75               = excluded.evebitda_p75,
+                evebitda_rolling_5yr_median = excluded.evebitda_rolling_5yr_median
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -253,6 +335,22 @@ class HistoricFundamentalsDB:
             stats.get("earn_cagr_3yr"),
             stats.get("earn_cagr_5yr"),
             stats.get("earn_ntm_growth_est"),
+            stats.get("current_pfcf"),
+            stats.get("pfcf_lt_median"),
+            stats.get("pfcf_p25"),
+            stats.get("pfcf_p75"),
+            stats.get("pfcf_rolling_5yr_median"),
+            stats.get("current_fcf_yield"),
+            stats.get("forward_pfcf"),
+            stats.get("fcf_margin_5yr_median"),
+            stats.get("fcf_growth_1yr"),
+            stats.get("fcf_cagr_3yr"),
+            stats.get("fcf_cagr_5yr"),
+            stats.get("current_evebitda"),
+            stats.get("evebitda_lt_median"),
+            stats.get("evebitda_p25"),
+            stats.get("evebitda_p75"),
+            stats.get("evebitda_rolling_5yr_median"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -293,6 +391,12 @@ class HistoricFundamentalsDB:
             UPDATE pe_stats SET earn_ntm_growth_est = ?, updated_at = ?
             WHERE ticker = ?
         """, [earn_ntm_growth_est, datetime.now(UTC), ticker])
+
+    def update_forward_pfcf(self, ticker: str, forward_pfcf: float | None) -> None:
+        self.conn.execute("""
+            UPDATE pe_stats SET forward_pfcf = ?, updated_at = ?
+            WHERE ticker = ?
+        """, [forward_pfcf, datetime.now(UTC), ticker])
 
     def update_market_cap(self, ticker: str, market_cap_b: float | None) -> None:
         self.conn.execute("""

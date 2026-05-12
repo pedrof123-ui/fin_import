@@ -301,6 +301,11 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 | Data | Source | Notes |
 |------|--------|-------|
 | Net income (TTM) | `av_financials.duckdb / income_statements` | Sum of last 4 quarterly; annual fallback |
+| EBITDA (TTM) | `av_financials.duckdb / income_statements.ebitda` | Sum of last 4 quarterly; annual fallback |
+| Revenue (TTM) | `av_financials.duckdb / income_statements.total_revenue` | Sum of last 4 quarterly; annual fallback |
+| FCF (TTM) | `av_financials.duckdb / cash_flow_statements` | operating_cashflow − capital_expenditures; sum of last 4 quarterly; annual fallback |
+| EV debt | `av_financials.duckdb / balance_sheets` | long_term_debt_noncurrent + short_term_debt + current_long_term_debt; most recent quarter ≤ month_end |
+| EV cash | `av_financials.duckdb / balance_sheets.cash_and_short_term_investments` | Most recent quarter ≤ month_end |
 | Shares (primary) | `av_financials.duckdb / shares_outstanding.shares_outstanding_diluted` | Most recent entry ≤ month_end |
 | Shares (fallback) | `av_financials.duckdb / balance_sheets.common_stock_shares_outstanding` | Used when shares_outstanding table has no data |
 | Month-end price | `prices.duckdb / stock_prices.adj_close` | Last trading day of each calendar month |
@@ -311,8 +316,8 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 
 | Table | Key | Computed columns |
 |-------|-----|-----------------|
-| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue |
-| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/pe_p25/pe_p75/pe_p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est |
+| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median |
+| `pe_stats` | ticker | market_cap_b, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median |
 | `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
 
 ### Call graph
@@ -320,22 +325,39 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 ```
 hf_import.py / hf_update.py
   ├── for each ticker:
-  │   ├── PE + revenue phase (no AV calls — reads local DBs)
-  │   │   ├── _load_av_data(av_conn, ticker)            → quarterly + annual net_income, total_revenue, shares
-  │   │   ├── _load_shares_ts(av_conn, ticker)          → shares_outstanding timeseries (primary shares source)
+  │   ├── computation phase (no AV calls — reads local DBs)
+  │   │   ├── _load_av_data(av_conn, ticker)
+  │   │   │     → quarterly + annual: net_income, total_revenue, ebitda, shares,
+  │   │   │       long_term_debt_noncurrent, short_term_debt, current_long_term_debt, cash
+  │   │   ├── _load_cashflow_data(av_conn, ticker)
+  │   │   │     → quarterly + annual: operating_cashflow, capital_expenditures
+  │   │   ├── _load_shares_ts(av_conn, ticker)          → shares_outstanding timeseries
   │   │   ├── _load_dividends(av_conn, ticker)          → dividend event history
   │   │   ├── _load_monthly_prices(prices_conn, ticker) → month_end_date, adj_close
-  │   │   ├── build_monthly_pe(quarterly, annual, prices, shares_ts, dividends)
+  │   │   ├── build_monthly_pe(quarterly, annual, prices, shares_ts, dividends, cashflow_q, cashflow_a)
   │   │   │   ├── shares: shares_outstanding_diluted (fallback: balance sheet)
   │   │   │   ├── TTM EPS: sum last 4 quarterly net_income / shares (or annual fallback)
   │   │   │   ├── pe_ratio = price / ttm_eps (NULL when ttm_eps ≤ 0)
   │   │   │   ├── pe_rolling_5yr_median: rolling(60, min_periods=60).median()
-  │   │   │   ├── ttm_dividend: sum of dividends with ex_date in trailing 365 days
+  │   │   │   ├── ttm_dividend: sum dividends with ex_date in trailing 365 days
   │   │   │   ├── dividend_yield: ttm_dividend / price
-  │   │   │   └── ttm_revenue: sum last 4 quarterly total_revenue (or annual fallback)
-  │   │   ├── compute_pe_stats(ticker, monthly_pe)      → snapshot of last row + PE percentiles
-  │   │   ├── compute_revenue_stats(annual)             → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
-  │   │   ├── compute_earnings_stats(annual)            → earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
+  │   │   │   ├── ttm_revenue: sum last 4 quarterly total_revenue (or annual fallback)
+  │   │   │   ├── ttm_fcf: sum last 4 quarterly (operating_cashflow − capital_expenditures)
+  │   │   │   │     (AV reports capex as positive; annual fallback)
+  │   │   │   ├── pfcf_ratio = price / (ttm_fcf / shares) (NULL when TTM FCF ≤ 0)
+  │   │   │   ├── fcf_yield = (ttm_fcf / shares) / price (NULL when TTM FCF ≤ 0)
+  │   │   │   ├── pfcf_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── ttm_ebitda: sum last 4 quarterly ebitda (or annual fallback)
+  │   │   │   ├── ev = price × shares + total_debt − cash (most recent balance sheet ≤ month_end)
+  │   │   │   ├── ev_ebitda = ev / ttm_ebitda (NULL when EBITDA ≤ 0 or EV ≤ 0)
+  │   │   │   └── ev_ebitda_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   ├── compute_pe_stats(ticker, monthly_pe)
+  │   │   │     → PE percentiles + current snapshot + FCF/EV/EBITDA lt_median/p25/p75
+  │   │   ├── compute_revenue_stats(annual)   → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
+  │   │   ├── compute_earnings_stats(annual)  → earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
+  │   │   ├── compute_fcf_stats(cashflow_a, annual)
+  │   │   │     → fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median
+  │   │   │       (only positive FCF years used; FCF margin = FCF / revenue, last 5 annual)
   │   │   └── hf_db.upsert_monthly_pe() + hf_db.upsert_pe_stats()
   │   ├── estimates phase (1 AV call per ticker, skipped with --skip-estimates)
   │   │   ├── fetch_estimates(ticker, api_key, limiter)  → AV EARNINGS_ESTIMATES response
@@ -343,15 +365,18 @@ hf_import.py / hf_update.py
   │   │   └── hf_db.upsert_estimates(ticker, rows)
   │   └── snapshot update phase (no AV calls — reads local DBs)
   │       ├── _update_forward_pe()         → forward_pe, forward_12m_eps from stored estimates
-  │       ├── _update_rev_ntm_growth_est() → NTM rev estimate / TTM actual revenue - 1
-  │       ├── _update_earn_ntm_growth_est() → forward_12m_eps / current_ttm_eps - 1
+  │       ├── _update_rev_ntm_growth_est() → NTM rev estimate / TTM actual revenue − 1
+  │       ├── _update_earn_ntm_growth_est() → forward_12m_eps / current_ttm_eps − 1
+  │       ├── _update_forward_pfcf()       → price / (NTM_revenue × fcf_margin_5yr_median / shares)
+  │       │     (NULL when no NTM revenue estimate or fcf_margin_5yr_median is unavailable)
   │       └── _update_market_cap()         → latest price × diluted shares / 1e9 (billions)
   └── hf_db.close()
 ```
 
-Note: `upsert_pe_stats` uses `COALESCE` for estimate-derived fields (`forward_pe`, `forward_12m_eps`,
-`rev_ntm_growth_est`, `earn_ntm_growth_est`, `market_cap_b`) so `--skip-estimates` runs preserve
-existing analyst data. The snapshot update phase always runs regardless of `--skip-estimates`.
+Note: `upsert_pe_stats` uses `COALESCE` for estimate-derived and externally-set fields
+(`forward_pe`, `forward_12m_eps`, `forward_pfcf`, `rev_ntm_growth_est`, `earn_ntm_growth_est`,
+`market_cap_b`) so `--skip-estimates` runs preserve existing analyst data. The snapshot update
+phase always runs regardless of `--skip-estimates`.
 
 ### Rate limit
 
@@ -365,12 +390,17 @@ import sys
 sys.path.insert(0, "..")   # path to project root from notebooks/
 from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates
 
-get_pe_stats("AAPL")                                    # snapshot: PE, market cap, dividends, revenue growth, earnings growth
-get_pe_stats(["AAPL", "MSFT", "GOOGL"])                # multiple tickers
-get_pe_stats()                                          # all tickers
+import pandas as pd
+pd.set_option('display.max_columns', None)   # 39 columns — prevent truncation
 
-get_pe_history("AAPL", start="2020-01-01")             # monthly PE, dividend yield, TTM revenue
-get_estimates("AAPL", horizon="fiscal quarter")        # analyst EPS + revenue estimates
+get_pe_stats("AAPL")                          # snapshot: PE, P/FCF, EV/EBITDA, FCF yield,
+                                              #   market cap, dividends, revenue/earnings/FCF growth
+get_pe_stats(["AAPL", "MSFT", "GOOGL"])      # multiple tickers
+get_pe_stats()                                # all tickers
+
+get_pe_history("AAPL", start="2020-01-01")   # monthly: PE, P/FCF, EV/EBITDA, FCF yield,
+                                              #   dividend yield, TTM revenue/FCF/EBITDA
+get_estimates("AAPL", horizon="fiscal quarter")  # analyst EPS + revenue estimates
 ```
 
 ---

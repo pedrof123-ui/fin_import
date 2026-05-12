@@ -1,9 +1,9 @@
 """
-PE calculation engine for historic fundamentals.
+PE, P/FCF, and EV/EBITDA calculation engine for historic fundamentals.
 
-Computes monthly PE timeseries and statistics for a ticker using data
-already present in av_financials.duckdb and prices.duckdb.
-No Alpha Vantage API calls are made.
+Computes monthly timeseries and statistics for a ticker using data already
+present in av_financials.duckdb and prices.duckdb. No Alpha Vantage API calls
+are made.
 
 Usage:
     import duckdb
@@ -12,34 +12,52 @@ Usage:
     av_conn     = duckdb.connect("data/av_financials.duckdb", read_only=True)
     prices_conn = duckdb.connect("/path/to/prices.duckdb", read_only=True)
 
-    # Returns (monthly_pe DataFrame, stats dict)
     monthly_pe, stats = process_ticker("AAPL", av_conn, prices_conn)
-
-    # monthly_pe columns:
-    #   month_end_date, price, ttm_eps, pe_ratio,
-    #   pe_rolling_5yr_median, ttm_source, shares, ttm_dividend, dividend_yield
-    # stats keys:
-    #   ticker, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available,
-    #   pe_rolling_5yr_median, current_pe, current_ttm_eps,
-    #   ttm_dividend, dividend_yield
 
     av_conn.close()
     prices_conn.close()
 
+monthly_pe columns:
+    month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median,
+    ttm_source, shares, ttm_dividend, dividend_yield, ttm_revenue,
+    ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
+    ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median
+
+stats keys (PE):
+    ticker, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available,
+    pe_rolling_5yr_median, current_pe, current_ttm_eps,
+    forward_pe, forward_12m_eps, ttm_dividend, dividend_yield
+
+stats keys (FCF):
+    current_pfcf, pfcf_lt_median, pfcf_p25, pfcf_p75, pfcf_rolling_5yr_median,
+    current_fcf_yield, fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
+    fcf_margin_5yr_median
+
+stats keys (EV/EBITDA):
+    current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
+    evebitda_rolling_5yr_median
+
 TTM EPS method:
-    Shares source (primary): shares_outstanding.shares_outstanding_diluted (most recent <= month_end)
+    Shares source (primary): shares_outstanding.shares_outstanding_diluted
     Shares source (fallback): balance_sheets.common_stock_shares_outstanding
     Quarterly available (>= 4 periods): sum last 4 quarters net_income / shares
     Quarterly not available: most recent annual net_income / shares (proxy)
-    pe_ratio is NULL for months where ttm_eps <= 0 (loss-making periods)
+    pe_ratio is NULL for months where ttm_eps <= 0
 
-Dividend yield:
-    ttm_dividend: sum of dividends.amount where ex_dividend_date in trailing 12 months
-    dividend_yield: ttm_dividend / price (NULL when no dividend data)
+TTM FCF:
+    FCF = operating_cashflow - capital_expenditures (AV reports capex as positive)
+    Requires >= 4 quarterly cash flow periods; fallback to most recent annual.
+    pfcf_ratio and fcf_yield are NULL when TTM FCF <= 0.
 
-Rolling 5yr median:
-    Stored per month in monthly_pe. Requires 60 consecutive monthly rows (min_periods=60).
-    NULL for the first 59 months of a ticker's history.
+EV/EBITDA:
+    TTM EBITDA: sum of last 4 quarterly ebitda; fallback to most recent annual.
+    EV = price * shares + total_debt - cash
+    total_debt = long_term_debt_noncurrent + short_term_debt + current_long_term_debt
+    cash = cash_and_short_term_investments
+    ev_ebitda is NULL when TTM EBITDA <= 0 or balance sheet data is unavailable.
+
+Rolling 5yr medians:
+    Require 60 consecutive monthly rows (min_periods=60). NULL for first 59 months.
 """
 
 import logging
@@ -54,46 +72,56 @@ log = logging.getLogger(__name__)
 def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns (quarterly_df, annual_df).
-    Each has columns: fiscal_date_ending (date), net_income (float), total_revenue (float), shares (float).
-    shares is from balance_sheets and used only as fallback when shares_outstanding is unavailable.
+    Columns: fiscal_date_ending, net_income, total_revenue, ebitda, shares,
+             long_term_debt_noncurrent, short_term_debt, current_long_term_debt, cash
+    shares is from balance_sheets (fallback when shares_outstanding is unavailable).
     """
-    quarterly = av_conn.execute("""
+    sql = """
         SELECT
             i.fiscal_date_ending,
             i.net_income,
             i.total_revenue,
-            b.common_stock_shares_outstanding AS shares
+            i.ebitda,
+            b.common_stock_shares_outstanding AS shares,
+            b.long_term_debt_noncurrent,
+            b.short_term_debt,
+            b.current_long_term_debt,
+            b.cash_and_short_term_investments AS cash
         FROM income_statements i
         LEFT JOIN balance_sheets b
             ON  i.ticker      = b.ticker
             AND i.fiscal_date_ending = b.fiscal_date_ending
             AND i.period_type = b.period_type
-        WHERE i.ticker = ? AND i.period_type = 'quarterly'
+        WHERE i.ticker = ? AND i.period_type = ?
         ORDER BY i.fiscal_date_ending
-    """, [ticker]).df()
+    """
+    quarterly = av_conn.execute(sql, [ticker, "quarterly"]).df()
+    annual    = av_conn.execute(sql, [ticker, "annual"]).df()
+    return quarterly, annual
 
-    annual = av_conn.execute("""
-        SELECT
-            i.fiscal_date_ending,
-            i.net_income,
-            i.total_revenue,
-            b.common_stock_shares_outstanding AS shares
-        FROM income_statements i
-        LEFT JOIN balance_sheets b
-            ON  i.ticker      = b.ticker
-            AND i.fiscal_date_ending = b.fiscal_date_ending
-            AND i.period_type = b.period_type
-        WHERE i.ticker = ? AND i.period_type = 'annual'
-        ORDER BY i.fiscal_date_ending
-    """, [ticker]).df()
 
+def _load_cashflow_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Returns (cashflow_quarterly_df, cashflow_annual_df).
+    Columns: fiscal_date_ending, operating_cashflow, capital_expenditures
+    AV reports capital_expenditures as a positive number.
+    FCF = operating_cashflow - capital_expenditures
+    """
+    sql = """
+        SELECT fiscal_date_ending, operating_cashflow, capital_expenditures
+        FROM cash_flow_statements
+        WHERE ticker = ? AND period_type = ?
+        ORDER BY fiscal_date_ending
+    """
+    quarterly = av_conn.execute(sql, [ticker, "quarterly"]).df()
+    annual    = av_conn.execute(sql, [ticker, "annual"]).df()
     return quarterly, annual
 
 
 def _load_shares_ts(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> pd.DataFrame:
     """
-    Returns DataFrame with columns: date (date), shares_outstanding_diluted (float).
-    Empty if the shares_outstanding table has no data for this ticker.
+    Returns DataFrame with columns: date, shares_outstanding_diluted.
+    Empty if no data for this ticker.
     """
     try:
         return av_conn.execute("""
@@ -108,8 +136,8 @@ def _load_shares_ts(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> pd.DataF
 
 def _load_dividends(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> pd.DataFrame:
     """
-    Returns DataFrame with columns: ex_dividend_date (date), amount (float).
-    Empty if no dividend data exists for this ticker.
+    Returns DataFrame with columns: ex_dividend_date, amount.
+    Empty if no dividend data for this ticker.
     """
     try:
         return av_conn.execute("""
@@ -124,9 +152,7 @@ def _load_dividends(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> pd.DataF
 
 def _load_monthly_prices(prices_conn: duckdb.DuckDBPyConnection, ticker: str) -> pd.DataFrame:
     """
-    Returns DataFrame with: month_end_date (date), price (float).
-    month_end_date is the last calendar day of each month.
-    price is the adj_close on the last trading day of that month.
+    Returns DataFrame with: month_end_date, price (adj_close on last trading day of month).
     """
     return prices_conn.execute("""
         SELECT
@@ -148,7 +174,7 @@ def _get_shares(
     """
     Return diluted shares as of month_end.
     Primary: dedicated shares_outstanding timeseries.
-    Fallback: most recent balance-sheet shares from quarterly, then annual filing.
+    Fallback: most recent balance-sheet shares from quarterly, then annual.
     """
     if not shares_ts.empty:
         avail = shares_ts[shares_ts["date"] <= month_end]
@@ -173,42 +199,145 @@ def _get_shares(
     return None
 
 
+def _get_ttm_fcf(
+    month_end,
+    cashflow_q: pd.DataFrame,
+    cashflow_a: pd.DataFrame,
+) -> float | None:
+    """
+    TTM FCF = operating_cashflow - capital_expenditures, summed over trailing 4 quarters.
+    Falls back to most recent annual if quarterly unavailable.
+    AV reports capital_expenditures as positive; NULL capex is treated as zero.
+    """
+    if not cashflow_q.empty:
+        avail = cashflow_q[cashflow_q["fiscal_date_ending"] <= month_end]
+        if len(avail) >= 4:
+            last4 = avail.tail(4)
+            ocf = last4["operating_cashflow"].dropna()
+            if len(ocf) == 4:
+                capex = last4["capital_expenditures"].fillna(0)
+                return float(ocf.sum()) - float(capex.sum())
+
+    if not cashflow_a.empty:
+        avail = cashflow_a[cashflow_a["fiscal_date_ending"] <= month_end]
+        if not avail.empty:
+            row = avail.iloc[-1]
+            ocf = row["operating_cashflow"]
+            if pd.notna(ocf):
+                capex = float(row["capital_expenditures"]) if pd.notna(row["capital_expenditures"]) else 0.0
+                return float(ocf) - capex
+
+    return None
+
+
+def _get_ttm_ebitda(
+    month_end,
+    quarterly: pd.DataFrame,
+    annual: pd.DataFrame,
+) -> float | None:
+    """
+    TTM EBITDA = sum of ebitda over trailing 4 quarters.
+    Falls back to most recent annual ebitda.
+    Returns None if not computable.
+    """
+    if not quarterly.empty:
+        avail = quarterly[quarterly["fiscal_date_ending"] <= month_end]
+        if len(avail) >= 4:
+            last4 = avail.tail(4)["ebitda"].dropna()
+            if len(last4) == 4:
+                return float(last4.sum())
+
+    if not annual.empty:
+        avail = annual[annual["fiscal_date_ending"] <= month_end]
+        if not avail.empty:
+            v = avail.iloc[-1]["ebitda"]
+            if pd.notna(v) and float(v) > 0:
+                return float(v)
+
+    return None
+
+
+def _get_ev_debt_cash(
+    month_end,
+    quarterly: pd.DataFrame,
+    annual: pd.DataFrame,
+) -> tuple[float | None, float | None]:
+    """
+    Return (total_debt, cash) from the most recent balance sheet as of month_end.
+    total_debt = long_term_debt_noncurrent + short_term_debt + current_long_term_debt
+    At least one debt component must be non-NULL to produce a debt figure.
+    """
+    for df in (quarterly, annual):
+        if df.empty:
+            continue
+        avail = df[df["fiscal_date_ending"] <= month_end]
+        if avail.empty:
+            continue
+        row = avail.iloc[-1]
+
+        ltdn = row.get("long_term_debt_noncurrent")
+        std  = row.get("short_term_debt")
+        cltd = row.get("current_long_term_debt")
+        cash = row.get("cash")
+
+        has_debt = pd.notna(ltdn) or pd.notna(std) or pd.notna(cltd)
+        if not has_debt:
+            continue
+
+        total_debt = (
+            (float(ltdn) if pd.notna(ltdn) else 0.0)
+            + (float(std)  if pd.notna(std)  else 0.0)
+            + (float(cltd) if pd.notna(cltd) else 0.0)
+        )
+        cash_val = float(cash) if pd.notna(cash) else None
+        return total_debt, cash_val
+
+    return None, None
+
+
 def build_monthly_pe(
     quarterly: pd.DataFrame,
     annual: pd.DataFrame,
     prices: pd.DataFrame,
     shares_ts: pd.DataFrame | None = None,
     dividends: pd.DataFrame | None = None,
+    cashflow_q: pd.DataFrame | None = None,
+    cashflow_a: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
-    Build monthly PE timeseries.
+    Build monthly PE, P/FCF, and EV/EBITDA timeseries.
 
     For each month with price data:
-    - Shares: prefer shares_outstanding_diluted endpoint; fall back to balance sheet
-    - If >= 4 quarterly periods available (fiscal_date_ending <= month_end): use TTM from quarters
-    - Else if any annual period available: use annual net_income / shares as TTM proxy
-    - pe_ratio is NULL when ttm_eps <= 0
-    - ttm_dividend: sum of dividends with ex_dividend_date in trailing 365 days
-    - dividend_yield: ttm_dividend / price
-    - ttm_revenue: sum of last 4 quarters total_revenue; fallback to most recent annual total_revenue
+    - TTM EPS: sum of last 4 quarterly net_income / shares; fallback to annual
+    - TTM FCF: sum of last 4 quarterly (operating_cashflow - capex); fallback to annual
+    - TTM EBITDA: sum of last 4 quarterly ebitda; fallback to annual
+    - EV = price * shares + total_debt - cash (balance sheet as of month_end)
+    - pe_ratio, pfcf_ratio, ev_ebitda are NULL when denominators are <= 0
+    - Rolling 5yr medians require 60 consecutive monthly rows (min_periods=60)
 
     Returns DataFrame with columns:
     month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median, ttm_source,
-    shares, ttm_dividend, dividend_yield, ttm_revenue
+    shares, ttm_dividend, dividend_yield, ttm_revenue,
+    ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
+    ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median
     """
     if prices.empty:
         return pd.DataFrame()
 
-    q = quarterly.copy()
-    a = annual.copy()
-    p = prices.copy()
+    q  = quarterly.copy()
+    a  = annual.copy()
+    p  = prices.copy()
     st = shares_ts.copy() if shares_ts is not None and not shares_ts.empty else pd.DataFrame()
     dv = dividends.copy() if dividends is not None and not dividends.empty else pd.DataFrame()
+    cfq = cashflow_q.copy() if cashflow_q is not None and not cashflow_q.empty else pd.DataFrame()
+    cfa = cashflow_a.copy() if cashflow_a is not None and not cashflow_a.empty else pd.DataFrame()
 
-    if not q.empty:
-        q["fiscal_date_ending"] = pd.to_datetime(q["fiscal_date_ending"]).dt.date
-    if not a.empty:
-        a["fiscal_date_ending"] = pd.to_datetime(a["fiscal_date_ending"]).dt.date
+    for df in (q, a):
+        if not df.empty:
+            df["fiscal_date_ending"] = pd.to_datetime(df["fiscal_date_ending"]).dt.date
+    for df in (cfq, cfa):
+        if not df.empty:
+            df["fiscal_date_ending"] = pd.to_datetime(df["fiscal_date_ending"]).dt.date
     if not st.empty:
         st["date"] = pd.to_datetime(st["date"]).dt.date
     if not dv.empty:
@@ -223,11 +352,12 @@ def build_monthly_pe(
         if price is None or pd.isna(price) or price <= 0:
             continue
 
-        ttm_eps = None
-        shares = None
-        source = None
-
+        # ── Shares ────────────────────────────────────────────────────────────
         sh = _get_shares(month_end, st, q, a)
+
+        # ── TTM EPS / PE ──────────────────────────────────────────────────────
+        ttm_eps = None
+        source = None
 
         if sh is not None and not q.empty:
             avail = q[q["fiscal_date_ending"] <= month_end]
@@ -236,7 +366,6 @@ def build_monthly_pe(
                 ni_vals = last4["net_income"].dropna()
                 if len(ni_vals) == 4:
                     ttm_eps = float(ni_vals.sum()) / sh
-                    shares = sh
                     source = "quarterly"
 
         if ttm_eps is None and sh is not None and not a.empty:
@@ -245,7 +374,6 @@ def build_monthly_pe(
                 ni = avail.iloc[-1]["net_income"]
                 if pd.notna(ni):
                     ttm_eps = float(ni) / sh
-                    shares = sh
                     source = "annual"
 
         if ttm_eps is None:
@@ -253,7 +381,7 @@ def build_monthly_pe(
 
         pe = float(price) / ttm_eps if ttm_eps > 0 else None
 
-        # Trailing 12-month dividend
+        # ── Dividends ─────────────────────────────────────────────────────────
         ttm_dividend = None
         dividend_yield = None
         if not dv.empty:
@@ -263,7 +391,7 @@ def build_monthly_pe(
                 ttm_dividend = float(window["amount"].sum())
                 dividend_yield = ttm_dividend / float(price)
 
-        # Trailing 12-month revenue
+        # ── TTM Revenue ───────────────────────────────────────────────────────
         ttm_revenue = None
         if not q.empty:
             avail_rev = q[q["fiscal_date_ending"] <= month_end]
@@ -278,23 +406,53 @@ def build_monthly_pe(
                 if pd.notna(rev) and float(rev) > 0:
                     ttm_revenue = float(rev)
 
+        # ── TTM FCF / P/FCF ───────────────────────────────────────────────────
+        ttm_fcf = _get_ttm_fcf(month_end, cfq, cfa)
+        pfcf_ratio = None
+        fcf_yield = None
+        if ttm_fcf is not None and sh is not None and sh > 0:
+            fcf_per_share = ttm_fcf / sh
+            if fcf_per_share > 0:
+                pfcf_ratio = float(price) / fcf_per_share
+                fcf_yield  = fcf_per_share / float(price)
+
+        # ── TTM EBITDA / EV/EBITDA ────────────────────────────────────────────
+        # sh is sourced from shares_outstanding_diluted (split-adjusted) so
+        # price * sh gives the correct split-adjusted market cap.
+        ttm_ebitda = _get_ttm_ebitda(month_end, q, a)
+        ev_ebitda = None
+        if ttm_ebitda is not None and ttm_ebitda > 0 and sh is not None:
+            total_debt, cash = _get_ev_debt_cash(month_end, q, a)
+            if total_debt is not None and cash is not None:
+                market_cap = float(price) * sh
+                ev = market_cap + total_debt - cash
+                if ev > 0:
+                    ev_ebitda = ev / ttm_ebitda
+
         rows.append({
             "month_end_date": month_end,
-            "price": float(price),
-            "ttm_eps": ttm_eps,
-            "pe_ratio": pe,
-            "ttm_source": source,
-            "shares": shares,
-            "ttm_dividend": ttm_dividend,
+            "price":          float(price),
+            "ttm_eps":        ttm_eps,
+            "pe_ratio":       pe,
+            "ttm_source":     source,
+            "shares":         sh,
+            "ttm_dividend":   ttm_dividend,
             "dividend_yield": dividend_yield,
-            "ttm_revenue": ttm_revenue,
+            "ttm_revenue":    ttm_revenue,
+            "ttm_fcf":        ttm_fcf,
+            "pfcf_ratio":     pfcf_ratio,
+            "fcf_yield":      fcf_yield,
+            "ttm_ebitda":     ttm_ebitda,
+            "ev_ebitda":      ev_ebitda,
         })
 
     if not rows:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values("month_end_date").reset_index(drop=True)
-    df["pe_rolling_5yr_median"] = df["pe_ratio"].rolling(60, min_periods=60).median()
+    df["pe_rolling_5yr_median"]       = df["pe_ratio"].rolling(60, min_periods=60).median()
+    df["pfcf_rolling_5yr_median"]     = df["pfcf_ratio"].rolling(60, min_periods=60).median()
+    df["ev_ebitda_rolling_5yr_median"] = df["ev_ebitda"].rolling(60, min_periods=60).median()
     return df
 
 
@@ -304,6 +462,9 @@ def compute_pe_stats(
     forward_pe: float | None = None,
     forward_12m_eps: float | None = None,
 ) -> dict | None:
+    """
+    Compute PE, P/FCF, and EV/EBITDA statistics from the monthly timeseries.
+    """
     if monthly_pe.empty:
         return None
 
@@ -316,23 +477,52 @@ def compute_pe_stats(
     def _f(v) -> float | None:
         return float(v) if pd.notna(v) else None
 
-    return {
-        "ticker": ticker,
-        "updated_at": datetime.now(UTC),
-        "pe_lt_median": _f(pe_series.median()),
-        "pe_p10": _f(pe_series.quantile(0.10)),
-        "pe_p25": _f(pe_series.quantile(0.25)),
-        "pe_p75": _f(pe_series.quantile(0.75)),
-        "pe_p90": _f(pe_series.quantile(0.90)),
-        "months_available": int(len(pe_series)),
-        "pe_rolling_5yr_median": _f(last.get("pe_rolling_5yr_median")),
-        "current_pe": _f(last.get("pe_ratio")),
-        "current_ttm_eps": _f(last.get("ttm_eps")),
-        "forward_pe": forward_pe,
-        "forward_12m_eps": forward_12m_eps,
-        "ttm_dividend": _f(last.get("ttm_dividend")),
-        "dividend_yield": _f(last.get("dividend_yield")),
+    def _stats(series: pd.Series, prefix: str) -> dict:
+        if series.empty:
+            return {}
+        return {
+            f"{prefix}_lt_median": _f(series.median()),
+            f"{prefix}_p25":       _f(series.quantile(0.25)),
+            f"{prefix}_p75":       _f(series.quantile(0.75)),
+        }
+
+    result = {
+        "ticker":                 ticker,
+        "updated_at":             datetime.now(UTC),
+        # PE
+        "pe_lt_median":           _f(pe_series.median()),
+        "pe_p10":                 _f(pe_series.quantile(0.10)),
+        "pe_p25":                 _f(pe_series.quantile(0.25)),
+        "pe_p75":                 _f(pe_series.quantile(0.75)),
+        "pe_p90":                 _f(pe_series.quantile(0.90)),
+        "months_available":       int(len(pe_series)),
+        "pe_rolling_5yr_median":  _f(last.get("pe_rolling_5yr_median")),
+        "current_pe":             _f(last.get("pe_ratio")),
+        "current_ttm_eps":        _f(last.get("ttm_eps")),
+        "forward_pe":             forward_pe,
+        "forward_12m_eps":        forward_12m_eps,
+        "ttm_dividend":           _f(last.get("ttm_dividend")),
+        "dividend_yield":         _f(last.get("dividend_yield")),
     }
+
+    # FCF
+    pfcf_series = monthly_pe["pfcf_ratio"].dropna() if "pfcf_ratio" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(pfcf_series, "pfcf"))
+    result.update({
+        "current_pfcf":            _f(last.get("pfcf_ratio")),
+        "pfcf_rolling_5yr_median": _f(last.get("pfcf_rolling_5yr_median")),
+        "current_fcf_yield":       _f(last.get("fcf_yield")),
+    })
+
+    # EV/EBITDA
+    ev_series = monthly_pe["ev_ebitda"].dropna() if "ev_ebitda" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(ev_series, "evebitda"))
+    result.update({
+        "current_evebitda":            _f(last.get("ev_ebitda")),
+        "evebitda_rolling_5yr_median": _f(last.get("ev_ebitda_rolling_5yr_median")),
+    })
+
+    return result
 
 
 def compute_revenue_stats(annual: pd.DataFrame) -> dict:
@@ -340,12 +530,8 @@ def compute_revenue_stats(annual: pd.DataFrame) -> dict:
     Compute revenue growth metrics from annual income statement data.
 
     Returns dict with any subset of:
-        rev_growth_1yr  — year-over-year revenue growth
-        rev_cagr_3yr    — 3-year revenue CAGR
-        rev_cagr_5yr    — 5-year revenue CAGR
-
-    All values are decimals (e.g. 0.12 = 12% growth). Returns {} when data is
-    insufficient or all revenue values are non-positive.
+        rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
+    All values are decimals (e.g. 0.12 = 12% growth).
     """
     if annual.empty:
         return {}
@@ -382,14 +568,8 @@ def compute_earnings_stats(annual: pd.DataFrame) -> dict:
     Compute EPS growth metrics from annual income statement data.
 
     Returns dict with any subset of:
-        earn_growth_1yr  — year-over-year EPS growth
-        earn_cagr_3yr    — 3-year EPS CAGR
-        earn_cagr_5yr    — 5-year EPS CAGR
-
-    EPS = net_income / shares (common_stock_shares_outstanding from balance sheet).
-    Only computed when both base and latest annual EPS are positive.
-    All values are decimals (e.g. 0.12 = 12% growth). Returns {} when data is
-    insufficient or EPS is non-positive.
+        earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
+    EPS = net_income / shares. Only computed when both EPS values are positive.
     """
     if annual.empty:
         return {}
@@ -423,14 +603,72 @@ def compute_earnings_stats(annual: pd.DataFrame) -> dict:
     return result
 
 
+def compute_fcf_stats(cashflow_annual: pd.DataFrame, income_annual: pd.DataFrame) -> dict:
+    """
+    Compute FCF growth metrics and 5-year median FCF margin from annual data.
+
+    FCF = operating_cashflow - capital_expenditures (AV reports capex as positive).
+    FCF margin = FCF / total_revenue.
+    Growth metrics use the same CAGR pattern as revenue and earnings.
+    Only positive FCF years are used for growth/margin calculations.
+
+    Returns dict with any subset of:
+        fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median
+    """
+    if cashflow_annual.empty:
+        return {}
+
+    cf = cashflow_annual.copy()
+    cf["fiscal_date_ending"] = pd.to_datetime(cf["fiscal_date_ending"]).dt.date
+    cf = cf.dropna(subset=["operating_cashflow"])
+    capex = cf["capital_expenditures"].fillna(0)
+    cf["fcf"] = cf["operating_cashflow"] - capex
+    cf = cf[cf["fcf"] > 0].sort_values("fiscal_date_ending").reset_index(drop=True)
+
+    if cf.empty:
+        return {}
+
+    latest_date: date = cf.iloc[-1]["fiscal_date_ending"]
+    latest_fcf = float(cf.iloc[-1]["fcf"])
+    result = {}
+
+    for key, n_years in [("fcf_growth_1yr", 1), ("fcf_cagr_3yr", 3), ("fcf_cagr_5yr", 5)]:
+        target = latest_date - timedelta(days=int(n_years * 365.25))
+        diffs = cf["fiscal_date_ending"].apply(lambda d: abs((d - target).days))
+        idx = int(diffs.idxmin())
+        diff_days = int(diffs[idx])
+        base_date: date = cf.loc[idx, "fiscal_date_ending"]
+        if diff_days <= 180 and base_date < latest_date:
+            base_fcf = float(cf.loc[idx, "fcf"])
+            actual_years = (latest_date - base_date).days / 365.25
+            if actual_years > 0 and base_fcf > 0:
+                result[key] = (latest_fcf / base_fcf) ** (1.0 / actual_years) - 1.0
+
+    # 5yr median FCF margin
+    if not income_annual.empty:
+        ia = income_annual.copy()
+        ia["fiscal_date_ending"] = pd.to_datetime(ia["fiscal_date_ending"]).dt.date
+        ia = ia.dropna(subset=["total_revenue"])
+        ia = ia[ia["total_revenue"] > 0]
+        merged = cf.merge(ia[["fiscal_date_ending", "total_revenue"]], on="fiscal_date_ending", how="inner")
+        merged = merged.sort_values("fiscal_date_ending")
+        last5 = merged.tail(5)
+        if not last5.empty:
+            margins = (last5["fcf"] / last5["total_revenue"]).dropna()
+            if not margins.empty:
+                result["fcf_margin_5yr_median"] = float(margins.median())
+
+    return result
+
+
 def process_ticker(
     ticker: str,
     av_conn: duckdb.DuckDBPyConnection,
     prices_conn: duckdb.DuckDBPyConnection,
 ) -> tuple[pd.DataFrame, dict | None]:
     """
-    Load data, build monthly PE series, compute stats.
-    Returns (monthly_pe_df, stats_dict). Both may be empty/None on failure.
+    Load data, build monthly timeseries, compute stats.
+    Returns (monthly_df, stats_dict). Both may be empty/None on failure.
     """
     quarterly, annual = _load_av_data(av_conn, ticker)
 
@@ -443,12 +681,16 @@ def process_ticker(
         log.warning("%s: no price data", ticker)
         return pd.DataFrame(), None
 
-    shares_ts = _load_shares_ts(av_conn, ticker)
-    dividends = _load_dividends(av_conn, ticker)
+    shares_ts  = _load_shares_ts(av_conn, ticker)
+    dividends  = _load_dividends(av_conn, ticker)
+    cashflow_q, cashflow_a = _load_cashflow_data(av_conn, ticker)
 
-    monthly_pe = build_monthly_pe(quarterly, annual, prices, shares_ts, dividends)
+    monthly_pe = build_monthly_pe(
+        quarterly, annual, prices, shares_ts, dividends, cashflow_q, cashflow_a
+    )
     stats = compute_pe_stats(ticker, monthly_pe)
     if stats:
         stats.update(compute_revenue_stats(annual))
         stats.update(compute_earnings_stats(annual))
+        stats.update(compute_fcf_stats(cashflow_a, annual))
     return monthly_pe, stats

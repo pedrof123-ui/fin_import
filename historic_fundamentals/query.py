@@ -52,17 +52,23 @@ def _tickers(t) -> list[str] | None:
 
 def get_pe_stats(tickers=None) -> pd.DataFrame:
     """
-    PE statistics snapshot: long-term median, percentiles, current and forward PE.
+    Statistics snapshot: PE, P/FCF, EV/EBITDA, growth metrics.
 
     Args:
         tickers: str, list[str], or None (returns all tickers)
 
     Returns DataFrame with columns:
-        ticker, market_cap_b, current_pe, pe_lt_median, pe_p25, pe_p75, pe_p10, pe_p90,
-        pe_rolling_5yr_median, forward_pe, forward_12m_eps,
-        current_ttm_eps, months_available, ttm_dividend, dividend_yield,
+        ticker, market_cap_b,
+        current_pe, pe_lt_median, pe_p25, pe_p75, pe_p10, pe_p90,
+        pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps,
+        months_available, ttm_dividend, dividend_yield,
         rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est,
-        earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est
+        earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est,
+        current_pfcf, pfcf_lt_median, pfcf_p25, pfcf_p75,
+        pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf,
+        fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median,
+        current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
+        evebitda_rolling_5yr_median
 
     Examples:
         get_pe_stats("AAPL")
@@ -76,13 +82,18 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         db.close()
 
     cols = [
-        "ticker", "market_cap_b", "current_pe", "pe_lt_median",
-        "pe_p25", "pe_p75", "pe_p10", "pe_p90",
+        "ticker", "market_cap_b",
+        "current_pe", "pe_lt_median", "pe_p25", "pe_p75", "pe_p10", "pe_p90",
         "pe_rolling_5yr_median", "forward_pe", "forward_12m_eps",
         "current_ttm_eps", "months_available",
         "ttm_dividend", "dividend_yield",
         "rev_growth_1yr", "rev_cagr_3yr", "rev_cagr_5yr", "rev_ntm_growth_est",
         "earn_growth_1yr", "earn_cagr_3yr", "earn_cagr_5yr", "earn_ntm_growth_est",
+        "current_pfcf", "pfcf_lt_median", "pfcf_p25", "pfcf_p75",
+        "pfcf_rolling_5yr_median", "current_fcf_yield", "forward_pfcf",
+        "fcf_growth_1yr", "fcf_cagr_3yr", "fcf_cagr_5yr", "fcf_margin_5yr_median",
+        "current_evebitda", "evebitda_lt_median", "evebitda_p25", "evebitda_p75",
+        "evebitda_rolling_5yr_median",
     ]
     return df[[c for c in cols if c in df.columns]]
 
@@ -119,6 +130,8 @@ def get_pe_history(tickers, start: str | None = None, end: str | None = None) ->
         "ticker", "month_end_date", "price", "ttm_eps",
         "pe_ratio", "pe_rolling_5yr_median", "ttm_source",
         "ttm_dividend", "dividend_yield", "ttm_revenue",
+        "ttm_fcf", "pfcf_ratio", "pfcf_rolling_5yr_median", "fcf_yield",
+        "ttm_ebitda", "ev_ebitda", "ev_ebitda_rolling_5yr_median",
     ]
     return df[[c for c in cols if c in df.columns]]
 

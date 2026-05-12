@@ -158,11 +158,11 @@ uv run scripts/av_query.py AAPL --start 2020-01-01 --end 2024-12-31
 uv run scripts/av_query.py AAPL --statement balance --out output.csv
 ```
 
-### Query historic fundamentals (PE, market cap, revenue growth, estimates)
+### Query historic fundamentals (PE, P/FCF, EV/EBITDA, market cap, growth, estimates)
 
 ```bash
-uv run scripts/hf_query.py AAPL                              # PE + market cap + revenue growth stats
-uv run scripts/hf_query.py AAPL --view timeseries           # monthly PE + TTM revenue history
+uv run scripts/hf_query.py AAPL                              # PE, P/FCF, EV/EBITDA, FCF yield, market cap, growth stats
+uv run scripts/hf_query.py AAPL --view timeseries           # monthly PE, P/FCF, EV/EBITDA, FCF yield, TTM revenue/FCF/EBITDA
 uv run scripts/hf_query.py AAPL --view estimates            # analyst estimates
 uv run scripts/hf_query.py --all --out output.csv           # export all tickers
 ```
@@ -232,11 +232,11 @@ extractors/
   balance_sheet_extractor.py      Thin wrapper — balance sheet
   cash_flow_extractor.py          Thin wrapper — cash flow
 xbrl_mappings/         Static XBRL concept → field mappings
-historic_fundamentals/         Monthly PE/yield/revenue timeseries + market cap + analyst estimates analytics package
+historic_fundamentals/         Monthly PE/P/FCF/EV/EBITDA timeseries + market cap + growth stats + analyst estimates
   __init__.py                  Public API: get_pe_stats, get_pe_history, get_estimates
   db.py                        HistoricFundamentalsDB: schema, upsert, query
-  pe.py                        TTM EPS/revenue + PE + dividend yield + revenue growth stats computation
-  estimates.py                 EARNINGS_ESTIMATES fetch, normalize, forward PE/NTM revenue calculation
+  pe.py                        TTM EPS/FCF/EBITDA + PE/P/FCF/EV/EBITDA + dividend/revenue/earnings/FCF growth stats
+  estimates.py                 EARNINGS_ESTIMATES fetch, normalize, forward PE/P/FCF/NTM revenue calculation
   query.py                     Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
 scripts/
   add_tickers.py               All-in-one: AV raw data + PE history + estimates for new tickers
@@ -258,6 +258,6 @@ tests/                 pytest tests
 data/
   financial_statements.duckdb       SEC EDGAR financial statements
   av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends
-  historic_fundamentals.duckdb      Monthly PE/yield timeseries, PE stats, analyst estimates
+  historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, analyst estimates
   xbrl_mappings_multi.duckdb        AI-discovered XBRL concept mapping store
 ```
