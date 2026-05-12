@@ -624,9 +624,6 @@ def compute_pe_stats(
         return None
 
     pe_series = monthly_pe["pe_ratio"].dropna()
-    if pe_series.empty:
-        return None
-
     last = monthly_pe.iloc[-1]
 
     def _f(v) -> float | None:

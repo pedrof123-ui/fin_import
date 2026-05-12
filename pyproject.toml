@@ -19,12 +19,20 @@ dependencies = [
     "tqdm>=4.67.0",
     "uvicorn[standard]>=0.40.0",
     "yfinance>=0.2.0",
+    "scikit-learn>=1.8.0",
+    "matplotlib>=3.10.9",
+    "seaborn>=0.13.2",
+    "joblib>=1.5.3",
+    "xlrd>=2.0.2",
+    "xgboost>=3.2.0",
+    "shap>=0.51.0",
 ]
 
 [dependency-groups]
 dev = [
     "httpx>=0.28.0",
     "ipykernel>=7.1.0",
+    "nbconvert>=7.17.1",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
 ]
