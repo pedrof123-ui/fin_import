@@ -213,6 +213,48 @@ def _update_forward_evebitda(
     hf_db.update_forward_evebitda(ticker, forward_evebitda)
 
 
+def _update_forward_ps(
+    hf_db: HistoricFundamentalsDB,
+    av_conn,
+    prices_conn,
+    ticker: str,
+) -> None:
+    """Compute forward P/S = current market cap / NTM revenue."""
+    ntm_rev = compute_ntm_revenue(hf_db.conn, ticker)
+    if not ntm_rev or ntm_rev <= 0:
+        hf_db.update_forward_ps(ticker, None)
+        return
+
+    price_row = prices_conn.execute(
+        "SELECT adj_close FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+        [ticker],
+    ).fetchone()
+    if not price_row:
+        hf_db.update_forward_ps(ticker, None)
+        return
+    price = price_row[0]
+
+    shares_row = av_conn.execute("""
+        SELECT shares_outstanding_diluted FROM shares_outstanding
+        WHERE ticker = ? AND shares_outstanding_diluted IS NOT NULL
+        ORDER BY date DESC LIMIT 1
+    """, [ticker]).fetchone()
+    if not shares_row:
+        shares_row = av_conn.execute("""
+            SELECT common_stock_shares_outstanding FROM balance_sheets
+            WHERE ticker = ? AND period_type = 'quarterly'
+                AND common_stock_shares_outstanding IS NOT NULL
+            ORDER BY fiscal_date_ending DESC LIMIT 1
+        """, [ticker]).fetchone()
+    shares = shares_row[0] if shares_row else None
+
+    if not shares or shares <= 0:
+        hf_db.update_forward_ps(ticker, None)
+        return
+
+    hf_db.update_forward_ps(ticker, price * shares / ntm_rev)
+
+
 def _update_forward_pfcf(
     hf_db: HistoricFundamentalsDB,
     av_conn,
@@ -343,6 +385,7 @@ def main() -> int:
                 _update_earn_ntm_growth_est(hf_db, ticker)
                 _update_forward_pfcf(hf_db, av_conn, prices_conn, ticker)
                 _update_forward_evebitda(hf_db, av_conn, prices_conn, ticker)
+                _update_forward_ps(hf_db, av_conn, prices_conn, ticker)
                 _update_market_cap(hf_db, av_conn, prices_conn, ticker)
 
                 ok += 1

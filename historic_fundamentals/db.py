@@ -27,7 +27,13 @@ Typical columns returned:
         current_fcf_yield, forward_pfcf, fcf_margin_5yr_median,
         fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
         current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
-        evebitda_rolling_5yr_median
+        evebitda_rolling_5yr_median,
+        current_ps, ps_lt_median, ps_p25, ps_p75, ps_rolling_5yr_median, forward_ps,
+        current_roa, roa_lt_median, roa_p25, roa_p75, roa_rolling_5yr_median,
+        current_roe, roe_lt_median, roe_p25, roe_p75, roe_rolling_5yr_median,
+        current_roic, roic_lt_median, roic_p25, roic_p75, roic_rolling_5yr_median,
+        current_pbv, pbv_lt_median, pbv_p25, pbv_p75, pbv_rolling_5yr_median,
+        current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median
     query_pe_timeseries:
         ticker, month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median,
         ttm_source, shares, ttm_dividend, dividend_yield, ttm_revenue,
@@ -87,6 +93,18 @@ class HistoricFundamentalsDB:
                 ttm_ebitda                 DOUBLE,
                 ev_ebitda                  DOUBLE,
                 ev_ebitda_rolling_5yr_median DOUBLE,
+                ps_ratio                   DOUBLE,
+                ps_rolling_5yr_median      DOUBLE,
+                roa                        DOUBLE,
+                roa_rolling_5yr_median     DOUBLE,
+                roe                        DOUBLE,
+                roe_rolling_5yr_median     DOUBLE,
+                roic                       DOUBLE,
+                roic_rolling_5yr_median    DOUBLE,
+                pbv                        DOUBLE,
+                pbv_rolling_5yr_median     DOUBLE,
+                ptbv                       DOUBLE,
+                ptbv_rolling_5yr_median    DOUBLE,
                 updated_at                 TIMESTAMP,
                 PRIMARY KEY (ticker, month_end_date)
             )
@@ -102,6 +120,18 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_ebitda DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ev_ebitda DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ev_ebitda_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ps_ratio DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ps_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roa DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roa_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roe DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roe_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roic DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roic_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS pbv DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS pbv_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ptbv DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ptbv_rolling_5yr_median DOUBLE")
         self._rename_column_if_exists("monthly_pe", "rolling_5yr_median", "pe_rolling_5yr_median")
 
         self.conn.execute("""
@@ -147,7 +177,38 @@ class HistoricFundamentalsDB:
                 evebitda_p75               DOUBLE,
                 evebitda_rolling_5yr_median DOUBLE,
                 ebitda_margin_5yr_median   DOUBLE,
-                forward_evebitda           DOUBLE
+                forward_evebitda           DOUBLE,
+                current_ps                 DOUBLE,
+                ps_lt_median               DOUBLE,
+                ps_p25                     DOUBLE,
+                ps_p75                     DOUBLE,
+                ps_rolling_5yr_median      DOUBLE,
+                forward_ps                 DOUBLE,
+                current_roa                DOUBLE,
+                roa_lt_median              DOUBLE,
+                roa_p25                    DOUBLE,
+                roa_p75                    DOUBLE,
+                roa_rolling_5yr_median     DOUBLE,
+                current_roe                DOUBLE,
+                roe_lt_median              DOUBLE,
+                roe_p25                    DOUBLE,
+                roe_p75                    DOUBLE,
+                roe_rolling_5yr_median     DOUBLE,
+                current_roic               DOUBLE,
+                roic_lt_median             DOUBLE,
+                roic_p25                   DOUBLE,
+                roic_p75                   DOUBLE,
+                roic_rolling_5yr_median    DOUBLE,
+                current_pbv                DOUBLE,
+                pbv_lt_median              DOUBLE,
+                pbv_p25                    DOUBLE,
+                pbv_p75                    DOUBLE,
+                pbv_rolling_5yr_median     DOUBLE,
+                current_ptbv               DOUBLE,
+                ptbv_lt_median             DOUBLE,
+                ptbv_p25                   DOUBLE,
+                ptbv_p75                   DOUBLE,
+                ptbv_rolling_5yr_median    DOUBLE
             )
         """)
         # Migration: add/rename columns introduced after initial schema
@@ -180,6 +241,37 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_rolling_5yr_median DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ebitda_margin_5yr_median DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_evebitda DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_ps DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ps_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ps_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ps_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ps_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_ps DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_roa DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_roe DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roe_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roe_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roe_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roe_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_roic DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roic_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roic_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roic_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roic_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_pbv DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pbv_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pbv_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pbv_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pbv_rolling_5yr_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_ptbv DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ptbv_lt_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ptbv_p25 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ptbv_p75 DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ptbv_rolling_5yr_median DOUBLE")
         self._rename_column_if_exists("pe_stats", "lt_median",          "pe_lt_median")
         self._rename_column_if_exists("pe_stats", "p10",                "pe_p10")
         self._rename_column_if_exists("pe_stats", "p25",                "pe_p25")
@@ -228,6 +320,12 @@ class HistoricFundamentalsDB:
             "dividend_yield", "ttm_revenue",
             "ttm_fcf", "pfcf_ratio", "pfcf_rolling_5yr_median", "fcf_yield",
             "ttm_ebitda", "ev_ebitda", "ev_ebitda_rolling_5yr_median",
+            "ps_ratio", "ps_rolling_5yr_median",
+            "roa", "roa_rolling_5yr_median",
+            "roe", "roe_rolling_5yr_median",
+            "roic", "roic_rolling_5yr_median",
+            "pbv", "pbv_rolling_5yr_median",
+            "ptbv", "ptbv_rolling_5yr_median",
             "updated_at",
         ]
         for col in cols:
@@ -242,12 +340,24 @@ class HistoricFundamentalsDB:
                  dividend_yield, ttm_revenue,
                  ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
                  ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+                 ps_ratio, ps_rolling_5yr_median,
+                 roa, roa_rolling_5yr_median,
+                 roe, roe_rolling_5yr_median,
+                 roic, roic_rolling_5yr_median,
+                 pbv, pbv_rolling_5yr_median,
+                 ptbv, ptbv_rolling_5yr_median,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
                        dividend_yield, ttm_revenue,
                        ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
                        ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+                       ps_ratio, ps_rolling_5yr_median,
+                       roa, roa_rolling_5yr_median,
+                       roe, roe_rolling_5yr_median,
+                       roic, roic_rolling_5yr_median,
+                       pbv, pbv_rolling_5yr_median,
+                       ptbv, ptbv_rolling_5yr_median,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -271,9 +381,21 @@ class HistoricFundamentalsDB:
              forward_pfcf, fcf_margin_5yr_median,
              fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
              current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
-             evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda)
+             evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda,
+             current_ps, ps_lt_median, ps_p25, ps_p75, ps_rolling_5yr_median, forward_ps,
+             current_roa, roa_lt_median, roa_p25, roa_p75, roa_rolling_5yr_median,
+             current_roe, roe_lt_median, roe_p25, roe_p75, roe_rolling_5yr_median,
+             current_roic, roic_lt_median, roic_p25, roic_p75, roic_rolling_5yr_median,
+             current_pbv, pbv_lt_median, pbv_p25, pbv_p75, pbv_rolling_5yr_median,
+             current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
                 pe_lt_median               = excluded.pe_lt_median,
@@ -315,7 +437,38 @@ class HistoricFundamentalsDB:
                 evebitda_p75               = excluded.evebitda_p75,
                 evebitda_rolling_5yr_median = excluded.evebitda_rolling_5yr_median,
                 ebitda_margin_5yr_median    = excluded.ebitda_margin_5yr_median,
-                forward_evebitda           = COALESCE(excluded.forward_evebitda, pe_stats.forward_evebitda)
+                forward_evebitda           = COALESCE(excluded.forward_evebitda, pe_stats.forward_evebitda),
+                current_ps                 = excluded.current_ps,
+                ps_lt_median               = excluded.ps_lt_median,
+                ps_p25                     = excluded.ps_p25,
+                ps_p75                     = excluded.ps_p75,
+                ps_rolling_5yr_median      = excluded.ps_rolling_5yr_median,
+                forward_ps                 = COALESCE(excluded.forward_ps, pe_stats.forward_ps),
+                current_roa                = excluded.current_roa,
+                roa_lt_median              = excluded.roa_lt_median,
+                roa_p25                    = excluded.roa_p25,
+                roa_p75                    = excluded.roa_p75,
+                roa_rolling_5yr_median     = excluded.roa_rolling_5yr_median,
+                current_roe                = excluded.current_roe,
+                roe_lt_median              = excluded.roe_lt_median,
+                roe_p25                    = excluded.roe_p25,
+                roe_p75                    = excluded.roe_p75,
+                roe_rolling_5yr_median     = excluded.roe_rolling_5yr_median,
+                current_roic               = excluded.current_roic,
+                roic_lt_median             = excluded.roic_lt_median,
+                roic_p25                   = excluded.roic_p25,
+                roic_p75                   = excluded.roic_p75,
+                roic_rolling_5yr_median    = excluded.roic_rolling_5yr_median,
+                current_pbv                = excluded.current_pbv,
+                pbv_lt_median              = excluded.pbv_lt_median,
+                pbv_p25                    = excluded.pbv_p25,
+                pbv_p75                    = excluded.pbv_p75,
+                pbv_rolling_5yr_median     = excluded.pbv_rolling_5yr_median,
+                current_ptbv               = excluded.current_ptbv,
+                ptbv_lt_median             = excluded.ptbv_lt_median,
+                ptbv_p25                   = excluded.ptbv_p25,
+                ptbv_p75                   = excluded.ptbv_p75,
+                ptbv_rolling_5yr_median    = excluded.ptbv_rolling_5yr_median
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -359,6 +512,37 @@ class HistoricFundamentalsDB:
             stats.get("evebitda_rolling_5yr_median"),
             stats.get("ebitda_margin_5yr_median"),
             stats.get("forward_evebitda"),
+            stats.get("current_ps"),
+            stats.get("ps_lt_median"),
+            stats.get("ps_p25"),
+            stats.get("ps_p75"),
+            stats.get("ps_rolling_5yr_median"),
+            stats.get("forward_ps"),
+            stats.get("current_roa"),
+            stats.get("roa_lt_median"),
+            stats.get("roa_p25"),
+            stats.get("roa_p75"),
+            stats.get("roa_rolling_5yr_median"),
+            stats.get("current_roe"),
+            stats.get("roe_lt_median"),
+            stats.get("roe_p25"),
+            stats.get("roe_p75"),
+            stats.get("roe_rolling_5yr_median"),
+            stats.get("current_roic"),
+            stats.get("roic_lt_median"),
+            stats.get("roic_p25"),
+            stats.get("roic_p75"),
+            stats.get("roic_rolling_5yr_median"),
+            stats.get("current_pbv"),
+            stats.get("pbv_lt_median"),
+            stats.get("pbv_p25"),
+            stats.get("pbv_p75"),
+            stats.get("pbv_rolling_5yr_median"),
+            stats.get("current_ptbv"),
+            stats.get("ptbv_lt_median"),
+            stats.get("ptbv_p25"),
+            stats.get("ptbv_p75"),
+            stats.get("ptbv_rolling_5yr_median"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -405,6 +589,12 @@ class HistoricFundamentalsDB:
             UPDATE pe_stats SET forward_pfcf = ?, updated_at = ?
             WHERE ticker = ?
         """, [forward_pfcf, datetime.now(UTC), ticker])
+
+    def update_forward_ps(self, ticker: str, forward_ps: float | None) -> None:
+        self.conn.execute("""
+            UPDATE pe_stats SET forward_ps = ?, updated_at = ?
+            WHERE ticker = ?
+        """, [forward_ps, datetime.now(UTC), ticker])
 
     def update_forward_evebitda(self, ticker: str, forward_evebitda: float | None) -> None:
         self.conn.execute("""

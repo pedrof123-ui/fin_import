@@ -94,6 +94,12 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "fcf_growth_1yr", "fcf_cagr_3yr", "fcf_cagr_5yr", "fcf_margin_5yr_median",
         "current_evebitda", "evebitda_lt_median", "evebitda_p25", "evebitda_p75",
         "evebitda_rolling_5yr_median", "ebitda_margin_5yr_median", "forward_evebitda",
+        "current_ps", "ps_lt_median", "ps_p25", "ps_p75", "ps_rolling_5yr_median", "forward_ps",
+        "current_roa", "roa_lt_median", "roa_p25", "roa_p75", "roa_rolling_5yr_median",
+        "current_roe", "roe_lt_median", "roe_p25", "roe_p75", "roe_rolling_5yr_median",
+        "current_roic", "roic_lt_median", "roic_p25", "roic_p75", "roic_rolling_5yr_median",
+        "current_pbv", "pbv_lt_median", "pbv_p25", "pbv_p75", "pbv_rolling_5yr_median",
+        "current_ptbv", "ptbv_lt_median", "ptbv_p25", "ptbv_p75", "ptbv_rolling_5yr_median",
     ]
     return df[[c for c in cols if c in df.columns]]
 
@@ -132,6 +138,12 @@ def get_pe_history(tickers, start: str | None = None, end: str | None = None) ->
         "ttm_dividend", "dividend_yield", "ttm_revenue",
         "ttm_fcf", "pfcf_ratio", "pfcf_rolling_5yr_median", "fcf_yield",
         "ttm_ebitda", "ev_ebitda", "ev_ebitda_rolling_5yr_median",
+        "ps_ratio", "ps_rolling_5yr_median",
+        "roa", "roa_rolling_5yr_median",
+        "roe", "roe_rolling_5yr_median",
+        "roic", "roic_rolling_5yr_median",
+        "pbv", "pbv_rolling_5yr_median",
+        "ptbv", "ptbv_rolling_5yr_median",
     ]
     return df[[c for c in cols if c in df.columns]]
 

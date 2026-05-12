@@ -63,10 +63,10 @@ fin_import2/
 │   ├── BULK_IMPORT_GUIDE.md             Bulk import CLI reference
 │   └── MULTI_STATEMENT_EXTRACTOR_GUIDE.md  Extractor internals
 │
-├── historic_fundamentals/               Historic PE, revenue growth, market cap, and estimates analytics package
+├── historic_fundamentals/               Historic fundamentals analytics package (PE, FCF, EV/EBITDA, P/S, ROA, ROE, ROIC, P/BV, P/TBV)
 │   ├── __init__.py                      Public API: get_pe_stats, get_pe_history, get_estimates + lower-level exports
 │   ├── db.py                            HistoricFundamentalsDB: schema, upsert, query methods
-│   ├── pe.py                            TTM EPS/revenue + PE + dividend yield + revenue CAGR computation
+│   ├── pe.py                            TTM computation engine: EPS, revenue, FCF, EBITDA, NOPAT, equity; builds monthly timeseries and statistics for all metrics
 │   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE + NTM revenue calculation
 │   └── query.py                         Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
 │
@@ -262,13 +262,15 @@ All three statement tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filin
 
 | Table | Key columns |
 |-------|-------------|
-| `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), pe_rolling_5yr_median (trailing 60-month window), ttm_source ('quarterly'/'annual'), shares, ttm_dividend, dividend_yield, ttm_revenue, updated_at |
-| `pe_stats` | ticker (PK), market_cap_b, current_pe, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est, updated_at |
+| `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), pe_rolling_5yr_median (trailing 60-month window), ttm_source ('quarterly'/'annual'), shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe (NULL when equity ≤ 0), roe_rolling_5yr_median, roic (NULL when IC ≤ 0), roic_rolling_5yr_median, pbv (NULL when equity ≤ 0), pbv_rolling_5yr_median, ptbv (NULL when TBV ≤ 0), ptbv_rolling_5yr_median, updated_at |
+| `pe_stats` | ticker (PK), market_cap_b, current/lt_median/p25/p75/p10/p90/rolling_5yr_median for PE + forward_pe/12m_eps; current/lt_median/p25/p75/rolling_5yr_median for P/FCF, EV/EBITDA, P/S, ROA, ROE, ROIC, P/BV, P/TBV; forward_pfcf, forward_evebitda, forward_ps; fcf/ebitda margins; rev/earn/fcf growth CAGRs and NTM estimates; ttm_dividend, dividend_yield, months_available, updated_at |
 | `earnings_estimates` | ticker, fiscal_date, horizon ('fiscal quarter'/'fiscal year'), fetched_at (PK together), eps_avg/high/low/count, eps_avg_7d/30d/60d/90d, eps_rev_up/down_7d/30d, rev_avg/high/low/count |
 
 Primary data sources:
-- `av_financials.duckdb / income_statements` — net_income for TTM EPS; total_revenue for TTM revenue and CAGR
-- `av_financials.duckdb / shares_outstanding` — diluted shares (primary); balance_sheets fallback
+- `av_financials.duckdb / income_statements` — net_income, total_revenue, ebitda, ebit, income_tax_expense, income_before_tax
+- `av_financials.duckdb / balance_sheets` — total_assets, total_shareholder_equity, intangible_assets_excl_goodwill, goodwill, long_term_debt_noncurrent, short_term_debt, current_long_term_debt, cash_and_short_term_investments, common_stock_shares_outstanding
+- `av_financials.duckdb / cash_flow_statements` — operating_cashflow, capital_expenditures
+- `av_financials.duckdb / shares_outstanding` — shares_outstanding_diluted (primary); balance_sheets fallback
 - `av_financials.duckdb / dividends` — ex-dividend history for TTM dividend computation
 - `prices.duckdb / stock_prices` — adj_close for month-end price and current market cap
 - Alpha Vantage EARNINGS_ESTIMATES endpoint — analyst EPS + revenue estimates

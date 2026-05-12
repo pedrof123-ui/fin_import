@@ -6,6 +6,7 @@
 **Phase 1.5 — COMPLETE** (2026-05-11): Shares outstanding + dividends + dividend yield
 **Phase 2 — COMPLETE** (2026-05-10): Query interface and Python API
 **Phase 2.5 — COMPLETE** (2026-05-11): Revenue growth metrics + market cap + PE column renames
+**Phase 4 — COMPLETE** (2026-05-12): P/S, ROA, ROE, ROIC, P/BV, P/TBV
 **Phase 3 — PENDING**: FastAPI router (future, when UI integration needed)
 
 ---
@@ -290,6 +291,21 @@ Pre-compute stats rationale: with 1,465 tickers × ~240 monthly PE rows each = ~
 - [x] `historic_fundamentals/db.py`: PE column renames — `lt_median→pe_lt_median`, `p10/p25/p75/p90→pe_p10/p25/p75/p90`, `rolling_5yr_median→pe_rolling_5yr_median` in both tables; idempotent RENAME COLUMN via information_schema check
 - [x] `scripts/hf_update.py` + `scripts/add_tickers.py`: `_update_rev_ntm_growth_est()` and `_update_market_cap()` helpers; all snapshot updates run unconditionally (not gated by --skip-estimates)
 - [x] `historic_fundamentals/query.py`: `get_pe_stats()` returns all new columns; `get_pe_history()` returns `ttm_revenue`
+
+### Phase 4 — P/S, ROA, ROE, ROIC, P/BV, P/TBV (COMPLETE 2026-05-12)
+- [x] `historic_fundamentals/pe.py`: add 7 new fields to `_load_av_data()` SQL (ebit, income_tax_expense, income_before_tax, total_assets, total_shareholder_equity, intangible_assets_excl_goodwill, goodwill); new `_get_ttm_nopat()` helper; new computation block in `build_monthly_pe()` for P/S, ROA, ROE, ROIC, P/BV, P/TBV; rolling 5yr medians; stats in `compute_pe_stats()`
+- [x] `historic_fundamentals/db.py`: 12 new columns in `monthly_pe`; 31 new columns in `pe_stats` (incl. `forward_ps`); migrations; `upsert_monthly_pe()` / `upsert_pe_stats()` updated; `update_forward_ps()` method
+- [x] `scripts/hf_update.py`: `_update_forward_ps()` using NTM revenue from estimates; called in main loop
+- [x] `historic_fundamentals/query.py`: new columns exposed in `get_pe_stats()` and `get_pe_history()`
+
+**Formulas**:
+- P/S = price × shares / TTM revenue (market cap / revenue); forward P/S uses NTM revenue from analyst estimates
+- ROA = TTM net income / total assets; NULL only when assets unavailable
+- ROE = TTM net income / equity; NULL when equity <= 0
+- ROIC = NOPAT / Invested Capital; NOPAT = TTM EBIT × (1 − eff. tax rate, clamped [0, 0.5], default 21%); IC = equity + net debt; NULL when IC <= 0
+- P/BV = price / (equity / shares); NULL when equity <= 0
+- P/TBV = price / ((equity − intangibles_excl_gw − goodwill) / shares); NULL when TBV <= 0
+- No new AV API calls required; all data already in av_financials.duckdb
 
 ### Phase 3 — FastAPI router (future, when UI integration needed)
 - [ ] `api/hf_router.py`: REST endpoints over the library

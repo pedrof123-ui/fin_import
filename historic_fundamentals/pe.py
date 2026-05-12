@@ -21,7 +21,11 @@ monthly_pe columns:
     month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median,
     ttm_source, shares, ttm_dividend, dividend_yield, ttm_revenue,
     ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
-    ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median
+    ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+    ps_ratio, ps_rolling_5yr_median,
+    roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median,
+    roic, roic_rolling_5yr_median,
+    pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median
 
 stats keys (PE):
     ticker, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90, months_available,
@@ -36,6 +40,18 @@ stats keys (FCF):
 stats keys (EV/EBITDA):
     current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
     evebitda_rolling_5yr_median
+
+stats keys (P/S):
+    current_ps, ps_lt_median, ps_p25, ps_p75, ps_rolling_5yr_median
+
+stats keys (ROA/ROE/ROIC):
+    current_roa, roa_lt_median, roa_p25, roa_p75, roa_rolling_5yr_median
+    current_roe, roe_lt_median, roe_p25, roe_p75, roe_rolling_5yr_median
+    current_roic, roic_lt_median, roic_p25, roic_p75, roic_rolling_5yr_median
+
+stats keys (P/BV, P/TBV):
+    current_pbv, pbv_lt_median, pbv_p25, pbv_p75, pbv_rolling_5yr_median
+    current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median
 
 TTM EPS method:
     Shares source (primary): shares_outstanding.shares_outstanding_diluted
@@ -82,7 +98,14 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
             i.net_income,
             i.total_revenue,
             i.ebitda,
+            i.ebit,
+            i.income_tax_expense,
+            i.income_before_tax,
             b.common_stock_shares_outstanding AS shares,
+            b.total_assets,
+            b.total_shareholder_equity,
+            b.intangible_assets_excl_goodwill,
+            b.goodwill,
             b.long_term_debt_noncurrent,
             b.short_term_debt,
             b.current_long_term_debt,
@@ -257,6 +280,45 @@ def _get_ttm_ebitda(
     return None
 
 
+def _get_ttm_nopat(
+    month_end,
+    quarterly: pd.DataFrame,
+    annual: pd.DataFrame,
+) -> float | None:
+    """
+    TTM NOPAT = TTM EBIT × (1 − effective_tax_rate).
+    Effective tax rate = TTM income_tax_expense / TTM income_before_tax, clamped [0, 0.5].
+    Uses 0.21 default when income_before_tax is not positive.
+    Returns None when EBIT data is unavailable.
+    """
+    if not quarterly.empty:
+        avail = quarterly[quarterly["fiscal_date_ending"] <= month_end]
+        if len(avail) >= 4:
+            last4 = avail.tail(4)
+            ebit_vals = last4["ebit"].dropna()
+            if len(ebit_vals) == 4:
+                ttm_ebit = float(ebit_vals.sum())
+                ibt = float(last4["income_before_tax"].dropna().sum())
+                tax = float(last4["income_tax_expense"].dropna().sum())
+                rate = min(max(tax / ibt, 0.0), 0.5) if ibt > 0 else 0.21
+                return ttm_ebit * (1.0 - rate)
+
+    if not annual.empty:
+        avail = annual[annual["fiscal_date_ending"] <= month_end]
+        if not avail.empty:
+            row = avail.iloc[-1]
+            ebit = row.get("ebit")
+            if pd.notna(ebit):
+                ibt = row.get("income_before_tax")
+                tax = row.get("income_tax_expense")
+                ibt_f = float(ibt) if pd.notna(ibt) else 0.0
+                tax_f = float(tax) if pd.notna(tax) else 0.0
+                rate = min(max(tax_f / ibt_f, 0.0), 0.5) if ibt_f > 0 else 0.21
+                return float(ebit) * (1.0 - rate)
+
+    return None
+
+
 def _get_ev_debt_cash(
     month_end,
     quarterly: pd.DataFrame,
@@ -319,7 +381,11 @@ def build_monthly_pe(
     month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median, ttm_source,
     shares, ttm_dividend, dividend_yield, ttm_revenue,
     ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
-    ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median
+    ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+    ps_ratio, ps_rolling_5yr_median,
+    roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median,
+    roic, roic_rolling_5yr_median,
+    pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median
     """
     if prices.empty:
         return pd.DataFrame()
@@ -429,6 +495,64 @@ def build_monthly_pe(
                 if ev > 0:
                     ev_ebitda = ev / ttm_ebitda
 
+        # ── Balance sheet snapshot for new metrics ────────────────────────────
+        bs_equity = bs_assets = bs_intang = bs_gw = None
+        for _df in (q, a):
+            if _df.empty:
+                continue
+            _avail = _df[_df["fiscal_date_ending"] <= month_end]
+            if _avail.empty:
+                continue
+            _r = _avail.iloc[-1]
+            if bs_equity is None:
+                _v = _r.get("total_shareholder_equity")
+                if pd.notna(_v):
+                    bs_equity = float(_v)
+            if bs_assets is None:
+                _v = _r.get("total_assets")
+                if pd.notna(_v) and float(_v) > 0:
+                    bs_assets = float(_v)
+            if bs_intang is None:
+                _ieg = _r.get("intangible_assets_excl_goodwill")
+                _gw  = _r.get("goodwill")
+                if pd.notna(_ieg) or pd.notna(_gw):
+                    bs_intang = float(_ieg) if pd.notna(_ieg) else 0.0
+                    bs_gw     = float(_gw)  if pd.notna(_gw)  else 0.0
+            if bs_equity is not None and bs_assets is not None and bs_intang is not None:
+                break
+
+        # ── P/S ──────────────────────────────────────────────────────────────
+        ps_ratio = None
+        if ttm_revenue is not None and ttm_revenue > 0 and sh is not None and sh > 0:
+            ps_ratio = float(price) * sh / ttm_revenue
+
+        # ── ROA, ROE ─────────────────────────────────────────────────────────
+        ttm_net_income = ttm_eps * sh  # safe: both non-None after the continue guard
+        roa = roe = None
+        if bs_assets is not None:
+            roa = ttm_net_income / bs_assets
+        if bs_equity is not None and bs_equity > 0:
+            roe = ttm_net_income / bs_equity
+
+        # ── ROIC ─────────────────────────────────────────────────────────────
+        nopat = _get_ttm_nopat(month_end, q, a)
+        roic = None
+        if nopat is not None and bs_equity is not None:
+            _td, _cash = _get_ev_debt_cash(month_end, q, a)
+            invested_capital = bs_equity + (_td or 0.0) - (_cash or 0.0)
+            if invested_capital > 0:
+                roic = nopat / invested_capital
+
+        # ── P/BV, P/TBV ──────────────────────────────────────────────────────
+        pbv = ptbv = None
+        if sh is not None and sh > 0:
+            if bs_equity is not None and bs_equity > 0:
+                pbv = float(price) / (bs_equity / sh)
+            if bs_equity is not None and bs_intang is not None and bs_gw is not None:
+                tbv = bs_equity - bs_intang - bs_gw
+                if tbv > 0:
+                    ptbv = float(price) / (tbv / sh)
+
         rows.append({
             "month_end_date": month_end,
             "price":          float(price),
@@ -444,15 +568,27 @@ def build_monthly_pe(
             "fcf_yield":      fcf_yield,
             "ttm_ebitda":     ttm_ebitda,
             "ev_ebitda":      ev_ebitda,
+            "ps_ratio":       ps_ratio,
+            "roa":            roa,
+            "roe":            roe,
+            "roic":           roic,
+            "pbv":            pbv,
+            "ptbv":           ptbv,
         })
 
     if not rows:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values("month_end_date").reset_index(drop=True)
-    df["pe_rolling_5yr_median"]       = df["pe_ratio"].rolling(60, min_periods=60).median()
-    df["pfcf_rolling_5yr_median"]     = df["pfcf_ratio"].rolling(60, min_periods=60).median()
+    df["pe_rolling_5yr_median"]        = df["pe_ratio"].rolling(60, min_periods=60).median()
+    df["pfcf_rolling_5yr_median"]      = df["pfcf_ratio"].rolling(60, min_periods=60).median()
     df["ev_ebitda_rolling_5yr_median"] = df["ev_ebitda"].rolling(60, min_periods=60).median()
+    df["ps_rolling_5yr_median"]        = df["ps_ratio"].rolling(60, min_periods=60).median()
+    df["roa_rolling_5yr_median"]       = df["roa"].rolling(60, min_periods=60).median()
+    df["roe_rolling_5yr_median"]       = df["roe"].rolling(60, min_periods=60).median()
+    df["roic_rolling_5yr_median"]      = df["roic"].rolling(60, min_periods=60).median()
+    df["pbv_rolling_5yr_median"]       = df["pbv"].rolling(60, min_periods=60).median()
+    df["ptbv_rolling_5yr_median"]      = df["ptbv"].rolling(60, min_periods=60).median()
     return df
 
 
@@ -520,6 +656,54 @@ def compute_pe_stats(
     result.update({
         "current_evebitda":            _f(last.get("ev_ebitda")),
         "evebitda_rolling_5yr_median": _f(last.get("ev_ebitda_rolling_5yr_median")),
+    })
+
+    # P/S
+    ps_series = monthly_pe["ps_ratio"].dropna() if "ps_ratio" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(ps_series, "ps"))
+    result.update({
+        "current_ps":            _f(last.get("ps_ratio")),
+        "ps_rolling_5yr_median": _f(last.get("ps_rolling_5yr_median")),
+    })
+
+    # ROA
+    roa_series = monthly_pe["roa"].dropna() if "roa" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(roa_series, "roa"))
+    result.update({
+        "current_roa":            _f(last.get("roa")),
+        "roa_rolling_5yr_median": _f(last.get("roa_rolling_5yr_median")),
+    })
+
+    # ROE
+    roe_series = monthly_pe["roe"].dropna() if "roe" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(roe_series, "roe"))
+    result.update({
+        "current_roe":            _f(last.get("roe")),
+        "roe_rolling_5yr_median": _f(last.get("roe_rolling_5yr_median")),
+    })
+
+    # ROIC
+    roic_series = monthly_pe["roic"].dropna() if "roic" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(roic_series, "roic"))
+    result.update({
+        "current_roic":            _f(last.get("roic")),
+        "roic_rolling_5yr_median": _f(last.get("roic_rolling_5yr_median")),
+    })
+
+    # P/BV
+    pbv_series = monthly_pe["pbv"].dropna() if "pbv" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(pbv_series, "pbv"))
+    result.update({
+        "current_pbv":            _f(last.get("pbv")),
+        "pbv_rolling_5yr_median": _f(last.get("pbv_rolling_5yr_median")),
+    })
+
+    # P/TBV
+    ptbv_series = monthly_pe["ptbv"].dropna() if "ptbv" in monthly_pe.columns else pd.Series(dtype=float)
+    result.update(_stats(ptbv_series, "ptbv"))
+    result.update({
+        "current_ptbv":            _f(last.get("ptbv")),
+        "ptbv_rolling_5yr_median": _f(last.get("ptbv_rolling_5yr_median")),
     })
 
     return result
