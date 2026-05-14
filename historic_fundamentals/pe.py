@@ -599,15 +599,26 @@ def build_monthly_pe(
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values("month_end_date").reset_index(drop=True)
-    df["pe_rolling_5yr_median"]        = df["pe_ratio"].rolling(60, min_periods=60).median()
-    df["pfcf_rolling_5yr_median"]      = df["pfcf_ratio"].rolling(60, min_periods=60).median()
-    df["ev_ebitda_rolling_5yr_median"] = df["ev_ebitda"].rolling(60, min_periods=60).median()
-    df["ps_rolling_5yr_median"]        = df["ps_ratio"].rolling(60, min_periods=60).median()
-    df["roa_rolling_5yr_median"]       = df["roa"].rolling(60, min_periods=60).median()
-    df["roe_rolling_5yr_median"]       = df["roe"].rolling(60, min_periods=60).median()
-    df["roic_rolling_5yr_median"]      = df["roic"].rolling(60, min_periods=60).median()
-    df["pbv_rolling_5yr_median"]       = df["pbv"].rolling(60, min_periods=60).median()
-    df["ptbv_rolling_5yr_median"]      = df["ptbv"].rolling(60, min_periods=60).median()
+    df["pe_rolling_5yr_median"]        = df["pe_ratio"].rolling(60, min_periods=36).median()
+    df["pfcf_rolling_5yr_median"]      = df["pfcf_ratio"].rolling(60, min_periods=36).median()
+    df["ev_ebitda_rolling_5yr_median"] = df["ev_ebitda"].rolling(60, min_periods=36).median()
+    df["ps_rolling_5yr_median"]        = df["ps_ratio"].rolling(60, min_periods=36).median()
+    df["roa_rolling_5yr_median"]       = df["roa"].rolling(60, min_periods=36).median()
+    df["roe_rolling_5yr_median"]       = df["roe"].rolling(60, min_periods=36).median()
+    df["roic_rolling_5yr_median"]      = df["roic"].rolling(60, min_periods=36).median()
+    df["pbv_rolling_5yr_median"]       = df["pbv"].rolling(60, min_periods=36).median()
+    df["ptbv_rolling_5yr_median"]      = df["ptbv"].rolling(60, min_periods=36).median()
+
+    # Earnings yield = EPS / price (meaningful even when negative; avoids P/E blow-up)
+    df["earnings_yield"]     = df["ttm_eps"] / df["price"]
+    df["earnings_yield_3y_avg"] = df["earnings_yield"].rolling(36, min_periods=24).mean()
+    df["earnings_yield_5y_avg"] = df["earnings_yield"].rolling(60, min_periods=36).mean()
+
+    # Normalized P/E: price / avg(TTM EPS over 5yr). Includes negative EPS years honestly.
+    avg_eps_5y = df["ttm_eps"].rolling(60, min_periods=36).mean()
+    normalized_pe = df["price"] / avg_eps_5y
+    df["normalized_pe_5y"] = normalized_pe.where(avg_eps_5y > 0)
+
     return df
 
 
@@ -638,10 +649,15 @@ def compute_pe_stats(
             f"{prefix}_p75":       _f(series.quantile(0.75)),
         }
 
+    current_price = _f(last.get("price"))
+    forward_earnings_yield = None
+    if forward_12m_eps is not None and current_price and current_price > 0:
+        forward_earnings_yield = forward_12m_eps / current_price
+
     result = {
         "ticker":                 ticker,
         "updated_at":             datetime.now(UTC),
-        "current_price":          _f(last.get("price")),
+        "current_price":          current_price,
         # PE
         "pe_lt_median":           _f(pe_series.median()),
         "pe_p10":                 _f(pe_series.quantile(0.10)),
@@ -656,6 +672,13 @@ def compute_pe_stats(
         "forward_12m_eps":        forward_12m_eps,
         "ttm_dividend":           _f(last.get("ttm_dividend")),
         "dividend_yield":         _f(last.get("dividend_yield")),
+        # Earnings yield
+        "current_earnings_yield": _f(last.get("earnings_yield")),
+        "earnings_yield_3y_avg":  _f(last.get("earnings_yield_3y_avg")),
+        "earnings_yield_5y_avg":  _f(last.get("earnings_yield_5y_avg")),
+        "forward_earnings_yield": forward_earnings_yield,
+        # Normalized P/E (CAPE-style: price / avg 5yr TTM EPS, includes loss years)
+        "normalized_pe_5y":       _f(last.get("normalized_pe_5y")),
     }
 
     # FCF

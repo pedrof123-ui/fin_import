@@ -84,7 +84,9 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
     cols = [
         "ticker", "market_cap_b", "current_price",
         "current_pe", "pe_lt_median", "pe_p25", "pe_p75", "pe_p10", "pe_p90",
-        "pe_rolling_5yr_median", "forward_pe", "forward_12m_eps",
+        "pe_rolling_5yr_median", "normalized_pe_5y",
+        "current_earnings_yield", "earnings_yield_3y_avg", "earnings_yield_5y_avg",
+        "forward_pe", "forward_12m_eps", "forward_earnings_yield",
         "current_ttm_eps", "months_available",
         "ttm_dividend", "dividend_yield",
         "rev_growth_1yr", "rev_cagr_3yr", "rev_cagr_5yr", "rev_ntm_growth_est",
@@ -135,8 +137,9 @@ def get_pe_history(tickers, start: str | None = None, end: str | None = None) ->
 
     cols = [
         "ticker", "month_end_date", "price", "ttm_eps",
-        "pe_ratio", "pe_rolling_5yr_median", "ttm_source",
-        "ttm_dividend", "dividend_yield", "ttm_revenue",
+        "pe_ratio", "pe_rolling_5yr_median", "normalized_pe_5y",
+        "earnings_yield", "earnings_yield_3y_avg", "earnings_yield_5y_avg",
+        "ttm_source", "ttm_dividend", "dividend_yield", "ttm_revenue",
         "ttm_fcf", "pfcf_ratio", "pfcf_rolling_5yr_median", "fcf_yield",
         "ttm_ebitda", "ev_ebitda", "ev_ebitda_rolling_5yr_median",
         "ps_ratio", "ps_rolling_5yr_median",

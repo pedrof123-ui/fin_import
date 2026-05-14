@@ -321,8 +321,8 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 
 | Table | Key | Computed columns |
 |-------|-----|-----------------|
-| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median, roic, roic_rolling_5yr_median, pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
-| `pe_stats` | ticker | market_cap_b, current_price, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda, current_ps, ps_lt_median, ps_p25/p75, ps_rolling_5yr_median, forward_ps, current_roa, roa_lt_median, roa_p25/p75, roa_rolling_5yr_median, current_roe, roe_lt_median, roe_p25/p75, roe_rolling_5yr_median, current_roic, roic_lt_median, roic_p25/p75, roic_rolling_5yr_median, current_pbv, pbv_lt_median, pbv_p25/p75, pbv_rolling_5yr_median, current_ptbv, ptbv_lt_median, ptbv_p25/p75, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
+| `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, normalized_pe_5y, earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median, roic, roic_rolling_5yr_median, pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
+| `pe_stats` | ticker | market_cap_b, current_price, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, normalized_pe_5y, current_earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, forward_pe, forward_12m_eps, forward_earnings_yield, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median, ebitda_margin_5yr_median, forward_evebitda, current_ps, ps_lt_median, ps_p25/p75, ps_rolling_5yr_median, forward_ps, current_roa, roa_lt_median, roa_p25/p75, roa_rolling_5yr_median, current_roe, roe_lt_median, roe_p25/p75, roe_rolling_5yr_median, current_roic, roic_lt_median, roic_p25/p75, roic_rolling_5yr_median, current_pbv, pbv_lt_median, pbv_p25/p75, pbv_rolling_5yr_median, current_ptbv, ptbv_lt_median, ptbv_p25/p75, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
 | `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
 
 ### Call graph
@@ -343,7 +343,13 @@ hf_import.py / hf_update.py
   │   │   │   ├── shares: shares_outstanding_diluted (fallback: balance sheet)
   │   │   │   ├── TTM EPS: sum last 4 quarterly net_income / shares (or annual fallback)
   │   │   │   ├── pe_ratio = price / ttm_eps (NULL when ttm_eps ≤ 0)
-  │   │   │   ├── pe_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── pe_rolling_5yr_median: rolling(60, min_periods=36).median()
+  │   │   │   │     [min_periods=36 so up to 2 years of losses in the window still yields a value]
+  │   │   │   ├── normalized_pe_5y = price / rolling_60m_mean(ttm_eps, min_periods=36)
+  │   │   │   │     (includes negative EPS years in the average; NULL when avg ≤ 0)
+  │   │   │   ├── earnings_yield = ttm_eps / price (defined even when negative; no blow-up)
+  │   │   │   ├── earnings_yield_3y_avg: rolling(36, min_periods=24).mean()
+  │   │   │   ├── earnings_yield_5y_avg: rolling(60, min_periods=36).mean()
   │   │   │   ├── ttm_dividend: sum dividends with ex_date in trailing 365 days
   │   │   │   ├── dividend_yield: ttm_dividend / price
   │   │   │   ├── ttm_revenue: sum last 4 quarterly total_revenue (or annual fallback)
@@ -351,27 +357,29 @@ hf_import.py / hf_update.py
   │   │   │   │     (AV reports capex as positive; annual fallback)
   │   │   │   ├── pfcf_ratio = price / (ttm_fcf / shares) (NULL when TTM FCF ≤ 0)
   │   │   │   ├── fcf_yield = (ttm_fcf / shares) / price (NULL when TTM FCF ≤ 0)
-  │   │   │   ├── pfcf_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── pfcf_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── ttm_ebitda: sum last 4 quarterly ebitda (or annual fallback)
   │   │   │   ├── ev = price × shares + total_debt − cash (most recent balance sheet ≤ month_end)
   │   │   │   ├── ev_ebitda = ev / ttm_ebitda (NULL when EBITDA ≤ 0 or EV ≤ 0)
-  │   │   │   ├── ev_ebitda_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── ev_ebitda_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── ps_ratio = price × shares / ttm_revenue (market cap / revenue; NULL when revenue = 0)
-  │   │   │   ├── ps_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── ps_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── roa = ttm_net_income / total_assets (most recent BS ≤ month_end; negative allowed)
-  │   │   │   ├── roa_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── roa_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── roe = ttm_net_income / equity (NULL when equity ≤ 0; negative allowed)
-  │   │   │   ├── roe_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── roe_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── NOPAT = TTM EBIT × (1 − eff_tax_rate); rate clamped [0, 0.5], default 21%
   │   │   │   ├── roic = NOPAT / invested_capital; IC = equity + net_debt (NULL when IC ≤ 0)
-  │   │   │   ├── roic_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── roic_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── pbv = price / (equity / shares) (NULL when equity ≤ 0)
-  │   │   │   ├── pbv_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   ├── pbv_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   │   ├── ptbv = price / (TBV / shares); TBV = equity − intangibles_excl_gw − goodwill
   │   │   │   │     (NULL when TBV ≤ 0)
-  │   │   │   └── ptbv_rolling_5yr_median: rolling(60, min_periods=60).median()
+  │   │   │   └── ptbv_rolling_5yr_median: rolling(60, min_periods=36).median()
   │   │   ├── compute_pe_stats(ticker, monthly_pe)
   │   │   │     → current_price + PE percentiles + current snapshot +
+  │   │   │       normalized_pe_5y, current_earnings_yield, earnings_yield_3y/5y_avg,
+  │   │   │       forward_earnings_yield (= forward_12m_eps / price) +
   │   │   │       FCF/EV/EBITDA/P/S/ROA/ROE/ROIC/P/BV/P/TBV lt_median/p25/p75
   │   │   ├── compute_revenue_stats(annual)   → rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr
   │   │   ├── compute_earnings_stats(annual)  → earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr
@@ -413,9 +421,10 @@ hf_import.py / hf_update.py
 ```
 
 Note: `upsert_pe_stats` uses `COALESCE` for estimate-derived and externally-set fields
-(`forward_pe`, `forward_12m_eps`, `forward_pfcf`, `forward_evebitda`, `forward_ps`,
-`rev_ntm_growth_est`, `earn_ntm_growth_est`, `market_cap_b`) so `--skip-estimates` runs
-preserve existing analyst data. The snapshot update phase always runs regardless of `--skip-estimates`.
+(`forward_pe`, `forward_12m_eps`, `forward_earnings_yield`, `forward_pfcf`, `forward_evebitda`,
+`forward_ps`, `rev_ntm_growth_est`, `earn_ntm_growth_est`, `market_cap_b`) so `--skip-estimates`
+runs preserve existing analyst data. The snapshot update phase always runs regardless of
+`--skip-estimates`.
 
 ### Rate limit
 

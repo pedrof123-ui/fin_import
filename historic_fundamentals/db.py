@@ -23,6 +23,8 @@ Typical columns returned:
         ticker, current_pe, pe_lt_median, pe_p10, pe_p25, pe_p75, pe_p90,
         pe_rolling_5yr_median, forward_pe, forward_12m_eps,
         current_ttm_eps, months_available, updated_at,
+        current_earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg,
+        forward_earnings_yield, normalized_pe_5y,
         current_pfcf, pfcf_lt_median, pfcf_p25, pfcf_p75, pfcf_rolling_5yr_median,
         current_fcf_yield, forward_pfcf, fcf_margin_5yr_median,
         fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr,
@@ -38,7 +40,9 @@ Typical columns returned:
         ticker, month_end_date, price, ttm_eps, pe_ratio, pe_rolling_5yr_median,
         ttm_source, shares, ttm_dividend, dividend_yield, ttm_revenue,
         ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield,
-        ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, updated_at
+        ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median,
+        earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg,
+        normalized_pe_5y, updated_at
     query_estimates:
         ticker, fiscal_date, horizon, eps_avg/high/low/count,
         rev_avg/high/low/count, fetched_at
@@ -140,6 +144,10 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_2x   DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_low  DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_high DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield      DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield_3y_avg DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield_5y_avg DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_pe_5y    DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -286,6 +294,11 @@ class HistoricFundamentalsDB:
         self._rename_column_if_exists("pe_stats", "p90",                "pe_p90")
         self._rename_column_if_exists("pe_stats", "rolling_5yr_median", "pe_rolling_5yr_median")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_price DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_earnings_yield  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earnings_yield_3y_avg   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earnings_yield_5y_avg   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_earnings_yield  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS normalized_pe_5y        DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_pe   DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_pcf  DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_peg  DOUBLE")
@@ -342,6 +355,7 @@ class HistoricFundamentalsDB:
             "pbv", "pbv_rolling_5yr_median",
             "ptbv", "ptbv_rolling_5yr_median",
             "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
+            "earnings_yield", "earnings_yield_3y_avg", "earnings_yield_5y_avg", "normalized_pe_5y",
             "updated_at",
         ]
         for col in cols:
@@ -363,6 +377,7 @@ class HistoricFundamentalsDB:
                  pbv, pbv_rolling_5yr_median,
                  ptbv, ptbv_rolling_5yr_median,
                  goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
+                 earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, normalized_pe_5y,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -376,6 +391,7 @@ class HistoricFundamentalsDB:
                        pbv, pbv_rolling_5yr_median,
                        ptbv, ptbv_rolling_5yr_median,
                        goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
+                       earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, normalized_pe_5y,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -406,7 +422,9 @@ class HistoricFundamentalsDB:
              current_roic, roic_lt_median, roic_p25, roic_p75, roic_rolling_5yr_median,
              current_pbv, pbv_lt_median, pbv_p25, pbv_p75, pbv_rolling_5yr_median,
              current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median,
-             goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high)
+             goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
+             current_earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg,
+             forward_earnings_yield, normalized_pe_5y)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
@@ -415,7 +433,8 @@ class HistoricFundamentalsDB:
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
                 current_price              = excluded.current_price,
@@ -496,7 +515,12 @@ class HistoricFundamentalsDB:
                 goal_bv                    = excluded.goal_bv,
                 goal_2x                    = excluded.goal_2x,
                 goal_low                   = excluded.goal_low,
-                goal_high                  = excluded.goal_high
+                goal_high                  = excluded.goal_high,
+                current_earnings_yield     = excluded.current_earnings_yield,
+                earnings_yield_3y_avg      = excluded.earnings_yield_3y_avg,
+                earnings_yield_5y_avg      = excluded.earnings_yield_5y_avg,
+                forward_earnings_yield     = COALESCE(excluded.forward_earnings_yield, pe_stats.forward_earnings_yield),
+                normalized_pe_5y           = excluded.normalized_pe_5y
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -579,6 +603,11 @@ class HistoricFundamentalsDB:
             stats.get("goal_2x"),
             stats.get("goal_low"),
             stats.get("goal_high"),
+            stats.get("current_earnings_yield"),
+            stats.get("earnings_yield_3y_avg"),
+            stats.get("earnings_yield_5y_avg"),
+            stats.get("forward_earnings_yield"),
+            stats.get("normalized_pe_5y"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
