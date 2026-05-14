@@ -144,10 +144,18 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_2x   DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_low  DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS goal_high DOUBLE")
-        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield      DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield        DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield_3y_avg DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_yield_5y_avg DOUBLE")
-        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_pe_5y    DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_pe_5y      DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_yield_3y_avg      DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_yield_5y_avg      DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_pfcf_5y    DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ebitda_ev_yield        DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ebitda_ev_yield_3y_avg DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ebitda_ev_yield_5y_avg DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_evebitda_5y DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_ps_5y       DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -294,11 +302,19 @@ class HistoricFundamentalsDB:
         self._rename_column_if_exists("pe_stats", "p90",                "pe_p90")
         self._rename_column_if_exists("pe_stats", "rolling_5yr_median", "pe_rolling_5yr_median")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_price DOUBLE")
-        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_earnings_yield  DOUBLE")
-        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earnings_yield_3y_avg   DOUBLE")
-        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earnings_yield_5y_avg   DOUBLE")
-        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_earnings_yield  DOUBLE")
-        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS normalized_pe_5y        DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_earnings_yield    DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earnings_yield_3y_avg     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS earnings_yield_5y_avg     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS forward_earnings_yield    DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS normalized_pe_5y          DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_yield_3y_avg          DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_yield_5y_avg          DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS normalized_pfcf_5y        DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_ebitda_ev_yield   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ebitda_ev_yield_3y_avg    DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ebitda_ev_yield_5y_avg    DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS normalized_evebitda_5y    DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS normalized_ps_5y          DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_pe   DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_pcf  DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_peg  DOUBLE")
@@ -356,6 +372,9 @@ class HistoricFundamentalsDB:
             "ptbv", "ptbv_rolling_5yr_median",
             "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
             "earnings_yield", "earnings_yield_3y_avg", "earnings_yield_5y_avg", "normalized_pe_5y",
+            "fcf_yield_3y_avg", "fcf_yield_5y_avg", "normalized_pfcf_5y",
+            "ebitda_ev_yield", "ebitda_ev_yield_3y_avg", "ebitda_ev_yield_5y_avg", "normalized_evebitda_5y",
+            "normalized_ps_5y",
             "updated_at",
         ]
         for col in cols:
@@ -378,6 +397,9 @@ class HistoricFundamentalsDB:
                  ptbv, ptbv_rolling_5yr_median,
                  goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
                  earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, normalized_pe_5y,
+                 fcf_yield_3y_avg, fcf_yield_5y_avg, normalized_pfcf_5y,
+                 ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg, normalized_evebitda_5y,
+                 normalized_ps_5y,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -392,6 +414,9 @@ class HistoricFundamentalsDB:
                        ptbv, ptbv_rolling_5yr_median,
                        goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
                        earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, normalized_pe_5y,
+                       fcf_yield_3y_avg, fcf_yield_5y_avg, normalized_pfcf_5y,
+                       ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg, normalized_evebitda_5y,
+                       normalized_ps_5y,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -424,7 +449,10 @@ class HistoricFundamentalsDB:
              current_ptbv, ptbv_lt_median, ptbv_p25, ptbv_p75, ptbv_rolling_5yr_median,
              goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high,
              current_earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg,
-             forward_earnings_yield, normalized_pe_5y)
+             forward_earnings_yield, normalized_pe_5y,
+             fcf_yield_3y_avg, fcf_yield_5y_avg, normalized_pfcf_5y,
+             current_ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg,
+             normalized_evebitda_5y, normalized_ps_5y)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
@@ -434,6 +462,8 @@ class HistoricFundamentalsDB:
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?,
                     ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
@@ -520,7 +550,15 @@ class HistoricFundamentalsDB:
                 earnings_yield_3y_avg      = excluded.earnings_yield_3y_avg,
                 earnings_yield_5y_avg      = excluded.earnings_yield_5y_avg,
                 forward_earnings_yield     = COALESCE(excluded.forward_earnings_yield, pe_stats.forward_earnings_yield),
-                normalized_pe_5y           = excluded.normalized_pe_5y
+                normalized_pe_5y           = excluded.normalized_pe_5y,
+                fcf_yield_3y_avg           = excluded.fcf_yield_3y_avg,
+                fcf_yield_5y_avg           = excluded.fcf_yield_5y_avg,
+                normalized_pfcf_5y         = excluded.normalized_pfcf_5y,
+                current_ebitda_ev_yield    = excluded.current_ebitda_ev_yield,
+                ebitda_ev_yield_3y_avg     = excluded.ebitda_ev_yield_3y_avg,
+                ebitda_ev_yield_5y_avg     = excluded.ebitda_ev_yield_5y_avg,
+                normalized_evebitda_5y     = excluded.normalized_evebitda_5y,
+                normalized_ps_5y           = excluded.normalized_ps_5y
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -608,6 +646,14 @@ class HistoricFundamentalsDB:
             stats.get("earnings_yield_5y_avg"),
             stats.get("forward_earnings_yield"),
             stats.get("normalized_pe_5y"),
+            stats.get("fcf_yield_3y_avg"),
+            stats.get("fcf_yield_5y_avg"),
+            stats.get("normalized_pfcf_5y"),
+            stats.get("current_ebitda_ev_yield"),
+            stats.get("ebitda_ev_yield_3y_avg"),
+            stats.get("ebitda_ev_yield_5y_avg"),
+            stats.get("normalized_evebitda_5y"),
+            stats.get("normalized_ps_5y"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:

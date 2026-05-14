@@ -493,26 +493,32 @@ def build_monthly_pe(
 
         # ── TTM FCF / P/FCF ───────────────────────────────────────────────────
         ttm_fcf = _get_ttm_fcf(month_end, cfq, cfa)
+        fcf_per_share = None
         pfcf_ratio = None
         fcf_yield = None
         if ttm_fcf is not None and sh is not None and sh > 0:
             fcf_per_share = ttm_fcf / sh
             if fcf_per_share > 0:
                 pfcf_ratio = float(price) / fcf_per_share
-                fcf_yield  = fcf_per_share / float(price)
+            fcf_yield = fcf_per_share / float(price)  # always defined; negative when FCF < 0
 
         # ── TTM EBITDA / EV/EBITDA ────────────────────────────────────────────
         # sh is sourced from shares_outstanding_diluted (split-adjusted) so
         # price * sh gives the correct split-adjusted market cap.
         ttm_ebitda = _get_ttm_ebitda(month_end, q, a)
+        ev = None
         ev_ebitda = None
-        if ttm_ebitda is not None and ttm_ebitda > 0 and sh is not None:
+        ebitda_ev_yield = None
+        if sh is not None:
             total_debt, cash = _get_ev_debt_cash(month_end, q, a)
             if total_debt is not None and cash is not None:
-                market_cap = float(price) * sh
-                ev = market_cap + total_debt - cash
-                if ev > 0:
-                    ev_ebitda = ev / ttm_ebitda
+                computed_ev = float(price) * sh + total_debt - cash
+                if computed_ev > 0:
+                    ev = computed_ev
+                    if ttm_ebitda is not None and ttm_ebitda > 0:
+                        ev_ebitda = ev / ttm_ebitda
+                    if ttm_ebitda is not None:
+                        ebitda_ev_yield = ttm_ebitda / ev  # always defined; negative when EBITDA < 0
 
         # ── Balance sheet snapshot for new metrics ────────────────────────────
         bs_equity = bs_assets = bs_intang = bs_gw = None
@@ -582,12 +588,15 @@ def build_monthly_pe(
             "ttm_dividend":   ttm_dividend,
             "dividend_yield": dividend_yield,
             "ttm_revenue":    ttm_revenue,
-            "ttm_fcf":        ttm_fcf,
-            "pfcf_ratio":     pfcf_ratio,
-            "fcf_yield":      fcf_yield,
-            "ttm_ebitda":     ttm_ebitda,
-            "ev_ebitda":      ev_ebitda,
-            "ps_ratio":       ps_ratio,
+            "ttm_fcf":          ttm_fcf,
+            "fcf_per_share":    fcf_per_share,
+            "pfcf_ratio":       pfcf_ratio,
+            "fcf_yield":        fcf_yield,
+            "ttm_ebitda":       ttm_ebitda,
+            "ev":               ev,
+            "ev_ebitda":        ev_ebitda,
+            "ebitda_ev_yield":  ebitda_ev_yield,
+            "ps_ratio":         ps_ratio,
             "roa":            roa,
             "roe":            roe,
             "roic":           roic,
@@ -610,14 +619,29 @@ def build_monthly_pe(
     df["ptbv_rolling_5yr_median"]      = df["ptbv"].rolling(60, min_periods=36).median()
 
     # Earnings yield = EPS / price (meaningful even when negative; avoids P/E blow-up)
-    df["earnings_yield"]     = df["ttm_eps"] / df["price"]
+    df["earnings_yield"]        = df["ttm_eps"] / df["price"]
     df["earnings_yield_3y_avg"] = df["earnings_yield"].rolling(36, min_periods=24).mean()
     df["earnings_yield_5y_avg"] = df["earnings_yield"].rolling(60, min_periods=36).mean()
 
     # Normalized P/E: price / avg(TTM EPS over 5yr). Includes negative EPS years honestly.
     avg_eps_5y = df["ttm_eps"].rolling(60, min_periods=36).mean()
-    normalized_pe = df["price"] / avg_eps_5y
-    df["normalized_pe_5y"] = normalized_pe.where(avg_eps_5y > 0)
+    df["normalized_pe_5y"] = (df["price"] / avg_eps_5y).where(avg_eps_5y > 0)
+
+    # FCF yield rolling avgs + normalized P/FCF (fcf_yield is now always defined when FCF computable)
+    df["fcf_yield_3y_avg"]  = df["fcf_yield"].rolling(36, min_periods=24).mean()
+    df["fcf_yield_5y_avg"]  = df["fcf_yield"].rolling(60, min_periods=36).mean()
+    avg_fcf_ps_5y = df["fcf_per_share"].rolling(60, min_periods=36).mean()
+    df["normalized_pfcf_5y"] = (df["price"] / avg_fcf_ps_5y).where(avg_fcf_ps_5y > 0)
+
+    # EBITDA/EV yield rolling avgs + normalized EV/EBITDA
+    df["ebitda_ev_yield_3y_avg"]  = df["ebitda_ev_yield"].rolling(36, min_periods=24).mean()
+    df["ebitda_ev_yield_5y_avg"]  = df["ebitda_ev_yield"].rolling(60, min_periods=36).mean()
+    avg_ebitda_5y = df["ttm_ebitda"].rolling(60, min_periods=36).mean()
+    df["normalized_evebitda_5y"] = (df["ev"] / avg_ebitda_5y).where(avg_ebitda_5y > 0)
+
+    # Normalized P/S: market_cap / avg(TTM revenue over 5yr)
+    avg_revenue_5y = df["ttm_revenue"].rolling(60, min_periods=36).mean()
+    df["normalized_ps_5y"] = (df["price"] * df["shares"] / avg_revenue_5y).where(avg_revenue_5y > 0)
 
     return df
 
@@ -688,6 +712,9 @@ def compute_pe_stats(
         "current_pfcf":            _f(last.get("pfcf_ratio")),
         "pfcf_rolling_5yr_median": _f(last.get("pfcf_rolling_5yr_median")),
         "current_fcf_yield":       _f(last.get("fcf_yield")),
+        "fcf_yield_3y_avg":        _f(last.get("fcf_yield_3y_avg")),
+        "fcf_yield_5y_avg":        _f(last.get("fcf_yield_5y_avg")),
+        "normalized_pfcf_5y":      _f(last.get("normalized_pfcf_5y")),
     })
 
     # EV/EBITDA
@@ -696,6 +723,10 @@ def compute_pe_stats(
     result.update({
         "current_evebitda":            _f(last.get("ev_ebitda")),
         "evebitda_rolling_5yr_median": _f(last.get("ev_ebitda_rolling_5yr_median")),
+        "current_ebitda_ev_yield":     _f(last.get("ebitda_ev_yield")),
+        "ebitda_ev_yield_3y_avg":      _f(last.get("ebitda_ev_yield_3y_avg")),
+        "ebitda_ev_yield_5y_avg":      _f(last.get("ebitda_ev_yield_5y_avg")),
+        "normalized_evebitda_5y":      _f(last.get("normalized_evebitda_5y")),
     })
 
     # P/S
@@ -704,6 +735,7 @@ def compute_pe_stats(
     result.update({
         "current_ps":            _f(last.get("ps_ratio")),
         "ps_rolling_5yr_median": _f(last.get("ps_rolling_5yr_median")),
+        "normalized_ps_5y":      _f(last.get("normalized_ps_5y")),
     })
 
     # ROA
