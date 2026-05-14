@@ -3,17 +3,18 @@
 Refresh all tickers in data/av_financials.duckdb with the latest Alpha Vantage data.
 
 Fetches financial statements (income, balance, cashflow), shares outstanding,
-and dividend history for every ticker in the database.
+dividend history, and company overview for every ticker in the database.
 
 Usage:
     uv run scripts/av_update.py                    # update all tickers, all data
     uv run scripts/av_update.py --ticker AAPL      # single ticker
     uv run scripts/av_update.py --skip-shares      # skip SHARES_OUTSTANDING calls
     uv run scripts/av_update.py --skip-dividends   # skip DIVIDENDS calls
+    uv run scripts/av_update.py --skip-overview    # skip OVERVIEW calls
     uv run scripts/av_update.py --db PATH --verbose
 
-Rate: 5 AV API calls per ticker (3 statements + 1 shares + 1 dividends).
-At 75 calls/min: ~95 min for ~1400 tickers.
+Rate: 6 AV API calls per ticker (3 statements + 1 shares + 1 dividends + 1 overview).
+At 75 calls/min: ~115 min for ~1400 tickers.
 After running, execute hf_update.py to recompute derived metrics in historic_fundamentals.duckdb.
 """
 
@@ -38,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ticker",          metavar="TICKER", help="Update a single ticker instead of all")
     parser.add_argument("--skip-shares",     action="store_true", help="Skip SHARES_OUTSTANDING calls")
     parser.add_argument("--skip-dividends",  action="store_true", help="Skip DIVIDENDS calls")
+    parser.add_argument("--skip-overview",   action="store_true", help="Skip OVERVIEW calls")
     parser.add_argument("--db",              metavar="PATH",   help="Override DB path")
     parser.add_argument("--verbose",         action="store_true", help="Enable DEBUG logging")
     return parser.parse_args()
@@ -72,6 +74,8 @@ def main() -> int:
         phases.append("shares")
     if not args.skip_dividends:
         phases.append("dividends")
+    if not args.skip_overview:
+        phases.append("overview")
     log.info("Updating %d ticker(s): %s", len(tickers), ", ".join(phases))
 
     limiter = RateLimiter()
@@ -103,6 +107,14 @@ def main() -> int:
                     log.debug("%s %s — dividends: %d rows", prefix, ticker, n)
                 except Exception as exc:
                     log.error("%s %s — dividends failed: %s", prefix, ticker, exc)
+                    ticker_ok = False
+
+            if not args.skip_overview:
+                try:
+                    db.import_company_overview(ticker, api_key, limiter)
+                    log.debug("%s %s — overview: ok", prefix, ticker)
+                except Exception as exc:
+                    log.error("%s %s — overview failed: %s", prefix, ticker, exc)
                     ticker_ok = False
 
             if ticker_ok:

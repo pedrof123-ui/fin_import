@@ -129,6 +129,66 @@ _CASHFLOW_COLS: list[tuple[str, str]] = [
 ]
 
 
+_OVERVIEW_TEXT_COLS: list[tuple[str, str]] = [
+    ("Name",          "name"),
+    ("AssetType",     "asset_type"),
+    ("Description",   "description"),
+    ("CIK",           "cik"),
+    ("Exchange",      "exchange"),
+    ("Currency",      "currency"),
+    ("Country",       "country"),
+    ("Sector",        "sector"),
+    ("Industry",      "industry"),
+    ("Address",       "address"),
+    ("FiscalYearEnd", "fiscal_year_end"),
+]
+
+_OVERVIEW_DATE_COLS: list[tuple[str, str]] = [
+    ("LatestQuarter",  "latest_quarter"),
+    ("DividendDate",   "dividend_date"),
+    ("ExDividendDate", "ex_dividend_date"),
+]
+
+_OVERVIEW_NUM_COLS: list[tuple[str, str]] = [
+    ("MarketCapitalization",        "market_cap"),
+    ("EBITDA",                      "ebitda"),
+    ("PERatio",                     "pe_ratio"),
+    ("PEGRatio",                    "peg_ratio"),
+    ("BookValue",                   "book_value"),
+    ("DividendPerShare",            "dividend_per_share"),
+    ("DividendYield",               "dividend_yield"),
+    ("EPS",                         "eps"),
+    ("RevenuePerShareTTM",          "revenue_per_share_ttm"),
+    ("ProfitMargin",                "profit_margin"),
+    ("OperatingMarginTTM",          "operating_margin_ttm"),
+    ("ReturnOnAssetsTTM",           "return_on_assets_ttm"),
+    ("ReturnOnEquityTTM",           "return_on_equity_ttm"),
+    ("RevenueTTM",                  "revenue_ttm"),
+    ("GrossProfitTTM",              "gross_profit_ttm"),
+    ("DilutedEPSTTM",               "diluted_eps_ttm"),
+    ("QuarterlyEarningsGrowthYOY",  "quarterly_earnings_growth_yoy"),
+    ("QuarterlyRevenueGrowthYOY",   "quarterly_revenue_growth_yoy"),
+    ("AnalystTargetPrice",          "analyst_target_price"),
+    ("AnalystRatingStrongBuy",      "analyst_rating_strong_buy"),
+    ("AnalystRatingBuy",            "analyst_rating_buy"),
+    ("AnalystRatingHold",           "analyst_rating_hold"),
+    ("AnalystRatingSell",           "analyst_rating_sell"),
+    ("AnalystRatingStrongSell",     "analyst_rating_strong_sell"),
+    ("TrailingPE",                  "trailing_pe"),
+    ("ForwardPE",                   "forward_pe"),
+    ("PriceToSalesRatioTTM",        "price_to_sales_ttm"),
+    ("PriceToBookRatio",            "price_to_book"),
+    ("EVToRevenue",                 "ev_to_revenue"),
+    ("EVToEBITDA",                  "ev_to_ebitda"),
+    ("Beta",                        "beta"),
+    ("52WeekHigh",                  "week_52_high"),
+    ("52WeekLow",                   "week_52_low"),
+    ("50DayMovingAverage",          "day_50_moving_avg"),
+    ("200DayMovingAverage",         "day_200_moving_avg"),
+    ("SharesOutstanding",           "shares_outstanding"),
+]
+
+
 def _v(raw: Any) -> float | None:
     """Convert an AV string value to float, returning None for missing data."""
     if raw is None or raw == "None":
@@ -136,6 +196,24 @@ def _v(raw: Any) -> float | None:
     try:
         return float(raw)
     except (TypeError, ValueError):
+        return None
+
+
+def _s(raw: Any) -> str | None:
+    """Convert an AV string value, returning None for missing/sentinel values."""
+    if raw is None or str(raw).strip() in ("None", "-", ""):
+        return None
+    return str(raw)
+
+
+def _d(raw: Any) -> date | None:
+    """Convert an AV date string to date, returning None for missing/invalid values."""
+    v = _s(raw)
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(v)
+    except ValueError:
         return None
 
 
@@ -353,6 +431,64 @@ class AVFinancialsDB:
                 statements       VARCHAR,
                 periods_inserted INTEGER,
                 error_msg        VARCHAR
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS company_overview (
+                ticker                          VARCHAR NOT NULL,
+                fetch_date                      DATE    NOT NULL,
+                name                            VARCHAR,
+                asset_type                      VARCHAR,
+                description                     VARCHAR,
+                cik                             VARCHAR,
+                exchange                        VARCHAR,
+                currency                        VARCHAR,
+                country                         VARCHAR,
+                sector                          VARCHAR,
+                industry                        VARCHAR,
+                address                         VARCHAR,
+                fiscal_year_end                 VARCHAR,
+                latest_quarter                  DATE,
+                market_cap                      DOUBLE,
+                ebitda                          DOUBLE,
+                pe_ratio                        DOUBLE,
+                peg_ratio                       DOUBLE,
+                book_value                      DOUBLE,
+                dividend_per_share              DOUBLE,
+                dividend_yield                  DOUBLE,
+                eps                             DOUBLE,
+                revenue_per_share_ttm           DOUBLE,
+                profit_margin                   DOUBLE,
+                operating_margin_ttm            DOUBLE,
+                return_on_assets_ttm            DOUBLE,
+                return_on_equity_ttm            DOUBLE,
+                revenue_ttm                     DOUBLE,
+                gross_profit_ttm                DOUBLE,
+                diluted_eps_ttm                 DOUBLE,
+                quarterly_earnings_growth_yoy   DOUBLE,
+                quarterly_revenue_growth_yoy    DOUBLE,
+                analyst_target_price            DOUBLE,
+                analyst_rating_strong_buy       DOUBLE,
+                analyst_rating_buy              DOUBLE,
+                analyst_rating_hold             DOUBLE,
+                analyst_rating_sell             DOUBLE,
+                analyst_rating_strong_sell      DOUBLE,
+                trailing_pe                     DOUBLE,
+                forward_pe                      DOUBLE,
+                price_to_sales_ttm              DOUBLE,
+                price_to_book                   DOUBLE,
+                ev_to_revenue                   DOUBLE,
+                ev_to_ebitda                    DOUBLE,
+                beta                            DOUBLE,
+                week_52_high                    DOUBLE,
+                week_52_low                     DOUBLE,
+                day_50_moving_avg               DOUBLE,
+                day_200_moving_avg              DOUBLE,
+                shares_outstanding              DOUBLE,
+                dividend_date                   DATE,
+                ex_dividend_date                DATE,
+                PRIMARY KEY (ticker, fetch_date)
             )
         """)
 
@@ -621,6 +757,69 @@ class AVFinancialsDB:
             )
             count += 1
         return count
+
+    def import_company_overview(self, ticker: str, api_key: str, limiter: RateLimiter) -> None:
+        """Fetch OVERVIEW for ticker and upsert one row keyed by (ticker, today). Raises on error."""
+        payload = self._fetch("OVERVIEW", ticker, api_key, limiter)
+        if not payload.get("Symbol") or payload.get("Symbol") == "None":
+            raise RuntimeError(f"No overview data returned for {ticker}")
+
+        text_vals = [_s(payload.get(av)) for av, _ in _OVERVIEW_TEXT_COLS]
+        date_vals = [_d(payload.get(av)) for av, _ in _OVERVIEW_DATE_COLS]
+        num_vals  = [_v(payload.get(av)) for av, _ in _OVERVIEW_NUM_COLS]
+
+        all_cols = (
+            ["ticker", "fetch_date"]
+            + [db for _, db in _OVERVIEW_TEXT_COLS]
+            + [db for _, db in _OVERVIEW_DATE_COLS]
+            + [db for _, db in _OVERVIEW_NUM_COLS]
+        )
+        all_vals = [ticker, date.today()] + text_vals + date_vals + num_vals
+
+        placeholders = ", ".join(["?"] * len(all_vals))
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO company_overview ({', '.join(all_cols)}) VALUES ({placeholders})",
+            all_vals,
+        )
+
+    def query_company_overview(
+        self,
+        tickers: list[str] | None = None,
+        latest_only: bool = True,
+    ) -> pd.DataFrame:
+        """Return company overview rows as a DataFrame.
+
+        Args:
+            tickers:     Filter to these tickers; None returns all.
+            latest_only: If True, return only the most recent snapshot per ticker.
+        """
+        if tickers:
+            placeholders = ", ".join(["?"] * len(tickers))
+            where = f"WHERE ticker IN ({placeholders})"
+            params: list = list(tickers)
+        else:
+            where = ""
+            params = []
+
+        if latest_only:
+            sql = f"""
+                SELECT * FROM company_overview
+                {where}
+                QUALIFY fetch_date = MAX(fetch_date) OVER (PARTITION BY ticker)
+                ORDER BY ticker
+            """
+        else:
+            sql = f"SELECT * FROM company_overview {where} ORDER BY ticker, fetch_date"
+
+        return self.conn.execute(sql, params).df()
+
+    def has_overview_this_month(self, ticker: str) -> bool:
+        """Return True if an overview row exists for ticker fetched in the current calendar month."""
+        first_of_month = date.today().replace(day=1)
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM company_overview WHERE ticker = ? AND fetch_date >= ?",
+            [ticker, first_of_month],
+        ).fetchone()[0] > 0
 
     def list_tickers(self) -> list[str]:
         return [r[0] for r in self.conn.execute("SELECT ticker FROM companies ORDER BY ticker").fetchall()]

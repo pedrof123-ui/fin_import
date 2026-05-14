@@ -29,17 +29,45 @@ Usage:
 
 import os
 from datetime import date as _date
+from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
 
 from historic_fundamentals.db import DEFAULT_DB_PATH, HistoricFundamentalsDB
 
+_AV_DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent / "data" / "av_financials.duckdb")
+
 
 def _open_db() -> HistoricFundamentalsDB:
     load_dotenv()
     path = os.getenv("HF_DB_PATH") or DEFAULT_DB_PATH
     return HistoricFundamentalsDB(path)
+
+
+def _overview_slice(tickers: list[str] | None) -> pd.DataFrame:
+    """Return latest name/sector/industry/beta from av_financials.duckdb. Empty DF on any failure."""
+    import logging  # noqa: PLC0415
+    try:
+        from av_financials_db import AVFinancialsDB  # noqa: PLC0415
+        raw_path = os.getenv("AV_DB_PATH") or _AV_DEFAULT_DB_PATH
+        # Resolve relative paths against the project root so notebooks work from any CWD
+        av_path = str(
+            Path(raw_path) if Path(raw_path).is_absolute()
+            else Path(__file__).resolve().parent.parent / raw_path
+        )
+        av_db = AVFinancialsDB(av_path)
+        try:
+            ov = av_db.query_company_overview(tickers, latest_only=True)
+        finally:
+            av_db.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("company_overview unavailable: %s", exc)
+        return pd.DataFrame()
+    if ov.empty:
+        return ov
+    cols = [c for c in ["ticker", "name", "sector", "industry", "beta"] if c in ov.columns]
+    return ov[cols].copy()
 
 
 def _tickers(t) -> list[str] | None:
@@ -52,23 +80,13 @@ def _tickers(t) -> list[str] | None:
 
 def get_pe_stats(tickers=None) -> pd.DataFrame:
     """
-    Statistics snapshot: PE, P/FCF, EV/EBITDA, growth metrics.
+    Statistics snapshot: PE, P/FCF, EV/EBITDA, growth metrics, plus company overview fields.
+
+    Includes name, sector, industry, beta from the latest company_overview snapshot in
+    av_financials.duckdb (joined silently; NaN if overview not yet imported).
 
     Args:
         tickers: str, list[str], or None (returns all tickers)
-
-    Returns DataFrame with columns:
-        ticker, market_cap_b,
-        current_pe, pe_lt_median, pe_p25, pe_p75, pe_p10, pe_p90,
-        pe_rolling_5yr_median, forward_pe, forward_12m_eps, current_ttm_eps,
-        months_available, ttm_dividend, dividend_yield,
-        rev_growth_1yr, rev_cagr_3yr, rev_cagr_5yr, rev_ntm_growth_est,
-        earn_growth_1yr, earn_cagr_3yr, earn_cagr_5yr, earn_ntm_growth_est,
-        current_pfcf, pfcf_lt_median, pfcf_p25, pfcf_p75,
-        pfcf_rolling_5yr_median, current_fcf_yield, forward_pfcf,
-        fcf_growth_1yr, fcf_cagr_3yr, fcf_cagr_5yr, fcf_margin_5yr_median,
-        current_evebitda, evebitda_lt_median, evebitda_p25, evebitda_p75,
-        evebitda_rolling_5yr_median
 
     Examples:
         get_pe_stats("AAPL")
@@ -82,7 +100,8 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         db.close()
 
     cols = [
-        "ticker", "market_cap_b", "current_price",
+        "ticker", "name", "sector", "industry",
+        "market_cap_b", "current_price", "beta",
         "current_pe", "pe_lt_median", "pe_p25", "pe_p75", "pe_p10", "pe_p90",
         "pe_rolling_5yr_median", "normalized_pe_5y",
         "current_earnings_yield", "earnings_yield_3y_avg", "earnings_yield_5y_avg",
@@ -108,6 +127,11 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "current_ptbv", "ptbv_lt_median", "ptbv_p25", "ptbv_p75", "ptbv_rolling_5yr_median",
         "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
     ]
+
+    ov = _overview_slice(_tickers(tickers))
+    if not ov.empty:
+        df = df.merge(ov, on="ticker", how="left")
+
     return df[[c for c in cols if c in df.columns]]
 
 

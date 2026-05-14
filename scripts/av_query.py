@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Query Alpha Vantage financial statements from data/av_financials.duckdb.
+Query Alpha Vantage financial statements and company overview from data/av_financials.duckdb.
 
 Usage:
     uv run scripts/av_query.py AAPL
     uv run scripts/av_query.py AAPL MSFT --statement income --period annual
     uv run scripts/av_query.py AAPL --start 2020-01-01 --end 2024-12-31
     uv run scripts/av_query.py AAPL --statement balance --out aapl_balance.csv
+    uv run scripts/av_query.py AAPL --overview                   # latest company overview snapshot
+    uv run scripts/av_query.py AAPL --overview --history         # all monthly overview snapshots
     uv run scripts/av_query.py AAPL --verbose
 """
 
@@ -40,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start", metavar="YYYY-MM-DD", help="Start date (inclusive)")
     parser.add_argument("--end",   metavar="YYYY-MM-DD", help="End date (inclusive)")
+    parser.add_argument("--overview", action="store_true", help="Show company overview instead of financial statements")
+    parser.add_argument("--history",  action="store_true", help="With --overview: show all monthly snapshots instead of latest only")
     parser.add_argument("--out",   metavar="FILE", help="CSV output path (default: print to stdout)")
     parser.add_argument("--db",    metavar="PATH", help="Override DB path")
     parser.add_argument("--verbose", action="store_true", help="Enable DEBUG logging")
@@ -65,36 +69,33 @@ def main() -> int:
     db_path = args.db or os.getenv("AV_DB_PATH") or DEFAULT_DB_PATH
     tickers = [t.upper() for t in args.tickers]
 
+    import pandas as pd  # noqa: PLC0415
+
     db = AVFinancialsDB(db_path)
     try:
-        results = db.query(
-            tickers=tickers,
-            statement=args.statement,
-            period_type=args.period,
-            start_date=_parse_date(args.start),
-            end_date=_parse_date(args.end),
-        )
+        if args.overview:
+            combined = db.query_company_overview(tickers, latest_only=not args.history)
+        else:
+            results = db.query(
+                tickers=tickers,
+                statement=args.statement,
+                period_type=args.period,
+                start_date=_parse_date(args.start),
+                end_date=_parse_date(args.end),
+            )
+            frames = []
+            for stmt_name, df in results.items():
+                if not df.empty:
+                    df = df.copy()
+                    df.insert(0, "statement", stmt_name)
+                    frames.append(df)
+            combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     finally:
         db.close()
 
-    if not results:
+    if combined.empty:
         log.warning("No data found for %s", ", ".join(tickers))
         return 1
-
-    # Combine all statement DataFrames, tagging each with a 'statement' column
-    import pandas as pd  # noqa: PLC0415
-    frames = []
-    for stmt_name, df in results.items():
-        if not df.empty:
-            df = df.copy()
-            df.insert(0, "statement", stmt_name)
-            frames.append(df)
-
-    if not frames:
-        log.warning("No rows found for %s with the given filters", ", ".join(tickers))
-        return 1
-
-    combined = pd.concat(frames, ignore_index=True)
 
     if args.out:
         combined.to_csv(args.out, index=False)
