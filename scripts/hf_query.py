@@ -10,25 +10,25 @@ Usage:
     uv run scripts/hf_query.py AAPL --view timeseries --start 2020-01-01 --end 2024-12-31
     uv run scripts/hf_query.py AAPL --view estimates                   # analyst estimates
     uv run scripts/hf_query.py --all --out pe_stats.csv               # export all stats to CSV
+    uv run scripts/hf_query.py --view sector                           # latest sector medians
+    uv run scripts/hf_query.py --view sector --group industry          # latest industry medians
+    uv run scripts/hf_query.py --view sector Technology Healthcare     # filter specific sectors
+    uv run scripts/hf_query.py --view sector-history --name Technology # sector monthly timeseries
+    uv run scripts/hf_query.py --view sector-history --name Technology --start 2020-01-01
 
 Options:
-    --view   stats        PE statistics snapshot per ticker (default)
-             timeseries   Monthly PE history with rolling 5yr median
-             estimates    Latest analyst EPS and revenue estimates
+    --view   stats           PE statistics snapshot per ticker (default)
+             timeseries      Monthly PE history with rolling 5yr median
+             estimates       Latest analyst EPS and revenue estimates
+             sector          Latest sector/industry aggregate fundamentals
+             sector-history  Monthly timeseries for a single sector/industry
     --all                 Query all tickers in the DB
-    --start  YYYY-MM-DD   Start date filter (timeseries only)
-    --end    YYYY-MM-DD   End date filter (timeseries only)
+    --group  {sector,industry}  Group type for sector views (default: sector)
+    --name   NAME         Sector/industry name for sector-history view
+    --start  YYYY-MM-DD   Start date filter (timeseries/sector-history only)
+    --end    YYYY-MM-DD   End date filter (timeseries/sector-history only)
     --out    FILE         Write output to CSV instead of stdout
     --db     PATH         Override data/historic_fundamentals.duckdb path
-
-Columns returned per view:
-    stats       ticker, current_pe, lt_median, p25, p75, p10, p90,
-                rolling_5yr_median, forward_pe, forward_12m_eps,
-                current_ttm_eps, months_available, updated_at
-    timeseries  ticker, month_end_date, price, ttm_eps, pe_ratio,
-                rolling_5yr_median, ttm_source (quarterly|annual)
-    estimates   ticker, fiscal_date, horizon, eps_avg/high/low,
-                eps_count, rev_avg/high/low, fetched_at
 """
 
 import argparse
@@ -57,14 +57,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Query historic PE fundamentals and analyst estimates.",
     )
-    parser.add_argument("tickers", nargs="*", metavar="TICKER", help="One or more ticker symbols")
+    parser.add_argument("tickers", nargs="*", metavar="TICKER", help="One or more ticker or sector/industry names")
     parser.add_argument("--all", action="store_true", help="Query all tickers in the DB")
     parser.add_argument(
-        "--view", choices=["stats", "timeseries", "estimates"], default="stats",
-        help="What to show: stats (default), timeseries, or estimates",
+        "--view", choices=["stats", "timeseries", "estimates", "sector", "sector-history"], default="stats",
+        help="What to show: stats (default), timeseries, estimates, sector, or sector-history",
     )
-    parser.add_argument("--start", metavar="YYYY-MM-DD", help="Start date for timeseries (inclusive)")
-    parser.add_argument("--end",   metavar="YYYY-MM-DD", help="End date for timeseries (inclusive)")
+    parser.add_argument(
+        "--group", choices=["sector", "industry"], default="sector",
+        help="Group type for sector/sector-history views (default: sector)",
+    )
+    parser.add_argument("--name", metavar="NAME", help="Sector/industry name for sector-history view")
+    parser.add_argument("--start", metavar="YYYY-MM-DD", help="Start date (timeseries/sector-history, inclusive)")
+    parser.add_argument("--end",   metavar="YYYY-MM-DD", help="End date (timeseries/sector-history, inclusive)")
     parser.add_argument("--out",   metavar="FILE", help="Write output to CSV instead of stdout")
     parser.add_argument("--db",    metavar="PATH", help="Override DB path")
     parser.add_argument("--verbose", action="store_true", help="Enable DEBUG logging")
@@ -89,7 +94,10 @@ def main() -> int:
         datefmt="%H:%M:%S",
     )
 
-    if not args.all and not args.tickers:
+    if args.view == "sector-history" and not args.name and not args.tickers:
+        print("Provide sector/industry name via --name or as a positional argument", file=sys.stderr)
+        return 2
+    if args.view not in ("sector", "sector-history") and not args.all and not args.tickers:
         print("Provide ticker symbols or use --all", file=sys.stderr)
         return 2
 
@@ -152,6 +160,27 @@ def main() -> int:
                 "rev_avg", "rev_high", "rev_low", "fetched_at",
             ]
             _display(df[[c for c in cols if c in df.columns]], args.out)
+
+        elif args.view == "sector":
+            names = args.tickers if args.tickers else None
+            df = db.query_sector_stats(group_type=args.group, names=names, latest_only=True)
+            if df.empty:
+                print(f"No sector stats found. Run: uv run scripts/hf_update.py --skip-estimates", file=sys.stderr)
+                return 1
+            _display(df, args.out)
+
+        elif args.view == "sector-history":
+            name = args.name or (args.tickers[0] if args.tickers else None)
+            df = db.query_sector_stats(
+                group_type=args.group,
+                names=[name],
+                start_date=_parse_date(args.start),
+                end_date=_parse_date(args.end),
+            )
+            if df.empty:
+                print(f"No sector history found for '{name}' (group={args.group})", file=sys.stderr)
+                return 1
+            _display(df, args.out)
 
     finally:
         db.close()

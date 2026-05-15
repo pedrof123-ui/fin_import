@@ -20,3 +20,26 @@ Notes:
 
 Also added: current_price to pe_stats (latest month-end adjusted close)
 
+NEW FEATURES
+
+Please add the following features to historical fundamentals, get_pe_stats and the fundamentals alpha notebook model
+
+    gross_margin_5y_median
+    gross_margin_slope_5y
+
+    operating_margin_5y_median
+    operating_margin_change_3y
+    operating_margin_slope_5y
+
+    fcf_margin_5y_median
+    fcf_margin_change_3y
+
+    roa_stability_5y
+
+    debt_to_ebitda
+    interest_coverage
+
+Make sure scripts and project documentation is updated reflecting the new features.
+Feel free to ask clarification questions and provide recommendations
+
+

@@ -99,6 +99,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 
 import duckdb
+import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
@@ -116,6 +117,9 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
             i.fiscal_date_ending,
             i.net_income,
             i.total_revenue,
+            i.gross_profit,
+            i.operating_income,
+            i.interest_expense,
             i.ebitda,
             i.ebit,
             i.income_tax_expense,
@@ -338,6 +342,38 @@ def _get_ttm_nopat(
     return None
 
 
+def _get_ttm_sum(
+    month_end,
+    col: str,
+    quarterly: pd.DataFrame,
+    annual: pd.DataFrame,
+) -> float | None:
+    """
+    TTM sum of `col` using last 4 quarters; fallback to most recent annual.
+    Returns None when data is unavailable. Does not filter by sign.
+    """
+    if not quarterly.empty:
+        avail = quarterly[quarterly["fiscal_date_ending"] <= month_end]
+        if len(avail) >= 4:
+            vals = avail.tail(4)[col].dropna()
+            if len(vals) == 4:
+                return float(vals.sum())
+    if not annual.empty:
+        avail = annual[annual["fiscal_date_ending"] <= month_end]
+        if not avail.empty:
+            v = avail.iloc[-1].get(col)
+            if pd.notna(v):
+                return float(v)
+    return None
+
+
+def _rolling_slope(series: pd.Series, window: int = 60, min_periods: int = 36) -> pd.Series:
+    """OLS slope via rolling window — units are change-per-month."""
+    def _slope(y: np.ndarray) -> float:
+        return float(np.polyfit(np.arange(len(y)), y, 1)[0])
+    return series.rolling(window, min_periods=min_periods).apply(_slope, raw=True)
+
+
 def _get_ev_debt_cash(
     month_end,
     quarterly: pd.DataFrame,
@@ -520,6 +556,40 @@ def build_monthly_pe(
                     if ttm_ebitda is not None:
                         ebitda_ev_yield = ttm_ebitda / ev  # always defined; negative when EBITDA < 0
 
+        # ── Margin metrics ────────────────────────────────────────────────────
+        ttm_gross_profit     = _get_ttm_sum(month_end, "gross_profit",     q, a)
+        ttm_operating_income = _get_ttm_sum(month_end, "operating_income", q, a)
+        ttm_interest_expense = _get_ttm_sum(month_end, "interest_expense", q, a)
+        ttm_ebit_val         = _get_ttm_sum(month_end, "ebit",             q, a)
+
+        ttm_gross_margin = (
+            ttm_gross_profit / ttm_revenue
+            if ttm_gross_profit is not None and ttm_revenue and ttm_revenue > 0
+            else None
+        )
+        ttm_operating_margin = (
+            ttm_operating_income / ttm_revenue
+            if ttm_operating_income is not None and ttm_revenue and ttm_revenue > 0
+            else None
+        )
+        ttm_fcf_margin = (
+            ttm_fcf / ttm_revenue
+            if ttm_fcf is not None and ttm_revenue and ttm_revenue > 0
+            else None
+        )
+
+        # ── Debt/EBITDA ───────────────────────────────────────────────────────
+        debt_to_ebitda = None
+        if ttm_ebitda is not None and ttm_ebitda > 0:
+            _td, _ = _get_ev_debt_cash(month_end, q, a)
+            if _td is not None:
+                debt_to_ebitda = _td / ttm_ebitda
+
+        # ── Interest coverage ─────────────────────────────────────────────────
+        interest_coverage = None
+        if ttm_ebit_val is not None and ttm_interest_expense is not None and ttm_interest_expense > 0:
+            interest_coverage = ttm_ebit_val / ttm_interest_expense
+
         # ── Balance sheet snapshot for new metrics ────────────────────────────
         bs_equity = bs_assets = bs_intang = bs_gw = None
         for _df in (q, a):
@@ -602,6 +672,11 @@ def build_monthly_pe(
             "roic":           roic,
             "pbv":            pbv,
             "ptbv":           ptbv,
+            "ttm_gross_margin":     ttm_gross_margin,
+            "ttm_operating_margin": ttm_operating_margin,
+            "ttm_fcf_margin":       ttm_fcf_margin,
+            "debt_to_ebitda":       debt_to_ebitda,
+            "interest_coverage":    interest_coverage,
         })
 
     if not rows:
@@ -642,6 +717,16 @@ def build_monthly_pe(
     # Normalized P/S: market_cap / avg(TTM revenue over 5yr)
     avg_revenue_5y = df["ttm_revenue"].rolling(60, min_periods=36).mean()
     df["normalized_ps_5y"] = (df["price"] * df["shares"] / avg_revenue_5y).where(avg_revenue_5y > 0)
+
+    # ── Margin rolling stats ──────────────────────────────────────────────────
+    df["gross_margin_5y_median"]     = df["ttm_gross_margin"].rolling(60, min_periods=36).median()
+    df["gross_margin_slope_5y"]      = _rolling_slope(df["ttm_gross_margin"])
+    df["operating_margin_5y_median"] = df["ttm_operating_margin"].rolling(60, min_periods=36).median()
+    df["operating_margin_slope_5y"]  = _rolling_slope(df["ttm_operating_margin"])
+    df["operating_margin_change_3y"] = df["ttm_operating_margin"] - df["ttm_operating_margin"].shift(36)
+    df["fcf_margin_5y_median"]       = df["ttm_fcf_margin"].rolling(60, min_periods=36).median()
+    df["fcf_margin_change_3y"]       = df["ttm_fcf_margin"] - df["ttm_fcf_margin"].shift(36)
+    df["roa_stability_5y"]           = df["roa"].rolling(60, min_periods=36).std()
 
     return df
 
@@ -776,6 +861,23 @@ def compute_pe_stats(
     result.update({
         "current_ptbv":            _f(last.get("ptbv")),
         "ptbv_rolling_5yr_median": _f(last.get("ptbv_rolling_5yr_median")),
+    })
+
+    # Margins
+    result.update({
+        "current_gross_margin":      _f(last.get("ttm_gross_margin")),
+        "gross_margin_5y_median":    _f(last.get("gross_margin_5y_median")),
+        "gross_margin_slope_5y":     _f(last.get("gross_margin_slope_5y")),
+        "current_operating_margin":  _f(last.get("ttm_operating_margin")),
+        "operating_margin_5y_median":_f(last.get("operating_margin_5y_median")),
+        "operating_margin_change_3y":_f(last.get("operating_margin_change_3y")),
+        "operating_margin_slope_5y": _f(last.get("operating_margin_slope_5y")),
+        "current_fcf_margin":        _f(last.get("ttm_fcf_margin")),
+        "fcf_margin_5y_median":      _f(last.get("fcf_margin_5y_median")),
+        "fcf_margin_change_3y":      _f(last.get("fcf_margin_change_3y")),
+        "roa_stability_5y":          _f(last.get("roa_stability_5y")),
+        "debt_to_ebitda":            _f(last.get("debt_to_ebitda")),
+        "interest_coverage":         _f(last.get("interest_coverage")),
     })
 
     return result

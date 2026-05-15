@@ -54,6 +54,7 @@ from historic_fundamentals.pe import process_ticker, enrich_goals, extract_goal_
 from historic_fundamentals.estimates import (  # noqa: E402
     fetch_estimates, normalize_estimates, compute_forward_eps, compute_ntm_revenue,
 )
+from historic_fundamentals.sector import compute_sector_stats  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -320,6 +321,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Monthly update of historic fundamentals.")
     parser.add_argument("--ticker", metavar="TICKER", help="Update a single ticker")
     parser.add_argument("--skip-estimates", action="store_true", help="Skip AV API calls for estimates")
+    parser.add_argument("--skip-sector", action="store_true", help="Skip sector stats computation")
+    parser.add_argument("--full-sector-rebuild", action="store_true", help="Recompute all historical sector stats")
     parser.add_argument("--db", default=None, metavar="PATH", help="Override DB path")
     parser.add_argument("--verbose", action="store_true", help="Enable DEBUG logging")
     return parser.parse_args()
@@ -399,6 +402,17 @@ def main() -> int:
             except Exception as exc:
                 log.error("%s %s — failed: %s", prefix, ticker, exc)
                 failed += 1
+        if not args.skip_sector and not args.ticker:
+            try:
+                log.info("Computing sector stats (full_rebuild=%s)...", args.full_sector_rebuild)
+                sector_df = compute_sector_stats(hf_db.conn, av_db_path, full_rebuild=args.full_sector_rebuild)
+                if not sector_df.empty:
+                    n = hf_db.upsert_sector_stats(sector_df)
+                    log.info("Sector stats: %d rows upserted", n)
+                else:
+                    log.info("Sector stats: no data (run av_import_overview.py first, or all months already computed)")
+            except Exception as exc:
+                log.error("Sector stats failed: %s", exc)
     finally:
         av_conn.close()
         prices_conn.close()

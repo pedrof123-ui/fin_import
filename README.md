@@ -142,32 +142,39 @@ This is the recommended way to onboard new tickers. It populates both `av_financ
 ### Monthly update
 
 ```bash
-# 1. Refresh all AV raw data (statements + shares + dividends) — ~95 min
+# 1. Refresh all AV raw data (statements + shares + dividends + company overview) — ~115 min
 uv run scripts/av_update.py
 
-# 2. Recompute all derived metrics + refresh analyst estimates — ~20 min
+# 2. Recompute all derived metrics + refresh analyst estimates + sector stats — ~20 min
 uv run scripts/hf_update.py
 ```
 
-### Query raw financials
+First-time setup: run `uv run scripts/av_import_overview.py` once after `av_update.py` to backfill company overview for all tickers (~19 min, 1 AV call/ticker).
+
+### Query raw financials and company overview
 
 ```bash
 uv run scripts/av_query.py AAPL
 uv run scripts/av_query.py AAPL MSFT --statement income --period annual
 uv run scripts/av_query.py AAPL --start 2020-01-01 --end 2024-12-31
 uv run scripts/av_query.py AAPL --statement balance --out output.csv
+uv run scripts/av_query.py AAPL --overview                   # latest company overview snapshot
+uv run scripts/av_query.py AAPL --overview --history         # all monthly overview snapshots
 ```
 
-### Query historic fundamentals (PE, P/FCF, EV/EBITDA, market cap, growth, estimates)
+### Query historic fundamentals (PE, P/FCF, EV/EBITDA, sector/industry peers, market cap, growth, estimates)
 
 ```bash
-uv run scripts/hf_query.py AAPL                              # PE, P/FCF, EV/EBITDA, FCF yield, forward P/FCF, forward EV/EBITDA, market cap, growth stats
+uv run scripts/hf_query.py AAPL                              # PE, P/FCF, EV/EBITDA, FCF yield, forward multiples, market cap, growth, sector peer ranks
 uv run scripts/hf_query.py AAPL --view timeseries           # monthly PE, P/FCF, EV/EBITDA, FCF yield, TTM revenue/FCF/EBITDA
 uv run scripts/hf_query.py AAPL --view estimates            # analyst estimates
 uv run scripts/hf_query.py --all --out output.csv           # export all tickers
+uv run scripts/hf_query.py --view sector                    # latest sector aggregate medians (PE, P/FCF, EV/EBITDA, yields, growth, quality)
+uv run scripts/hf_query.py --view sector --group industry   # same for industry level
+uv run scripts/hf_query.py --view sector-history --name TECHNOLOGY  # monthly sector timeseries
 ```
 
-The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker costs 5 AV calls for raw data (3 statements + shares + dividends); bulk throughput is ~15 tickers/minute.
+The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker costs 6 AV calls for raw data (3 statements + shares + dividends + overview); bulk throughput is ~12 tickers/minute.
 
 ## Tests
 
@@ -232,32 +239,34 @@ extractors/
   balance_sheet_extractor.py      Thin wrapper — balance sheet
   cash_flow_extractor.py          Thin wrapper — cash flow
 xbrl_mappings/         Static XBRL concept → field mappings
-historic_fundamentals/         Monthly PE/P/FCF/EV/EBITDA timeseries + market cap + growth stats + analyst estimates
-  __init__.py                  Public API: get_pe_stats, get_pe_history, get_estimates
-  db.py                        HistoricFundamentalsDB: schema, upsert, query
+historic_fundamentals/         Monthly PE/P/FCF/EV/EBITDA timeseries + sector/industry peer stats + market cap + growth + analyst estimates
+  __init__.py                  Public API: get_pe_stats, get_pe_history, get_estimates, get_sector_stats, get_sector_history
+  db.py                        HistoricFundamentalsDB: schema (monthly_pe, pe_stats, earnings_estimates, sector_stats), upsert, query
   pe.py                        TTM EPS/FCF/EBITDA + PE/P/FCF/EV/EBITDA + dividend/revenue/earnings/FCF growth stats
   estimates.py                 EARNINGS_ESTIMATES fetch, normalize, forward PE/P/FCF/NTM revenue calculation
-  query.py                     Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
+  sector.py                    compute_sector_stats(): monthly median/p25/p75 aggregates per sector and industry
+  query.py                     Notebook-friendly wrappers: get_pe_stats() (with peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
 scripts/
   add_tickers.py               All-in-one: AV raw data + PE history + estimates for new tickers
   av_import.py                 Import AV financials + shares + dividends (single/CSV/prices.duckdb)
+  av_import_overview.py        Backfill company overview (name, sector, industry, beta + 41 fields) for all tickers
   av_import_shares.py          Standalone backfill: shares_outstanding for existing tickers
   av_import_dividends.py       Standalone backfill: dividends for existing tickers
-  av_query.py                  Query AV financial statements with optional date range and CSV export
-  av_update.py                 Monthly refresh: all AV data (statements + shares + dividends)
+  av_query.py                  Query AV financial statements + company overview (--overview, --history flags)
+  av_update.py                 Monthly refresh: all AV data (statements + shares + dividends + overview)
   hf_import.py                 Bulk backfill: PE history + estimates for all AV tickers
-  hf_update.py                 Monthly update: recompute PE/yield + refresh estimates
-  hf_query.py                  CLI query: stats, timeseries, estimates views; CSV export
+  hf_update.py                 Monthly update: recompute PE/yield + refresh estimates + sector stats (--skip-sector, --full-sector-rebuild)
+  hf_query.py                  CLI query: stats, timeseries, estimates, sector, sector-history views; CSV export
   update_alpha_vantage_estimates.py  Update analyst EPS/revenue estimates from AV
 xbrl_concept_mapper.py          AI-assisted fallback mapper (openai-agents)
-av_financials_db.py             Alpha Vantage DB class: schema, rate limiter, fetch, upsert, query
+av_financials_db.py             Alpha Vantage DB class: schema, rate limiter, fetch, upsert, query (includes company_overview)
 financial_statements_db.py      SEC EDGAR DB class: schema, insert helpers, log_extraction()
 bulk_import_10k.py              Core bulk import logic (async, concurrent)
 run_bulk_import.py              CLI entry point for SEC EDGAR bulk imports
 tests/                 pytest tests
 data/
   financial_statements.duckdb       SEC EDGAR financial statements
-  av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends
-  historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, analyst estimates
+  av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends, company overview
+  historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates, analyst estimates
   xbrl_mappings_multi.duckdb        AI-discovered XBRL concept mapping store
 ```

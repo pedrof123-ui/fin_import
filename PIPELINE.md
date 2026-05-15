@@ -254,7 +254,8 @@ Downloads and refreshes all Alpha Vantage raw data into `data/av_financials.duck
 | Script | Purpose | AV calls/ticker |
 |--------|---------|----------------|
 | `scripts/add_tickers.py` | Add new tickers: all AV data + all derived metrics in one pass | 6 (statements + shares + dividends + estimates) |
-| `scripts/av_update.py` | Monthly refresh for all tickers in DB | 5 |
+| `scripts/av_update.py` | Monthly refresh for all tickers in DB (statements + shares + dividends + overview) | 6 |
+| `scripts/av_import_overview.py` | Backfill company overview for all tickers (first-time setup) | 1 |
 
 `add_tickers.py` is the recommended way to onboard new tickers. It fetches all AV raw data and
 immediately computes PE history, dividend yield, and analyst estimates so the ticker is fully
@@ -263,6 +264,8 @@ It skips tickers already in the DB unless `--force` is passed.
 
 `scripts/av_import.py` and `scripts/hf_import.py` remain available as standalone tools for
 targeted raw-data or derived-metrics work respectively.
+
+`av_update.py` accepts `--skip-overview` to omit the OVERVIEW calls (e.g. when only raw financials changed). `av_import_overview.py` accepts `--force` to re-fetch even if already fetched this month, and `--ticker` for a single ticker.
 
 ### Tables in av_financials.duckdb
 
@@ -273,12 +276,15 @@ targeted raw-data or derived-metrics work respectively.
 | `cash_flow_statements` | CASH_FLOW | (ticker, fiscal_date_ending, period_type) |
 | `shares_outstanding` | SHARES_OUTSTANDING | (ticker, date) |
 | `dividends` | DIVIDENDS | (ticker, ex_dividend_date) |
+| `company_overview` | OVERVIEW | (ticker, fetch_date) |
 | `companies` | — | ticker registry |
 | `import_log` | — | audit trail |
 
+`company_overview` stores a snapshot per `(ticker, fetch_date)` for monthly historical tracking. All 45 AV OVERVIEW fields are stored (text, date, and numeric). The latest snapshot per ticker is joined automatically into `get_pe_stats()` to supply `name`, `sector`, `industry`, and `beta`. Query with `uv run scripts/av_query.py TICKER --overview` (latest) or `--overview --history` (all snapshots).
+
 ### Rate limit
 
-5 AV calls per ticker × 75/min ≈ 95 min for ~1,400 tickers.
+6 AV calls per ticker × 75/min ≈ 115 min for ~1,400 tickers.
 
 ---
 
@@ -291,10 +297,16 @@ Computes derived metrics for all tickers and stores them in `data/historic_funda
 | Script | Purpose | AV calls/ticker |
 |--------|---------|----------------|
 | `scripts/hf_import.py` | Initial backfill: PE history + estimates | 1 (estimates only) |
-| `scripts/hf_update.py` | Monthly refresh: recompute all metrics + refresh estimates + goal prices | 1 |
+| `scripts/hf_update.py` | Monthly refresh: recompute all metrics + refresh estimates + goal prices + sector stats | 1 |
 
 `hf_import.py` skips tickers already in the DB unless `--force` is passed.
 Both scripts support `--skip-estimates` to skip the AV estimates call (PE/dividend recompute only, no API calls).
+
+`hf_update.py` additional flags:
+- `--skip-sector` — skip sector/industry aggregate stats computation
+- `--full-sector-rebuild` — recompute sector stats for all historical months (default: incremental, new months only)
+
+Sector stats are computed after the per-ticker loop and require `company_overview` data in `av_financials.duckdb`. Run `av_import_overview.py` first if sector stats show no data.
 
 ### Data sources
 
@@ -324,6 +336,9 @@ Both scripts support `--skip-estimates` to skip the AV estimates call (PE/divide
 | `monthly_pe` | (ticker, month_end_date) | price, ttm_eps, pe_ratio, pe_rolling_5yr_median, normalized_pe_5y, earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, normalized_pfcf_5y, fcf_yield, fcf_yield_3y_avg, fcf_yield_5y_avg, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, normalized_evebitda_5y, ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg, ps_ratio, ps_rolling_5yr_median, normalized_ps_5y, roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median, roic, roic_rolling_5yr_median, pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
 | `pe_stats` | ticker | market_cap_b, current_price, current_pe, pe_lt_median, pe_p10/p25/p75/p90, pe_rolling_5yr_median, normalized_pe_5y, current_earnings_yield, earnings_yield_3y_avg, earnings_yield_5y_avg, forward_pe, forward_12m_eps, forward_earnings_yield, current_ttm_eps, months_available, ttm_dividend, dividend_yield, rev_growth_1yr, rev_cagr_3yr/5yr, rev_ntm_growth_est, earn_growth_1yr, earn_cagr_3yr/5yr, earn_ntm_growth_est, current_pfcf, pfcf_lt_median, pfcf_p25/p75, pfcf_rolling_5yr_median, normalized_pfcf_5y, current_fcf_yield, fcf_yield_3y_avg, fcf_yield_5y_avg, forward_pfcf, fcf_margin_5yr_median, fcf_growth_1yr, fcf_cagr_3yr/5yr, current_evebitda, evebitda_lt_median, evebitda_p25/p75, evebitda_rolling_5yr_median, normalized_evebitda_5y, current_ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg, ebitda_margin_5yr_median, forward_evebitda, current_ps, ps_lt_median, ps_p25/p75, ps_rolling_5yr_median, normalized_ps_5y, forward_ps, current_roa, roa_lt_median, roa_p25/p75, roa_rolling_5yr_median, current_roe, roe_lt_median, roe_p25/p75, roe_rolling_5yr_median, current_roic, roic_lt_median, roic_p25/p75, roic_rolling_5yr_median, current_pbv, pbv_lt_median, pbv_p25/p75, pbv_rolling_5yr_median, current_ptbv, ptbv_lt_median, ptbv_p25/p75, ptbv_rolling_5yr_median, goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high |
 | `earnings_estimates` | (ticker, fiscal_date, horizon, fetched_at) | eps_avg/high/low, rev_avg/high/low, revision counts |
+| `sector_stats` | (group_type, group_name, month_end_date) | ticker_count, pe/pfcf/evebitda/ps median/p25/p75, pbv_median, earnings_yield/fcf_yield/ebitda_ev_yield/dividend_yield medians, roa/roe/roic median/p25/p75, rev_growth_1yr_median, earn_growth_1yr_median |
+
+`sector_stats` holds both `group_type='sector'` and `group_type='industry'` rows in the same table, keyed by `(group_type, group_name, month_end_date)`. Only groups with at least 5 valid peers per metric are included. Sector assignments are sourced from the latest `company_overview` snapshot (today's assignments applied back through history, consistent with standard factor-investing convention).
 
 ### Call graph
 
@@ -430,6 +445,19 @@ hf_import.py / hf_update.py
   │       │     current_market_cap = latest price × diluted shares
   │       │     (NULL when no NTM revenue estimate available)
   │       └── _update_market_cap()         → latest price × diluted shares / 1e9 (billions)
+  ├── sector stats phase (after ticker loop, full-update only, skipped with --skip-sector or --ticker)
+  │   ├── compute_sector_stats(hf_db.conn, av_db_path, full_rebuild=args.full_sector_rebuild)
+  │   │   ├── open av_conn (read-only), query company_overview QUALIFY latest fetch_date per ticker
+  │   │   ├── register _sector_map temp view in hf_conn
+  │   │   └── for group_type in (sector, industry):
+  │   │       └── run aggregation SQL on monthly_pe joined to _sector_map
+  │   │           ├── prior_year CTE: range-join 10–14 months back, MAX per ticker+month → prior_date
+  │   │           ├── base CTE: join sector map + prior month for YoY growth
+  │   │           └── aggregate: QUANTILE_CONT(metric, 0.50/0.25/0.75) FILTER (WHERE metric > 0)
+  │   │               for pe, pfcf, ev_ebitda, ps, pbv, roa, roe, roic; medians for yields + growth
+  │   │               HAVING COUNT(DISTINCT ticker) >= 5
+  │   │           incremental mode: skips months already in sector_stats via NOT IN subquery
+  │   └── hf_db.upsert_sector_stats(sector_df)  → INSERT OR REPLACE via temp view
   └── hf_db.close()
 ```
 
@@ -449,26 +477,51 @@ Estimates phase: 1 call/ticker at 75/min ≈ 20 min.
 ```python
 import sys
 sys.path.insert(0, "..")   # path to project root from notebooks/
-from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates
+from historic_fundamentals import get_pe_stats, get_pe_history, get_estimates, get_sector_stats, get_sector_history
 
 import pandas as pd
-pd.set_option('display.max_columns', None)   # 39 columns — prevent truncation
+pd.set_option('display.max_columns', None)
 
-get_pe_stats("AAPL")                          # snapshot: current_price, PE, P/FCF, EV/EBITDA,
-                                              #   P/S, ROA, ROE, ROIC, P/BV, P/TBV,
-                                              #   market cap, dividends, revenue/earnings/FCF growth,
-                                              #   goal_pe, goal_pcf, goal_peg, goal_bv,
-                                              #   goal_2x, goal_low, goal_high
-get_pe_stats(["AAPL", "MSFT", "GOOGL"])      # multiple tickers
-get_pe_stats()                                # all tickers
+# Ticker snapshots
+get_pe_stats("AAPL")                          # current_price, PE, P/FCF, EV/EBITDA, P/S,
+                                              #   ROA, ROE, ROIC, P/BV, P/TBV, market cap,
+                                              #   dividends, growth, goal prices,
+                                              #   + sector/industry peer percentile ranks
+                                              #   (sector_pe_pct, sector_val_score, etc.)
+get_pe_stats(["AAPL", "MSFT", "GOOGL"])
+get_pe_stats()                                # all tickers; sector/industry ranks auto-computed
 
-get_pe_history("AAPL", start="2020-01-01")   # monthly timeseries: PE, P/FCF, EV/EBITDA,
-                                              #   P/S, ROA, ROE, ROIC, P/BV, P/TBV,
-                                              #   FCF yield, dividend yield, TTM revenue/FCF/EBITDA,
-                                              #   goal_pe, goal_pcf, goal_peg, goal_bv,
-                                              #   goal_2x, goal_low, goal_high
-get_estimates("AAPL", horizon="fiscal quarter")  # analyst EPS + revenue estimates
+# Monthly timeseries
+get_pe_history("AAPL", start="2020-01-01")   # PE, P/FCF, EV/EBITDA, P/S, ROA, ROE, ROIC,
+                                              #   P/BV, P/TBV, FCF yield, dividend yield,
+                                              #   TTM revenue/FCF/EBITDA, goal prices
+
+# Analyst estimates
+get_estimates("AAPL", horizon="fiscal quarter")
+
+# Sector/industry aggregate fundamentals
+get_sector_stats()                            # latest sector medians (PE, P/FCF, EV/EBITDA,
+                                              #   P/S, P/BV, yields, ROA, ROE, ROIC, growth)
+get_sector_stats("industry")                  # same at industry level
+get_sector_stats("sector", ["Technology", "Healthcare"])  # filter specific sectors
+
+get_sector_history("TECHNOLOGY")              # monthly sector timeseries since inception
+get_sector_history("Software—Application", group="industry", start="2020-01-01")
 ```
+
+`get_pe_stats()` adds the following peer rank columns when sector/industry data is available (requires `av_import_overview.py` to have run):
+
+| Column | Meaning |
+|--------|---------|
+| `sector_pe_pct` | PE percentile within sector (0=cheapest, 100=most expensive) |
+| `sector_pfcf_pct` | P/FCF percentile within sector |
+| `sector_evebitda_pct` | EV/EBITDA percentile within sector |
+| `sector_ps_pct` | P/S percentile within sector |
+| `sector_roic_pct` | ROIC quality percentile within sector (100=highest quality) |
+| `sector_val_score` | Composite value score: mean of (100 − pe/pfcf/evebitda/ps pcts); high = cheap |
+| `industry_*` | Same columns at industry level |
+
+Ranks are NULL for stocks with fewer than 5 valid peers in their group.
 
 ---
 
@@ -494,11 +547,23 @@ uv run scripts/add_tickers.py AAPL --skip-estimates
 Run once per month after earnings season, in order:
 
 ```bash
-# 1. Refresh all AV raw data (statements + shares + dividends) — ~95 min
+# 1. Refresh all AV raw data (statements + shares + dividends + company overview) — ~115 min
 uv run scripts/av_update.py
 
-# 2. Recompute all derived metrics + refresh analyst estimates — ~20 min
+# 2. Recompute all derived metrics + refresh analyst estimates + sector stats — ~20 min
 uv run scripts/hf_update.py
+```
+
+To skip the overview refresh (e.g. mid-month statement update only):
+```bash
+uv run scripts/av_update.py --skip-overview     # ~95 min; omits OVERVIEW calls
+uv run scripts/hf_update.py --skip-sector       # skips sector stats aggregation
+```
+
+First-time setup (run once after the initial `av_update.py`):
+```bash
+uv run scripts/av_import_overview.py            # backfills company overview for all tickers (~19 min)
+uv run scripts/hf_update.py --full-sector-rebuild  # computes sector stats for all historical months
 ```
 
 ---

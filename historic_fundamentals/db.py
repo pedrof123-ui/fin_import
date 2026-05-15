@@ -156,6 +156,19 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ebitda_ev_yield_5y_avg DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_evebitda_5y DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS normalized_ps_5y       DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_gross_margin        DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_operating_margin    DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_fcf_margin          DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS debt_to_ebitda          DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS interest_coverage       DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS gross_margin_5y_median  DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS gross_margin_slope_5y   DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS operating_margin_5y_median  DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS operating_margin_slope_5y   DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS operating_margin_change_3y  DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_margin_5y_median    DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_margin_change_3y    DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roa_stability_5y        DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -322,6 +335,19 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_2x   DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_low  DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_high DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_gross_margin       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS gross_margin_5y_median     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS gross_margin_slope_5y      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_operating_margin   DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS operating_margin_5y_median DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS operating_margin_change_3y DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS operating_margin_slope_5y  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_fcf_margin         DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_margin_5y_median       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS fcf_margin_change_3y       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_stability_5y           DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS debt_to_ebitda             DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS interest_coverage          DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS earnings_estimates (
@@ -346,6 +372,44 @@ class HistoricFundamentalsDB:
                 rev_low             DOUBLE,
                 rev_count           INTEGER,
                 PRIMARY KEY (ticker, fiscal_date, horizon, fetched_at)
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS sector_stats (
+                group_type              VARCHAR NOT NULL,
+                group_name              VARCHAR NOT NULL,
+                month_end_date          DATE    NOT NULL,
+                ticker_count            INTEGER,
+                pe_median               DOUBLE,
+                pe_p25                  DOUBLE,
+                pe_p75                  DOUBLE,
+                pfcf_median             DOUBLE,
+                pfcf_p25                DOUBLE,
+                pfcf_p75                DOUBLE,
+                evebitda_median         DOUBLE,
+                evebitda_p25            DOUBLE,
+                evebitda_p75            DOUBLE,
+                ps_median               DOUBLE,
+                ps_p25                  DOUBLE,
+                ps_p75                  DOUBLE,
+                pbv_median              DOUBLE,
+                earnings_yield_median   DOUBLE,
+                fcf_yield_median        DOUBLE,
+                ebitda_ev_yield_median  DOUBLE,
+                dividend_yield_median   DOUBLE,
+                roa_median              DOUBLE,
+                roa_p25                 DOUBLE,
+                roa_p75                 DOUBLE,
+                roe_median              DOUBLE,
+                roe_p25                 DOUBLE,
+                roe_p75                 DOUBLE,
+                roic_median             DOUBLE,
+                roic_p25                DOUBLE,
+                roic_p75                DOUBLE,
+                rev_growth_1yr_median   DOUBLE,
+                earn_growth_1yr_median  DOUBLE,
+                PRIMARY KEY (group_type, group_name, month_end_date)
             )
         """)
 
@@ -375,6 +439,11 @@ class HistoricFundamentalsDB:
             "fcf_yield_3y_avg", "fcf_yield_5y_avg", "normalized_pfcf_5y",
             "ebitda_ev_yield", "ebitda_ev_yield_3y_avg", "ebitda_ev_yield_5y_avg", "normalized_evebitda_5y",
             "normalized_ps_5y",
+            "ttm_gross_margin", "gross_margin_5y_median", "gross_margin_slope_5y",
+            "ttm_operating_margin", "operating_margin_5y_median",
+            "operating_margin_change_3y", "operating_margin_slope_5y",
+            "ttm_fcf_margin", "fcf_margin_5y_median", "fcf_margin_change_3y",
+            "roa_stability_5y", "debt_to_ebitda", "interest_coverage",
             "updated_at",
         ]
         for col in cols:
@@ -400,6 +469,11 @@ class HistoricFundamentalsDB:
                  fcf_yield_3y_avg, fcf_yield_5y_avg, normalized_pfcf_5y,
                  ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg, normalized_evebitda_5y,
                  normalized_ps_5y,
+                 ttm_gross_margin, gross_margin_5y_median, gross_margin_slope_5y,
+                 ttm_operating_margin, operating_margin_5y_median,
+                 operating_margin_change_3y, operating_margin_slope_5y,
+                 ttm_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
+                 roa_stability_5y, debt_to_ebitda, interest_coverage,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -417,6 +491,11 @@ class HistoricFundamentalsDB:
                        fcf_yield_3y_avg, fcf_yield_5y_avg, normalized_pfcf_5y,
                        ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg, normalized_evebitda_5y,
                        normalized_ps_5y,
+                       ttm_gross_margin, gross_margin_5y_median, gross_margin_slope_5y,
+                       ttm_operating_margin, operating_margin_5y_median,
+                       operating_margin_change_3y, operating_margin_slope_5y,
+                       ttm_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
+                       roa_stability_5y, debt_to_ebitda, interest_coverage,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -452,7 +531,12 @@ class HistoricFundamentalsDB:
              forward_earnings_yield, normalized_pe_5y,
              fcf_yield_3y_avg, fcf_yield_5y_avg, normalized_pfcf_5y,
              current_ebitda_ev_yield, ebitda_ev_yield_3y_avg, ebitda_ev_yield_5y_avg,
-             normalized_evebitda_5y, normalized_ps_5y)
+             normalized_evebitda_5y, normalized_ps_5y,
+             current_gross_margin, gross_margin_5y_median, gross_margin_slope_5y,
+             current_operating_margin, operating_margin_5y_median,
+             operating_margin_change_3y, operating_margin_slope_5y,
+             current_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
+             roa_stability_5y, debt_to_ebitda, interest_coverage)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
@@ -464,7 +548,8 @@ class HistoricFundamentalsDB:
                     ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
                 current_price              = excluded.current_price,
@@ -558,7 +643,20 @@ class HistoricFundamentalsDB:
                 ebitda_ev_yield_3y_avg     = excluded.ebitda_ev_yield_3y_avg,
                 ebitda_ev_yield_5y_avg     = excluded.ebitda_ev_yield_5y_avg,
                 normalized_evebitda_5y     = excluded.normalized_evebitda_5y,
-                normalized_ps_5y           = excluded.normalized_ps_5y
+                normalized_ps_5y           = excluded.normalized_ps_5y,
+                current_gross_margin       = excluded.current_gross_margin,
+                gross_margin_5y_median     = excluded.gross_margin_5y_median,
+                gross_margin_slope_5y      = excluded.gross_margin_slope_5y,
+                current_operating_margin   = excluded.current_operating_margin,
+                operating_margin_5y_median = excluded.operating_margin_5y_median,
+                operating_margin_change_3y = excluded.operating_margin_change_3y,
+                operating_margin_slope_5y  = excluded.operating_margin_slope_5y,
+                current_fcf_margin         = excluded.current_fcf_margin,
+                fcf_margin_5y_median       = excluded.fcf_margin_5y_median,
+                fcf_margin_change_3y       = excluded.fcf_margin_change_3y,
+                roa_stability_5y           = excluded.roa_stability_5y,
+                debt_to_ebitda             = excluded.debt_to_ebitda,
+                interest_coverage          = excluded.interest_coverage
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -654,6 +752,19 @@ class HistoricFundamentalsDB:
             stats.get("ebitda_ev_yield_5y_avg"),
             stats.get("normalized_evebitda_5y"),
             stats.get("normalized_ps_5y"),
+            stats.get("current_gross_margin"),
+            stats.get("gross_margin_5y_median"),
+            stats.get("gross_margin_slope_5y"),
+            stats.get("current_operating_margin"),
+            stats.get("operating_margin_5y_median"),
+            stats.get("operating_margin_change_3y"),
+            stats.get("operating_margin_slope_5y"),
+            stats.get("current_fcf_margin"),
+            stats.get("fcf_margin_5y_median"),
+            stats.get("fcf_margin_change_3y"),
+            stats.get("roa_stability_5y"),
+            stats.get("debt_to_ebitda"),
+            stats.get("interest_coverage"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -676,6 +787,37 @@ class HistoricFundamentalsDB:
             ])
             count += 1
         return count
+
+    def upsert_sector_stats(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        cols = [
+            "group_type", "group_name", "month_end_date", "ticker_count",
+            "pe_median", "pe_p25", "pe_p75",
+            "pfcf_median", "pfcf_p25", "pfcf_p75",
+            "evebitda_median", "evebitda_p25", "evebitda_p75",
+            "ps_median", "ps_p25", "ps_p75",
+            "pbv_median",
+            "earnings_yield_median", "fcf_yield_median", "ebitda_ev_yield_median", "dividend_yield_median",
+            "roa_median", "roa_p25", "roa_p75",
+            "roe_median", "roe_p25", "roe_p75",
+            "roic_median", "roic_p25", "roic_p75",
+            "rev_growth_1yr_median", "earn_growth_1yr_median",
+        ]
+        data = df.copy()
+        for col in cols:
+            if col not in data.columns:
+                data[col] = None
+        self.conn.register("_tmp_sector", data[cols])
+        try:
+            col_csv = ", ".join(cols)
+            self.conn.execute(f"""
+                INSERT OR REPLACE INTO sector_stats ({col_csv})
+                SELECT {col_csv} FROM _tmp_sector
+            """)
+        finally:
+            self.conn.execute("DROP VIEW IF EXISTS _tmp_sector")
+        return len(df)
 
     def update_forward_pe(self, ticker: str, forward_pe: float | None, forward_12m_eps: float | None) -> None:
         self.conn.execute("""
@@ -763,6 +905,39 @@ class HistoricFundamentalsDB:
             params.append(horizon)
         return self.conn.execute(
             f"SELECT * FROM earnings_estimates {where} ORDER BY ticker, fiscal_date, fetched_at DESC",
+            params,
+        ).df()
+
+    def query_sector_stats(
+        self,
+        group_type: str | None = None,
+        names: list[str] | None = None,
+        start_date=None,
+        end_date=None,
+        latest_only: bool = False,
+    ) -> pd.DataFrame:
+        conditions = []
+        params: list = []
+        if group_type:
+            conditions.append("group_type = ?")
+            params.append(group_type)
+        if names:
+            placeholders = ", ".join(["?"] * len(names))
+            conditions.append(f"group_name IN ({placeholders})")
+            params.extend(names)
+        if start_date:
+            conditions.append("month_end_date >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("month_end_date <= ?")
+            params.append(end_date)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        qualify = (
+            "QUALIFY month_end_date = MAX(month_end_date) OVER (PARTITION BY group_type, group_name)"
+            if latest_only else ""
+        )
+        return self.conn.execute(
+            f"SELECT * FROM sector_stats {where} {qualify} ORDER BY group_type, group_name, month_end_date",
             params,
         ).df()
 

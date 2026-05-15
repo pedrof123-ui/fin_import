@@ -63,12 +63,13 @@ fin_import2/
 │   ├── BULK_IMPORT_GUIDE.md             Bulk import CLI reference
 │   └── MULTI_STATEMENT_EXTRACTOR_GUIDE.md  Extractor internals
 │
-├── historic_fundamentals/               Historic fundamentals analytics package (PE, FCF, EV/EBITDA, P/S, ROA, ROE, ROIC, P/BV, P/TBV)
-│   ├── __init__.py                      Public API: get_pe_stats, get_pe_history, get_estimates + lower-level exports
-│   ├── db.py                            HistoricFundamentalsDB: schema, upsert, query methods
+├── historic_fundamentals/               Historic fundamentals analytics package (PE, FCF, EV/EBITDA, P/S, ROA, ROE, ROIC, P/BV, P/TBV + sector/industry peer stats)
+│   ├── __init__.py                      Public API: get_pe_stats, get_pe_history, get_estimates, get_sector_stats, get_sector_history, compute_sector_stats + lower-level exports
+│   ├── db.py                            HistoricFundamentalsDB: schema (monthly_pe, pe_stats, earnings_estimates, sector_stats), upsert, query methods
 │   ├── pe.py                            TTM computation engine: EPS, revenue, FCF, EBITDA, NOPAT, equity; builds monthly timeseries and statistics for all metrics
 │   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE + NTM revenue calculation
-│   └── query.py                         Notebook-friendly wrappers: get_pe_stats(), get_pe_history(), get_estimates()
+│   ├── sector.py                        compute_sector_stats(): monthly median/p25/p75 aggregates per sector and industry from monthly_pe + company_overview
+│   └── query.py                         Notebook-friendly wrappers: get_pe_stats() (peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
 │
 ├── features/
 │   ├── dcf/
@@ -92,9 +93,10 @@ fin_import2/
 
 scripts/ also contains:
     add_tickers.py                       All-in-one: AV raw data + PE history + estimates for new tickers (recommended)
+    av_import_overview.py                Backfill company overview (name, sector, industry, beta + 41 fields) for all tickers
     hf_import.py                         Bulk backfill: compute PE + yield history for all AV tickers + fetch estimates
-    hf_update.py                         Monthly update: refresh PE + yield + estimates for all tickers in the DB
-    hf_query.py                          CLI query: stats, timeseries, estimates views; CSV export
+    hf_update.py                         Monthly update: refresh PE + yield + estimates + sector stats (--skip-sector, --full-sector-rebuild)
+    hf_query.py                          CLI query: stats, timeseries, estimates, sector, sector-history views; --group, --name options; CSV export
     av_import_shares.py                  Standalone backfill: shares_outstanding for existing tickers
     av_import_dividends.py               Standalone backfill: dividends for existing tickers
 ```
@@ -241,10 +243,13 @@ Reset button restores all inputs to model-computed defaults without re-fetching.
 | `cash_flow_statements` | ticker, fiscal_date_ending, period_type, operating_cashflow, capital_expenditures, stock_based_compensation, dividend_payout, ... |
 | `shares_outstanding` | ticker, date, shares_outstanding_diluted, shares_outstanding_basic, fetched_at |
 | `dividends` | ticker, ex_dividend_date, declaration_date, record_date, payment_date, amount, fetched_at |
+| `company_overview` | ticker, fetch_date, name, sector, industry, beta, market_cap, pe_ratio, ... (all 45 AV OVERVIEW fields) |
 | `companies` | ticker, last_updated_at, total_annual, total_quarterly |
 | `import_log` | ticker, run_at, success, statements, periods_inserted, error_msg |
 
 Primary key on all three statement tables: `(ticker, fiscal_date_ending, period_type)`. All numeric fields stored as DOUBLE; AV `"None"` strings converted to NULL on ingest.
+
+`company_overview` PK is `(ticker, fetch_date DATE)` for monthly historical snapshots. The latest snapshot per ticker is joined automatically into `get_pe_stats()` to supply `name`, `sector`, `industry`, and `beta`.
 
 ### `data/financial_statements.duckdb`
 
@@ -265,6 +270,7 @@ All three statement tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filin
 | `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), pe_rolling_5yr_median (trailing 60-month window), ttm_source ('quarterly'/'annual'), shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe (NULL when equity ≤ 0), roe_rolling_5yr_median, roic (NULL when IC ≤ 0), roic_rolling_5yr_median, pbv (NULL when equity ≤ 0), pbv_rolling_5yr_median, ptbv (NULL when TBV ≤ 0), ptbv_rolling_5yr_median, updated_at |
 | `pe_stats` | ticker (PK), market_cap_b, current/lt_median/p25/p75/p10/p90/rolling_5yr_median for PE + forward_pe/12m_eps; current/lt_median/p25/p75/rolling_5yr_median for P/FCF, EV/EBITDA, P/S, ROA, ROE, ROIC, P/BV, P/TBV; forward_pfcf, forward_evebitda, forward_ps; fcf/ebitda margins; rev/earn/fcf growth CAGRs and NTM estimates; ttm_dividend, dividend_yield, months_available, updated_at |
 | `earnings_estimates` | ticker, fiscal_date, horizon ('fiscal quarter'/'fiscal year'), fetched_at (PK together), eps_avg/high/low/count, eps_avg_7d/30d/60d/90d, eps_rev_up/down_7d/30d, rev_avg/high/low/count |
+| `sector_stats` | group_type ('sector'/'industry'), group_name, month_end_date (PK together), ticker_count, pe/pfcf/evebitda/ps median/p25/p75, pbv_median, earnings_yield/fcf_yield/ebitda_ev_yield/dividend_yield medians, roa/roe/roic median/p25/p75, rev_growth_1yr_median, earn_growth_1yr_median |
 
 Primary data sources:
 - `av_financials.duckdb / income_statements` — net_income, total_revenue, ebitda, ebit, income_tax_expense, income_before_tax
@@ -272,6 +278,7 @@ Primary data sources:
 - `av_financials.duckdb / cash_flow_statements` — operating_cashflow, capital_expenditures
 - `av_financials.duckdb / shares_outstanding` — shares_outstanding_diluted (primary); balance_sheets fallback
 - `av_financials.duckdb / dividends` — ex-dividend history for TTM dividend computation
+- `av_financials.duckdb / company_overview` — sector, industry, name, beta (latest snapshot per ticker; joined into get_pe_stats() and used for sector_stats aggregation)
 - `prices.duckdb / stock_prices` — adj_close for month-end price and current market cap
 - Alpha Vantage EARNINGS_ESTIMATES endpoint — analyst EPS + revenue estimates
 
