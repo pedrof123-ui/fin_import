@@ -78,6 +78,55 @@ def _tickers(t) -> list[str] | None:
     return [x.upper() for x in t]
 
 
+def _add_peer_ranks(df: pd.DataFrame) -> pd.DataFrame:
+    """Add sector/industry percentile rank columns and composite value score to get_pe_stats output."""
+    df = df.copy()
+    # (metric_name, df_column, positive_only)
+    _metrics = [
+        ("pe",       "current_pe",      True),
+        ("pfcf",     "current_pfcf",    True),
+        ("evebitda", "current_evebitda", True),
+        ("ps",       "current_ps",      True),
+        ("roic",     "current_roic",    False),
+    ]
+    for group_col in ("sector", "industry"):
+        if group_col not in df.columns:
+            continue
+        prefix = group_col
+        val_pct_cols: list[str] = []
+        for metric, col, positive_only in _metrics:
+            pct_col = f"{prefix}_{metric}_pct"
+            df[pct_col] = None
+            if col not in df.columns:
+                continue
+            mask = df[group_col].notna() & df[col].notna()
+            if positive_only:
+                mask = mask & (df[col] > 0)
+            if not mask.any():
+                continue
+            ranked = (
+                df[mask].groupby(group_col)[col]
+                .rank(pct=True, ascending=True, method="average")
+                .mul(100)
+                .round(1)
+            )
+            df[pct_col] = ranked.reindex(df.index)
+            group_sizes = df[mask].groupby(group_col).size()
+            df.loc[df[group_col].map(group_sizes).fillna(0) < 5, pct_col] = None
+            if metric != "roic":
+                val_pct_cols.append(pct_col)
+        # val_score: mean of (100 - pct) for valuation metrics; high = cheap vs peers
+        if val_pct_cols:
+            pct_data = df[val_pct_cols].apply(pd.to_numeric, errors="coerce")
+            available = pct_data.notna().sum(axis=1)
+            df[f"{prefix}_val_score"] = (
+                (100 - pct_data.mean(axis=1, skipna=True))
+                .where(available >= 2)
+                .round(1)
+            )
+    return df
+
+
 def get_pe_stats(tickers=None) -> pd.DataFrame:
     """
     Statistics snapshot: PE, P/FCF, EV/EBITDA, growth metrics, plus company overview fields.
@@ -96,6 +145,8 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
     db = _open_db()
     try:
         df = db.query_pe_stats(_tickers(tickers))
+        # Load full universe in the same connection for cross-sectional peer ranks
+        all_stats = db.query_pe_stats(None) if tickers is not None and not df.empty else None
     finally:
         db.close()
 
@@ -126,11 +177,25 @@ def get_pe_stats(tickers=None) -> pd.DataFrame:
         "current_pbv", "pbv_lt_median", "pbv_p25", "pbv_p75", "pbv_rolling_5yr_median",
         "current_ptbv", "ptbv_lt_median", "ptbv_p25", "ptbv_p75", "ptbv_rolling_5yr_median",
         "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high",
+        "sector_pe_pct", "sector_pfcf_pct", "sector_evebitda_pct", "sector_ps_pct",
+        "sector_roic_pct", "sector_val_score",
+        "industry_pe_pct", "industry_pfcf_pct", "industry_evebitda_pct", "industry_ps_pct",
+        "industry_roic_pct", "industry_val_score",
     ]
 
     ov = _overview_slice(_tickers(tickers))
     if not ov.empty:
         df = df.merge(ov, on="ticker", how="left")
+
+    if all_stats is not None and not all_stats.empty:
+        all_ov = _overview_slice(None)
+        if not all_ov.empty:
+            all_stats = all_stats.merge(all_ov, on="ticker", how="left")
+        ranked_all = _add_peer_ranks(all_stats)
+        rank_cols = [c for c in ranked_all.columns if c.endswith("_pct") or c.endswith("_val_score")]
+        df = df.merge(ranked_all[["ticker"] + rank_cols], on="ticker", how="left")
+    else:
+        df = _add_peer_ranks(df)
 
     return df[[c for c in cols if c in df.columns]]
 
@@ -228,3 +293,55 @@ def get_estimates(tickers, horizon: str | None = None) -> pd.DataFrame:
         "rev_avg", "rev_high", "rev_low", "fetched_at",
     ]
     return df[[c for c in cols if c in df.columns]]
+
+
+def get_sector_stats(group: str = "sector", names=None) -> pd.DataFrame:
+    """
+    Latest sector or industry aggregate fundamentals snapshot.
+
+    Args:
+        group: "sector" or "industry"
+        names: str, list[str], or None (returns all groups)
+
+    Returns DataFrame with sector_stats columns for the most recent month.
+
+    Examples:
+        get_sector_stats()
+        get_sector_stats("industry", "Software—Application")
+        get_sector_stats("sector", ["Technology", "Healthcare"])
+    """
+    if isinstance(names, str):
+        names = [names]
+    db = _open_db()
+    try:
+        df = db.query_sector_stats(group_type=group, names=names or None, latest_only=True)
+    finally:
+        db.close()
+    return df
+
+
+def get_sector_history(name: str, group: str = "sector", start: str | None = None, end: str | None = None) -> pd.DataFrame:
+    """
+    Monthly fundamentals timeseries for a single sector or industry.
+
+    Args:
+        name:  Sector or industry name
+        group: "sector" or "industry"
+        start: "YYYY-MM-DD" inclusive start date (optional)
+        end:   "YYYY-MM-DD" inclusive end date (optional)
+
+    Examples:
+        get_sector_history("Technology")
+        get_sector_history("Software—Application", group="industry", start="2020-01-01")
+    """
+    db = _open_db()
+    try:
+        df = db.query_sector_stats(
+            group_type=group,
+            names=[name],
+            start_date=_date.fromisoformat(start) if start else None,
+            end_date=_date.fromisoformat(end) if end else None,
+        )
+    finally:
+        db.close()
+    return df
