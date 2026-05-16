@@ -49,7 +49,9 @@ def _cashflow(n=4, ocf=200.0, capex=50.0):
     })
 
 
-def _prices(date="2024-01-31", price=50.0):
+def _prices(date="2024-03-31", price=50.0):
+    # Use 2024-03-31 so that quarterly data ending 2023-12-31 is available
+    # (fad = 2023-12-31 + 60d = 2024-02-29 <= 2024-03-31).
     return pd.DataFrame({"month_end_date": [date], "price": [price]})
 
 

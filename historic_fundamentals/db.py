@@ -169,6 +169,7 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_margin_5y_median    DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_margin_change_3y    DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS roa_stability_5y        DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS feature_available_date DATE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -444,6 +445,7 @@ class HistoricFundamentalsDB:
             "operating_margin_change_3y", "operating_margin_slope_5y",
             "ttm_fcf_margin", "fcf_margin_5y_median", "fcf_margin_change_3y",
             "roa_stability_5y", "debt_to_ebitda", "interest_coverage",
+            "feature_available_date",
             "updated_at",
         ]
         for col in cols:
@@ -474,6 +476,7 @@ class HistoricFundamentalsDB:
                  operating_margin_change_3y, operating_margin_slope_5y,
                  ttm_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
                  roa_stability_5y, debt_to_ebitda, interest_coverage,
+                 feature_available_date,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -496,6 +499,7 @@ class HistoricFundamentalsDB:
                        operating_margin_change_3y, operating_margin_slope_5y,
                        ttm_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
                        roa_stability_5y, debt_to_ebitda, interest_coverage,
+                       feature_available_date,
                        updated_at
                 FROM _tmp_pe
             """)

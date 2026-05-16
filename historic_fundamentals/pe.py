@@ -104,6 +104,23 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
+_LAG_QUARTERLY = timedelta(days=60)
+_LAG_ANNUAL    = timedelta(days=90)
+
+
+def _feature_available_date(fiscal_date_ending: date, period_type: str) -> date:
+    """
+    Return the earliest date on which data from fiscal_date_ending is assumed
+    to be publicly available.
+
+    Conservative reporting-lag policy (no SEC filing dates in the database):
+        quarterly: fiscal_date_ending + 60 days
+        annual:    fiscal_date_ending + 90 days
+    """
+    if period_type == "annual":
+        return fiscal_date_ending + _LAG_ANNUAL
+    return fiscal_date_ending + _LAG_QUARTERLY
+
 
 def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -499,15 +516,46 @@ def build_monthly_pe(
         if price is None or pd.isna(price) or price <= 0:
             continue
 
+        # ── Point-in-time lag filtering ───────────────────────────────────────
+        # Only include fundamental data whose filing is estimated to be available
+        # by month_end, using conservative reporting-lag assumptions:
+        #   quarterly: fiscal_date_ending + 60 days <= month_end
+        #   annual:    fiscal_date_ending + 90 days <= month_end
+        q_pit = q[q["fiscal_date_ending"] + _LAG_QUARTERLY <= month_end] if not q.empty else q
+        a_pit = a[a["fiscal_date_ending"] + _LAG_ANNUAL    <= month_end] if not a.empty else a
+        cfq_pit = cfq[cfq["fiscal_date_ending"] + _LAG_QUARTERLY <= month_end] if not cfq.empty else cfq
+        cfa_pit = cfa[cfa["fiscal_date_ending"] + _LAG_ANNUAL    <= month_end] if not cfa.empty else cfa
+
+        # Safety net: log if any row would have been included without lag but is now excluded.
+        # This should never fire after the lag fix is applied, but guards against future regressions.
+        if not q.empty:
+            naive_q = q[q["fiscal_date_ending"] <= month_end]
+            if len(naive_q) > len(q_pit):
+                for fde in naive_q["fiscal_date_ending"].iloc[len(q_pit):]:
+                    log.warning(
+                        "PIT violation prevented: quarterly fiscal_date_ending=%s "
+                        "would be used at month_end=%s without lag (feature_available_date=%s)",
+                        fde, month_end, _feature_available_date(fde, "quarterly"),
+                    )
+        if not a.empty:
+            naive_a = a[a["fiscal_date_ending"] <= month_end]
+            if len(naive_a) > len(a_pit):
+                for fde in naive_a["fiscal_date_ending"].iloc[len(a_pit):]:
+                    log.warning(
+                        "PIT violation prevented: annual fiscal_date_ending=%s "
+                        "would be used at month_end=%s without lag (feature_available_date=%s)",
+                        fde, month_end, _feature_available_date(fde, "annual"),
+                    )
+
         # ── Shares ────────────────────────────────────────────────────────────
-        sh = _get_shares(month_end, st, q, a)
+        sh = _get_shares(month_end, st, q_pit, a_pit)
 
         # ── TTM EPS / PE ──────────────────────────────────────────────────────
         ttm_eps = None
         source = None
 
-        if sh is not None and not q.empty:
-            avail = q[q["fiscal_date_ending"] <= month_end]
+        if sh is not None and not q_pit.empty:
+            avail = q_pit[q_pit["fiscal_date_ending"] <= month_end]
             if len(avail) >= 4:
                 last4 = avail.tail(4)
                 ni_vals = last4["net_income"].dropna()
@@ -515,8 +563,8 @@ def build_monthly_pe(
                     ttm_eps = float(ni_vals.sum()) / sh
                     source = "quarterly"
 
-        if ttm_eps is None and sh is not None and not a.empty:
-            avail = a[a["fiscal_date_ending"] <= month_end]
+        if ttm_eps is None and sh is not None and not a_pit.empty:
+            avail = a_pit[a_pit["fiscal_date_ending"] <= month_end]
             if not avail.empty:
                 ni = avail.iloc[-1]["net_income"]
                 if pd.notna(ni):
@@ -529,6 +577,7 @@ def build_monthly_pe(
         pe = float(price) / ttm_eps if ttm_eps > 0 else None
 
         # ── Dividends ─────────────────────────────────────────────────────────
+        # Dividends are point-in-time safe: ex-dividend date is the availability date.
         ttm_dividend = None
         dividend_yield = None
         if not dv.empty:
@@ -540,21 +589,21 @@ def build_monthly_pe(
 
         # ── TTM Revenue ───────────────────────────────────────────────────────
         ttm_revenue = None
-        if not q.empty:
-            avail_rev = q[q["fiscal_date_ending"] <= month_end]
+        if not q_pit.empty:
+            avail_rev = q_pit[q_pit["fiscal_date_ending"] <= month_end]
             if len(avail_rev) >= 4:
                 last4_rev = avail_rev.tail(4)["total_revenue"].dropna()
                 if len(last4_rev) == 4:
                     ttm_revenue = float(last4_rev.sum())
-        if ttm_revenue is None and not a.empty:
-            avail_ann = a[a["fiscal_date_ending"] <= month_end]
+        if ttm_revenue is None and not a_pit.empty:
+            avail_ann = a_pit[a_pit["fiscal_date_ending"] <= month_end]
             if not avail_ann.empty:
                 rev = avail_ann.iloc[-1]["total_revenue"]
                 if pd.notna(rev) and float(rev) > 0:
                     ttm_revenue = float(rev)
 
         # ── TTM FCF / P/FCF ───────────────────────────────────────────────────
-        ttm_fcf = _get_ttm_fcf(month_end, cfq, cfa)
+        ttm_fcf = _get_ttm_fcf(month_end, cfq_pit, cfa_pit)
         fcf_per_share = None
         pfcf_ratio = None
         fcf_yield = None
@@ -567,12 +616,12 @@ def build_monthly_pe(
         # ── TTM EBITDA / EV/EBITDA ────────────────────────────────────────────
         # sh is sourced from shares_outstanding_diluted (split-adjusted) so
         # price * sh gives the correct split-adjusted market cap.
-        ttm_ebitda = _get_ttm_ebitda(month_end, q, a)
+        ttm_ebitda = _get_ttm_ebitda(month_end, q_pit, a_pit)
         ev = None
         ev_ebitda = None
         ebitda_ev_yield = None
         if sh is not None:
-            total_debt, cash = _get_ev_debt_cash(month_end, q, a)
+            total_debt, cash = _get_ev_debt_cash(month_end, q_pit, a_pit)
             if total_debt is not None and cash is not None:
                 computed_ev = float(price) * sh + total_debt - cash
                 if computed_ev > 0:
@@ -583,10 +632,10 @@ def build_monthly_pe(
                         ebitda_ev_yield = ttm_ebitda / ev  # always defined; negative when EBITDA < 0
 
         # ── Margin metrics ────────────────────────────────────────────────────
-        ttm_gross_profit     = _get_ttm_sum(month_end, "gross_profit",     q, a)
-        ttm_operating_income = _get_ttm_sum(month_end, "operating_income", q, a)
-        ttm_interest_expense = _get_ttm_sum(month_end, "interest_expense", q, a)
-        ttm_ebit_val         = _get_ttm_sum(month_end, "ebit",             q, a)
+        ttm_gross_profit     = _get_ttm_sum(month_end, "gross_profit",     q_pit, a_pit)
+        ttm_operating_income = _get_ttm_sum(month_end, "operating_income", q_pit, a_pit)
+        ttm_interest_expense = _get_ttm_sum(month_end, "interest_expense", q_pit, a_pit)
+        ttm_ebit_val         = _get_ttm_sum(month_end, "ebit",             q_pit, a_pit)
 
         ttm_gross_margin = (
             ttm_gross_profit / ttm_revenue
@@ -607,7 +656,7 @@ def build_monthly_pe(
         # ── Debt/EBITDA ───────────────────────────────────────────────────────
         debt_to_ebitda = None
         if ttm_ebitda is not None and ttm_ebitda > 0:
-            _td, _ = _get_ev_debt_cash(month_end, q, a)
+            _td, _ = _get_ev_debt_cash(month_end, q_pit, a_pit)
             if _td is not None:
                 debt_to_ebitda = _td / ttm_ebitda
 
@@ -622,7 +671,7 @@ def build_monthly_pe(
 
         # ── Balance sheet snapshot for new metrics ────────────────────────────
         bs_equity = bs_assets = bs_intang = bs_gw = None
-        for _df in (q, a):
+        for _df in (q_pit, a_pit):
             if _df.empty:
                 continue
             _avail = _df[_df["fiscal_date_ending"] <= month_end]
@@ -660,10 +709,10 @@ def build_monthly_pe(
             roe = ttm_net_income / bs_equity
 
         # ── ROIC ─────────────────────────────────────────────────────────────
-        nopat = _get_ttm_nopat(month_end, q, a)
+        nopat = _get_ttm_nopat(month_end, q_pit, a_pit)
         roic = None
         if nopat is not None and bs_equity is not None:
-            _td, _cash = _get_ev_debt_cash(month_end, q, a)
+            _td, _cash = _get_ev_debt_cash(month_end, q_pit, a_pit)
             invested_capital = bs_equity + (_td or 0.0) - (_cash or 0.0)
             if invested_capital > 0:
                 roic = nopat / invested_capital
@@ -678,35 +727,55 @@ def build_monthly_pe(
                 if tbv > 0:
                     ptbv = float(price) / (tbv / sh)
 
+        # ── feature_available_date ────────────────────────────────────────────
+        # The latest _feature_available_date() across all fundamental data used
+        # for this row. Guarantees feature_available_date <= month_end by construction
+        # (the lag filter above ensures only data with available_date <= month_end enters).
+        _fad_candidates = []
+        if not q_pit.empty:
+            _last_q_fde = q_pit["fiscal_date_ending"].max()
+            _fad_candidates.append(_feature_available_date(_last_q_fde, "quarterly"))
+        if not a_pit.empty:
+            _last_a_fde = a_pit["fiscal_date_ending"].max()
+            _fad_candidates.append(_feature_available_date(_last_a_fde, "annual"))
+        if not cfq_pit.empty:
+            _last_cfq_fde = cfq_pit["fiscal_date_ending"].max()
+            _fad_candidates.append(_feature_available_date(_last_cfq_fde, "quarterly"))
+        if not cfa_pit.empty:
+            _last_cfa_fde = cfa_pit["fiscal_date_ending"].max()
+            _fad_candidates.append(_feature_available_date(_last_cfa_fde, "annual"))
+        feature_available_date = max(_fad_candidates) if _fad_candidates else None
+
         rows.append({
-            "month_end_date": month_end,
-            "price":          float(price),
-            "ttm_eps":        ttm_eps,
-            "pe_ratio":       pe,
-            "ttm_source":     source,
-            "shares":         sh,
-            "ttm_dividend":   ttm_dividend,
-            "dividend_yield": dividend_yield,
-            "ttm_revenue":    ttm_revenue,
-            "ttm_fcf":          ttm_fcf,
-            "fcf_per_share":    fcf_per_share,
-            "pfcf_ratio":       pfcf_ratio,
-            "fcf_yield":        fcf_yield,
-            "ttm_ebitda":       ttm_ebitda,
-            "ev":               ev,
-            "ev_ebitda":        ev_ebitda,
-            "ebitda_ev_yield":  ebitda_ev_yield,
-            "ps_ratio":         ps_ratio,
-            "roa":            roa,
-            "roe":            roe,
-            "roic":           roic,
-            "pbv":            pbv,
-            "ptbv":           ptbv,
-            "ttm_gross_margin":     ttm_gross_margin,
-            "ttm_operating_margin": ttm_operating_margin,
-            "ttm_fcf_margin":       ttm_fcf_margin,
-            "debt_to_ebitda":       debt_to_ebitda,
-            "interest_coverage":    interest_coverage,
+            "month_end_date":         month_end,
+            "price":                  float(price),
+            "ttm_eps":                ttm_eps,
+            "pe_ratio":               pe,
+            "ttm_source":             source,
+            "shares":                 sh,
+            "ttm_dividend":           ttm_dividend,
+            "dividend_yield":         dividend_yield,
+            "ttm_revenue":            ttm_revenue,
+            "ttm_fcf":                ttm_fcf,
+            "fcf_per_share":          fcf_per_share,
+            "pfcf_ratio":             pfcf_ratio,
+            "fcf_yield":              fcf_yield,
+            "ttm_ebitda":             ttm_ebitda,
+            "ev":                     ev,
+            "ev_ebitda":              ev_ebitda,
+            "ebitda_ev_yield":        ebitda_ev_yield,
+            "ps_ratio":               ps_ratio,
+            "roa":                    roa,
+            "roe":                    roe,
+            "roic":                   roic,
+            "pbv":                    pbv,
+            "ptbv":                   ptbv,
+            "ttm_gross_margin":       ttm_gross_margin,
+            "ttm_operating_margin":   ttm_operating_margin,
+            "ttm_fcf_margin":         ttm_fcf_margin,
+            "debt_to_ebitda":         debt_to_ebitda,
+            "interest_coverage":      interest_coverage,
+            "feature_available_date": feature_available_date,
         })
 
     if not rows:
