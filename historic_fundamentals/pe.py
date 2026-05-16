@@ -368,9 +368,17 @@ def _get_ttm_sum(
 
 
 def _rolling_slope(series: pd.Series, window: int = 60, min_periods: int = 36) -> pd.Series:
-    """OLS slope via rolling window — units are change-per-month."""
+    """OLS slope via rolling window — units are change-per-month.
+
+    NaN values within the window are excluded from the regression so that sparse
+    fundamental data does not zero out coverage (np.polyfit propagates NaN with raw=True).
+    """
     def _slope(y: np.ndarray) -> float:
-        return float(np.polyfit(np.arange(len(y)), y, 1)[0])
+        mask = ~np.isnan(y)
+        if mask.sum() < 2:
+            return np.nan
+        x = np.arange(len(y))
+        return float(np.polyfit(x[mask], y[mask], 1)[0])
     return series.rolling(window, min_periods=min_periods).apply(_slope, raw=True)
 
 
@@ -410,6 +418,24 @@ def _get_ev_debt_cash(
         return total_debt, cash_val
 
     return None, None
+
+
+# ── Feature direction reference ───────────────────────────────────────────────
+# Higher value is BETTER for the stock (expected positive return signal):
+#   earnings_yield, fcf_yield, ebitda_ev_yield (and their 3y/5y avgs)
+#   roa, roe, roic (and their rolling medians)
+#   gross_margin, operating_margin, fcf_margin (and their 5y medians)
+#   gross_margin_slope_5y, operating_margin_slope_5y (improving trend)
+#   operating_margin_change_3y, fcf_margin_change_3y (improving)
+#   interest_coverage (higher = more room above debt service)
+#
+# Lower value is BETTER (expected negative return signal when high):
+#   pe_ratio, pfcf_ratio, ev_ebitda, ps_ratio, pbv, ptbv (cheaper = better)
+#   pe_premium, pfcf_premium, ev_premium, ps_premium (mean-reversion)
+#   debt_to_ebitda (lower leverage is better)
+#   roa_stability_5y: this is std(roa) — LOWER = more stable = better.
+#     The name implies stability but the encoding is inverted: higher value means
+#     less stable. Use accordingly in model interpretation.
 
 
 def build_monthly_pe(
@@ -586,9 +612,13 @@ def build_monthly_pe(
                 debt_to_ebitda = _td / ttm_ebitda
 
         # ── Interest coverage ─────────────────────────────────────────────────
+        # AV reports interest_expense as a negative number (outflow convention),
+        # consistent with how wacc.py handles the same field (.abs()).
         interest_coverage = None
-        if ttm_ebit_val is not None and ttm_interest_expense is not None and ttm_interest_expense > 0:
-            interest_coverage = ttm_ebit_val / ttm_interest_expense
+        if ttm_ebit_val is not None and ttm_interest_expense is not None:
+            ie_abs = abs(ttm_interest_expense)
+            if ie_abs > 0:
+                interest_coverage = ttm_ebit_val / ie_abs
 
         # ── Balance sheet snapshot for new metrics ────────────────────────────
         bs_equity = bs_assets = bs_intang = bs_gw = None
