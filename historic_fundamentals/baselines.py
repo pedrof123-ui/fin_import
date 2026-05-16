@@ -208,7 +208,7 @@ def ic_summary(ic_series: pd.Series, nw_lags: int = 11) -> dict:
 
 
 def _newey_west_icir(ic_arr: np.ndarray, lags: int) -> float:
-    """Newey-West HAC ICIR: mean / NW_std_error * sqrt(n)."""
+    """Newey-West HAC ICIR: mean / NW_std_error."""
     n = len(ic_arr)
     if n <= 1 or lags < 1:
         return float(np.mean(ic_arr) / np.std(ic_arr, ddof=1)) if n > 1 else np.nan
