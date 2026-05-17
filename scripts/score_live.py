@@ -480,9 +480,9 @@ def _fmt_market_cap(v) -> str:
     if v >= 1e12:
         return f"{v/1e12:.1f}T"
     if v >= 1e9:
-        return f"{v/1e9:.1f}B"
+        return f"{v/1e9:.0f}B"
     if v >= 1e6:
-        return f"{v/1e6:.1f}M"
+        return f"{v/1e6:.0f}M"
     return f"{v:.0f}"
 
 
