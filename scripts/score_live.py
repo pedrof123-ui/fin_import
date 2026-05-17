@@ -415,6 +415,42 @@ def score_universe(
     return df
 
 
+# Columns stored as fractions (0–1) that should display as percentages
+_PCT_FRACTION_COLS = {
+    "ttm_gross_margin", "ttm_operating_margin", "ttm_fcf_margin", "roa", "roe", "roic",
+}
+# Columns already in percentage points that just need a % suffix
+_PCT_POINT_COLS = {
+    "percentile", "fcf_yield", "earnings_yield", "ebitda_ev_yield",
+}
+# Columns to display with 1 decimal (plain numbers)
+_DECIMAL_COLS = {
+    "score", "price", "pe_ratio", "pfcf_ratio", "ev_ebitda", "ps_ratio", "pbv", "ptbv",
+    "debt_to_ebitda", "interest_coverage", "market_cap",
+}
+
+
+def _format_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a string-formatted copy of df for terminal display only (does not affect CSV)."""
+    out = df.copy()
+    for col in out.columns:
+        if col not in out or not pd.api.types.is_numeric_dtype(out[col]):
+            continue
+        if col in _PCT_FRACTION_COLS:
+            out[col] = out[col].apply(
+                lambda v: f"{v*100:.1f}%" if pd.notna(v) else ""
+            )
+        elif col in _PCT_POINT_COLS:
+            out[col] = out[col].apply(
+                lambda v: f"{v:.1f}%" if pd.notna(v) else ""
+            )
+        elif col in _DECIMAL_COLS:
+            out[col] = out[col].apply(
+                lambda v: f"{v:.1f}" if pd.notna(v) else ""
+            )
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Live scoring pipeline for the fundamentals-alpha model."
@@ -469,7 +505,7 @@ def main() -> None:
     print(f"\nFundamentals Alpha — Live Scores ({today})")
     print(f"Universe: {len(ranked)} tickers after filters")
     print(f"\nTop {top_n}:")
-    print(out_df.head(top_n).to_string(index=False))
+    print(_format_display(out_df.head(top_n)).to_string(index=False))
 
     # Write CSV
     out_date = today.strftime("%Y%m%d")
