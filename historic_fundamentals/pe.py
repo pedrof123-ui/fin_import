@@ -557,18 +557,18 @@ def build_monthly_pe(
             naive_q = q[q["fiscal_date_ending"] <= month_end]
             if len(naive_q) > len(q_pit):
                 for fde in naive_q["fiscal_date_ending"].iloc[len(q_pit):]:
-                    log.warning(
-                        "PIT violation prevented: quarterly fiscal_date_ending=%s "
-                        "would be used at month_end=%s without lag (feature_available_date=%s)",
+                    log.debug(
+                        "PIT lag applied: quarterly fiscal_date_ending=%s "
+                        "excluded at month_end=%s (feature_available_date=%s)",
                         fde, month_end, _feature_available_date(fde, "quarterly"),
                     )
         if not a.empty:
             naive_a = a[a["fiscal_date_ending"] <= month_end]
             if len(naive_a) > len(a_pit):
                 for fde in naive_a["fiscal_date_ending"].iloc[len(a_pit):]:
-                    log.warning(
-                        "PIT violation prevented: annual fiscal_date_ending=%s "
-                        "would be used at month_end=%s without lag (feature_available_date=%s)",
+                    log.debug(
+                        "PIT lag applied: annual fiscal_date_ending=%s "
+                        "excluded at month_end=%s (feature_available_date=%s)",
                         fde, month_end, _feature_available_date(fde, "annual"),
                     )
 
