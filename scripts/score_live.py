@@ -290,7 +290,12 @@ def _compute_top_factor(df: pd.DataFrame, factor_map: dict) -> pd.Series:
     if not zscores:
         return pd.Series("", index=df.index)
     zdf = pd.DataFrame(zscores, index=df.index)
-    return zdf.idxmax(axis=1).fillna("")
+    # idxmax raises on all-NaN rows; mask those rows and fill with ""
+    all_nan_mask = zdf.isna().all(axis=1)
+    result = pd.Series("", index=df.index, dtype=object)
+    if (~all_nan_mask).any():
+        result[~all_nan_mask] = zdf[~all_nan_mask].idxmax(axis=1)
+    return result
 
 
 def _select_output_columns(df: pd.DataFrame) -> pd.DataFrame:

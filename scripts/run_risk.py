@@ -270,7 +270,7 @@ def _portfolio_metrics_row(bt_df: pd.DataFrame, label: str, tc_bps: float) -> di
         return {"label": label, "cagr": float("nan"), "sharpe": float("nan"),
                 "max_drawdown": float("nan"), "avg_turnover": float("nan")}
     ret_col = "net_return" if "net_return" in bt_df.columns else bt_df.columns[0]
-    metrics = portfolio_metrics(bt_df[ret_col], tc_bps=tc_bps)
+    metrics = portfolio_metrics(bt_df[ret_col])
     to_col = "turnover" if "turnover" in bt_df.columns else None
     avg_to = float(bt_df[to_col].mean()) if to_col else float("nan")
     return {
