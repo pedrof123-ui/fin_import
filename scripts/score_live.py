@@ -153,6 +153,28 @@ def _join_overview(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
     return df
 
 
+def _load_liquidity(prices_db_path: str, tickers: list[str], lookback_days: int = 30) -> pd.Series:
+    """Return 30-day average daily dollar volume per ticker (volume * adj_close)."""
+    try:
+        conn = duckdb.connect(prices_db_path, read_only=True)
+        placeholders = ", ".join(["?"] * len(tickers))
+        df_vol = conn.execute(
+            f"""
+            SELECT ticker, AVG(volume * adj_close) AS addv
+            FROM stock_prices
+            WHERE ticker IN ({placeholders})
+              AND date >= (SELECT MAX(date) - INTERVAL '{lookback_days} days' FROM stock_prices)
+            GROUP BY ticker
+            """,
+            tickers,
+        ).df()
+        conn.close()
+        return df_vol.set_index("ticker")["addv"]
+    except Exception as exc:
+        log.warning("Could not load liquidity from PRICES_DB_PATH: %s", exc)
+        return pd.Series(dtype=float)
+
+
 def _compute_market_cap(df: pd.DataFrame) -> pd.DataFrame:
     """Compute market_cap = shares * price if not already present."""
     if "market_cap" not in df.columns or df["market_cap"].isna().all():
@@ -396,8 +418,13 @@ def score_universe(
     # percentile: rank=1 -> 100, rank=N -> near 0
     df["percentile"] = (1.0 - (df["rank"] - 1) / n_ranked) * 100.0
 
-    # liquidity: not yet populated (no ADV data); column included for schema stability
-    df["liquidity"] = float("nan")
+    # liquidity: 30-day average daily dollar volume from prices.duckdb
+    prices_db = os.getenv("PRICES_DB_PATH", "")
+    if prices_db and Path(prices_db).exists():
+        liq = _load_liquidity(prices_db, df["ticker"].tolist())
+        df["liquidity"] = df["ticker"].map(liq)
+    else:
+        df["liquidity"] = float("nan")
 
     # 7b. Top-factor reason code (composite-score path)
     df["top_factor"] = _compute_top_factor(df, BASELINE_FACTORS)
@@ -448,7 +475,7 @@ def _format_display(df: pd.DataFrame) -> pd.DataFrame:
     for col in out.columns:
         if col not in out or not pd.api.types.is_numeric_dtype(out[col]):
             continue
-        if col == "market_cap":
+        if col in ("market_cap", "liquidity"):
             out[col] = out[col].apply(_fmt_market_cap)
         elif col in _PCT_FRACTION_COLS:
             out[col] = out[col].apply(
