@@ -36,7 +36,10 @@ _DEFAULT_DB = str(_ROOT / "data" / "av_financials.duckdb")
 
 
 def _db_path() -> str:
-    return os.environ.get("AV_DB_PATH", _DEFAULT_DB)
+    raw = os.environ.get("AV_DB_PATH", _DEFAULT_DB)
+    p = Path(raw)
+    # Relative paths in .env resolve against the project root, not the notebook CWD
+    return str(p if p.is_absolute() else _ROOT / p)
 
 
 def _query(
