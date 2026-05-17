@@ -461,11 +461,13 @@ def score_universe(
 
 # Columns stored as fractions (0–1) that should display as percentages
 _PCT_FRACTION_COLS = {
-    "ttm_gross_margin", "ttm_operating_margin", "ttm_fcf_margin", "roa", "roe", "roic",
+    "ttm_gross_margin", "ttm_operating_margin", "ttm_fcf_margin",
+    "roa", "roe", "roic",
+    "fcf_yield", "earnings_yield", "ebitda_ev_yield",
 }
-# Columns already in percentage points that just need a % suffix
+# Columns already in percentage points (0–100) that just need a % suffix
 _PCT_POINT_COLS = {
-    "percentile", "fcf_yield", "earnings_yield", "ebitda_ev_yield",
+    "percentile",
 }
 # Columns to display with 1 decimal (plain numbers)
 _DECIMAL_COLS = {
@@ -487,10 +489,13 @@ def _fmt_market_cap(v) -> str:
 
 
 def _format_display(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a string-formatted copy of df for terminal display only (does not affect CSV)."""
+    """Return a string-formatted copy of df for display and CSV output."""
     out = df.copy()
     for col in out.columns:
-        if col not in out or not pd.api.types.is_numeric_dtype(out[col]):
+        if col == "feature_available_date" and pd.api.types.is_datetime64_any_dtype(out[col]):
+            out[col] = out[col].dt.strftime("%Y-%m-%d").fillna("")
+            continue
+        if not pd.api.types.is_numeric_dtype(out[col]):
             continue
         if col in ("market_cap", "liquidity"):
             out[col] = out[col].apply(_fmt_market_cap)
@@ -574,7 +579,7 @@ def main() -> None:
         docs_dir.mkdir(exist_ok=True)
         csv_path = docs_dir / f"live_scores_{out_date}.csv"
 
-    out_df.to_csv(csv_path, index=False)
+    _format_display(out_df).to_csv(csv_path, index=False)
     log.info("Wrote %d rows to %s", len(out_df), csv_path)
     print(f"\nWrote {len(out_df)} rows to {csv_path}")
 
