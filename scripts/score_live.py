@@ -73,8 +73,17 @@ _OUTPUT_COLS = [
 _FACTOR_COLS_FOR_MISSING = [col for _, (col, _) in BASELINE_FACTORS.items()]
 
 
-def _load_latest_features(hf_db_path: str) -> pd.DataFrame:
-    """Load most recent month_end_date per ticker from monthly_pe."""
+def _load_latest_features(hf_db_path: str, today=None) -> pd.DataFrame:
+    """Load most recent PIT-safe row per ticker from monthly_pe.
+
+    For each ticker, picks the most recent month_end_date where
+    feature_available_date <= today. This avoids dropping tickers whose
+    current-month row has a future feature_available_date (e.g. the May row
+    is built on March filings with a 60-day lag, available May 30, but today
+    is May 17 — so the April row is used instead).
+    """
+    today_ts = pd.Timestamp(today or date.today())
+
     conn = duckdb.connect(hf_db_path, read_only=True)
     df = conn.execute("SELECT * FROM monthly_pe").df()
     conn.close()
@@ -83,13 +92,21 @@ def _load_latest_features(hf_db_path: str) -> pd.DataFrame:
     if "feature_available_date" in df.columns:
         df["feature_available_date"] = pd.to_datetime(df["feature_available_date"])
 
-    # Keep only most recent month_end_date per ticker
+    # Keep only rows whose feature data is available as of today
+    if "feature_available_date" in df.columns:
+        pit_ok = df["feature_available_date"].isna() | (df["feature_available_date"] <= today_ts)
+        n_future = (~pit_ok).sum()
+        if n_future:
+            log.info("Skipping %d future rows (feature_available_date > today); using prior month for those tickers", n_future)
+        df = df[pit_ok]
+
+    # Most recent available row per ticker
     df = (
         df.sort_values(["ticker", "month_end_date"])
         .groupby("ticker", as_index=False)
         .last()
     )
-    log.info("Loaded %d tickers from monthly_pe (most recent row each)", len(df))
+    log.info("Loaded %d tickers from monthly_pe (most recent PIT-safe row each)", len(df))
     return df
 
 
@@ -372,8 +389,8 @@ def score_universe(
 
     uk = {**UNIVERSE_DEFAULTS, **(universe_kwargs or {})}
 
-    # 1. Load features
-    df = _load_latest_features(hf_db_path)
+    # 1. Load features (PIT-safe: picks most recent available row per ticker)
+    df = _load_latest_features(hf_db_path, today=today)
 
     # 2. PIT filter
     df = _enforce_pit(df, today)
