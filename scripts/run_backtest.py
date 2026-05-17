@@ -80,7 +80,7 @@ def _join_sector(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
     try:
         import duckdb
         conn = duckdb.connect(av_db_path, read_only=True)
-        overview = conn.execute("SELECT symbol AS ticker, sector FROM company_overview").df()
+        overview = conn.execute("SELECT ticker, sector FROM company_overview").df()
         conn.close()
         df = df.merge(overview, on="ticker", how="left")
         log.info("Joined sector: %d rows with sector", df["sector"].notna().sum())
