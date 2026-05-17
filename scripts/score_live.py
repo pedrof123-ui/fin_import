@@ -35,6 +35,7 @@ from datetime import date
 from pathlib import Path
 
 import duckdb
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -255,7 +256,7 @@ def _load_model(model_path: str):
 
 
 def _predict_with_model(model, df: pd.DataFrame) -> pd.Series:
-    """Score using XGBoost model. Falls back to 0.0 if feature columns missing."""
+    """Score using XGBoost model. Falls back to None if feature columns missing."""
     try:
         feature_names = model.get_booster().feature_names
         present = [f for f in feature_names if f in df.columns]
@@ -263,12 +264,15 @@ def _predict_with_model(model, df: pd.DataFrame) -> pd.Series:
         if missing_feats:
             log.warning("Model features missing from data: %s", missing_feats)
         X = df[present].copy()
-        # Fill remaining model features with 0
+        # Add missing feature columns filled with column median (matches training imputation)
         for f in feature_names:
             if f not in X.columns:
-                X[f] = 0.0
+                X[f] = np.nan
         X = X[feature_names]
-        preds = model.predict(X)
+        # Fill NaN with column medians (same strategy as training)
+        col_medians = X.median()
+        X = X.fillna(col_medians)
+        preds = model.predict(X.to_numpy(dtype=float))
         return pd.Series(preds, index=df.index)
     except Exception as exc:
         log.warning("Model prediction failed: %s — using baseline score.", exc)
