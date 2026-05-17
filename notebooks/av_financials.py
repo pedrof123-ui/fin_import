@@ -31,7 +31,7 @@ from typing import Union
 import duckdb
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB = str(_ROOT / "data" / "av_financials.duckdb")
 
 
