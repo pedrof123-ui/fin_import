@@ -637,6 +637,9 @@ def build_monthly_pe(
             if fcf_per_share > 0:
                 pfcf_ratio = float(price) / fcf_per_share
             fcf_yield = fcf_per_share / float(price)  # always defined; negative when FCF < 0
+            # Null out if implausible — indicates currency mismatch (ADR reporting in local currency)
+            if abs(fcf_yield) > 1.0:
+                fcf_yield = None
 
         # ── TTM EBITDA / EV/EBITDA ────────────────────────────────────────────
         # sh is sourced from shares_outstanding_diluted (split-adjusted) so
@@ -818,7 +821,8 @@ def build_monthly_pe(
     df["ptbv_rolling_5yr_median"]      = df["ptbv"].rolling(60, min_periods=36).median()
 
     # Earnings yield = EPS / price (meaningful even when negative; avoids P/E blow-up)
-    df["earnings_yield"]        = df["ttm_eps"] / df["price"]
+    # Null out if |yield| > 1.0 — indicates currency mismatch (ADR EPS in local currency)
+    df["earnings_yield"]        = (df["ttm_eps"] / df["price"]).where(lambda x: x.abs() <= 1.0)
     df["earnings_yield_3y_avg"] = df["earnings_yield"].rolling(36, min_periods=24).mean()
     df["earnings_yield_5y_avg"] = df["earnings_yield"].rolling(60, min_periods=36).mean()
 
