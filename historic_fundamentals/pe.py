@@ -122,6 +122,30 @@ def _feature_available_date(fiscal_date_ending: date, period_type: str) -> date:
     return fiscal_date_ending + _LAG_QUARTERLY
 
 
+def _drop_corrupt_quarters(df: pd.DataFrame, col: str = "total_assets", max_ratio: float = 50.0) -> pd.DataFrame:
+    """
+    Drop quarterly rows where a key balance-sheet figure differs by >max_ratio from
+    the rolling median of the prior 4 quarters. Catches AV unit-reporting bugs where
+    a single quarter is off by ~1000x (e.g. reported in billions instead of thousands).
+    """
+    if df.empty or col not in df.columns:
+        return df
+    vals = df[col].copy().astype(float)
+    rolling_med = vals.shift(1).rolling(4, min_periods=1).median()
+    # Only filter rows where the rolling median is non-zero and the ratio is extreme
+    ratio = vals / rolling_med.replace(0, float("nan"))
+    bad = ratio.notna() & ((ratio > max_ratio) | (ratio < 1.0 / max_ratio))
+    if bad.any():
+        import logging
+        _log = logging.getLogger(__name__)
+        bad_dates = df.loc[bad, "fiscal_date_ending"].tolist()
+        bad_ratios = ratio[bad].tolist()
+        for d, r in zip(bad_dates, bad_ratios):
+            _log.warning("Dropping corrupt quarterly row fiscal_date_ending=%s: %s ratio=%.1f vs prior median", d, col, r)
+        df = df[~bad].copy()
+    return df
+
+
 def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns (quarterly_df, annual_df).
@@ -159,6 +183,7 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
         ORDER BY i.fiscal_date_ending
     """
     quarterly = av_conn.execute(sql, [ticker, "quarterly"]).df()
+    quarterly = _drop_corrupt_quarters(quarterly, col="total_assets")
     annual    = av_conn.execute(sql, [ticker, "annual"]).df()
     return quarterly, annual
 

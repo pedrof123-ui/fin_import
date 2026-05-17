@@ -426,8 +426,20 @@ _PCT_POINT_COLS = {
 # Columns to display with 1 decimal (plain numbers)
 _DECIMAL_COLS = {
     "score", "price", "pe_ratio", "pfcf_ratio", "ev_ebitda", "ps_ratio", "pbv", "ptbv",
-    "debt_to_ebitda", "interest_coverage", "market_cap",
+    "debt_to_ebitda", "interest_coverage",
 }
+
+
+def _fmt_market_cap(v) -> str:
+    if pd.isna(v):
+        return ""
+    if v >= 1e12:
+        return f"{v/1e12:.1f}T"
+    if v >= 1e9:
+        return f"{v/1e9:.1f}B"
+    if v >= 1e6:
+        return f"{v/1e6:.1f}M"
+    return f"{v:.0f}"
 
 
 def _format_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -436,7 +448,9 @@ def _format_display(df: pd.DataFrame) -> pd.DataFrame:
     for col in out.columns:
         if col not in out or not pd.api.types.is_numeric_dtype(out[col]):
             continue
-        if col in _PCT_FRACTION_COLS:
+        if col == "market_cap":
+            out[col] = out[col].apply(_fmt_market_cap)
+        elif col in _PCT_FRACTION_COLS:
             out[col] = out[col].apply(
                 lambda v: f"{v*100:.1f}%" if pd.notna(v) else ""
             )
