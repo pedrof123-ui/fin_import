@@ -641,9 +641,10 @@ class AVFinancialsDB:
                         try:
                             overview = self._fetch("OVERVIEW", ticker, api_key, limiter)
                             name = overview.get("Name") or ""
-                            if "ADR" in name.upper():
+                            name_up = name.upper()
+                            if "ADR" in name_up or " LTD" in name_up or name_up.endswith("LTD"):
                                 raise ADRRejectedError(
-                                    f"ADR rejected: OVERVIEW name contains 'ADR' ({name!r}). "
+                                    f"ADR rejected: OVERVIEW name indicates foreign company ({name!r}). "
                                     "Financial ratios computed against USD price would be meaningless."
                                 )
                         except ADRRejectedError:
