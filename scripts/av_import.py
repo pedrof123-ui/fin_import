@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from av_financials_db import DEFAULT_DB_PATH, AVFinancialsDB, RateLimiter  # noqa: E402
+from av_financials_db import DEFAULT_DB_PATH, ADRRejectedError, AVFinancialsDB, RateLimiter  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ def main() -> int:
     db = AVFinancialsDB(db_path)
     limiter = RateLimiter()
 
-    succeeded = skipped = failed = 0
+    succeeded = skipped = failed = rejected = 0
 
     try:
         for i, ticker in enumerate(tickers, 1):
@@ -139,6 +139,10 @@ def main() -> int:
             try:
                 rows = db.import_ticker(ticker, api_key, limiter)
                 log.debug("%s %s — statements: %d rows", prefix, ticker, rows)
+            except ADRRejectedError as exc:
+                log.warning("%s %s — REJECTED (ADR): %s", prefix, ticker, exc)
+                rejected += 1
+                continue  # skip shares/dividends for ADR tickers
             except Exception as exc:
                 log.error("%s %s — statements failed: %s", prefix, ticker, exc)
                 ticker_ok = False
@@ -170,8 +174,8 @@ def main() -> int:
         db.close()
 
     log.info(
-        "Import complete: %d succeeded, %d skipped, %d failed",
-        succeeded, skipped, failed,
+        "Import complete: %d succeeded, %d skipped, %d rejected (ADR), %d failed",
+        succeeded, skipped, rejected, failed,
     )
     return 0 if failed == 0 else 1
 

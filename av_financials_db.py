@@ -18,6 +18,20 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+# Currencies that indicate a foreign ADR filing in local (non-USD) currency.
+# These companies report financials in their home currency, making per-share
+# ratios computed against USD ADR prices meaningless.
+_NON_USD_CURRENCIES = frozenset({
+    "AED","AUD","BRL","CAD","CHF","CNY","CZK","DKK","EUR","GBP",
+    "HKD","HUF","IDR","ILS","INR","JPY","KRW","MXN","MYR","NOK",
+    "NZD","PEN","PHP","PLN","RUB","SAR","SEK","SGD","THB","TRY",
+    "TWD","ZAR",
+})
+
+
+class ADRRejectedError(ValueError):
+    """Raised when a ticker reports financials in a non-USD currency (ADR)."""
+
 import duckdb
 import pandas as pd
 import requests
@@ -611,10 +625,38 @@ class AVFinancialsDB:
         ]:
             try:
                 payload = self._fetch(function, ticker, api_key, limiter)
+
+                # ADR guardrail: reject tickers reporting in non-USD currency
+                if function == "INCOME_STATEMENT":
+                    reports = payload.get("annualReports") or payload.get("quarterlyReports") or []
+                    raw_currency = reports[0].get("reportedCurrency") if reports else None
+                    currency = _s(raw_currency)  # convert "None" sentinel → Python None
+                    if currency in _NON_USD_CURRENCIES:
+                        raise ADRRejectedError(
+                            f"ADR rejected: reported_currency={currency} (non-USD). "
+                            "Financial ratios computed against USD price would be meaningless."
+                        )
+                    if currency is None:
+                        # Some ADRs return None currency; fetch OVERVIEW to check name
+                        try:
+                            overview = self._fetch("OVERVIEW", ticker, api_key, limiter)
+                            name = overview.get("Name") or ""
+                            if "ADR" in name.upper():
+                                raise ADRRejectedError(
+                                    f"ADR rejected: OVERVIEW name contains 'ADR' ({name!r}). "
+                                    "Financial ratios computed against USD price would be meaningless."
+                                )
+                        except ADRRejectedError:
+                            raise
+                        except Exception:
+                            pass  # OVERVIEW unavailable — proceed, pe.py yield guard will catch outliers
+
                 n = upsert_fn(ticker, payload)
                 total += n
                 succeeded.append(label)
                 log.info("  %s: %d rows", label, n)
+            except ADRRejectedError:
+                raise  # propagate immediately — skip balance/cashflow calls
             except Exception as exc:
                 log.warning("  %s failed for %s: %s", label, ticker, exc)
                 errors.append(f"{label}: {exc}")
