@@ -846,6 +846,18 @@ def build_monthly_pe(
     avg_revenue_5y = df["ttm_revenue"].rolling(60, min_periods=36).mean()
     df["normalized_ps_5y"] = (df["price"] * df["shares"] / avg_revenue_5y).where(avg_revenue_5y > 0)
 
+    # Normalized yield variants: use 5yr avg denominator to smooth single-year outliers.
+    # earnings_yield_norm and fcf_yield_norm are the yield inverses of normalized_pe_5y/pfcf_5y.
+    # ev_ebitda_norm and ps_ratio_norm alias the already-computed normalized ratio columns
+    # so that the model receives them under consistent yield/ratio naming.
+    df["earnings_yield_norm"] = (1.0 / df["normalized_pe_5y"]).where(df["normalized_pe_5y"] > 0)
+    df["fcf_yield_norm"]      = (1.0 / df["normalized_pfcf_5y"]).where(df["normalized_pfcf_5y"] > 0)
+    df["ev_ebitda_norm"]      = df["normalized_evebitda_5y"]
+    df["ps_ratio_norm"]       = df["normalized_ps_5y"]
+
+    # Price momentum: 12-1 month return (skip most recent month to avoid short-term reversal)
+    df["momentum_12_1"] = df["price"].shift(1) / df["price"].shift(13) - 1
+
     # ── Margin rolling stats ──────────────────────────────────────────────────
     df["gross_margin_5y_median"]     = df["ttm_gross_margin"].rolling(60, min_periods=36).median()
     df["gross_margin_slope_5y"]      = _rolling_slope(df["ttm_gross_margin"])

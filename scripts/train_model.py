@@ -33,7 +33,6 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from historic_fundamentals.universe import UNIVERSE_DEFAULTS, filter_universe  # noqa: E402
-from historic_fundamentals.baselines import compute_forward_returns            # noqa: E402
 from historic_fundamentals.model import DEFAULT_MODEL_PARAMS, _apply_sector_zscore  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -106,9 +105,13 @@ def main() -> None:
     df = filter_universe(df, **universe_kwargs)
     log.info("After universe filter: %d rows, %d tickers", len(df), df["ticker"].nunique())
 
-    # Compute 1-year forward returns
+    # Compute 1-year forward returns using per-ticker shift (memory efficient)
     log.info("Computing forward returns ...")
-    df = compute_forward_returns(df, RETURN_HORIZONS)
+    df = df.sort_values(["ticker", "month_end_date"]).reset_index(drop=True)
+    df[TARGET_COL] = (
+        df.groupby("ticker")["price"]
+        .transform(lambda s: s.shift(-12) / s - 1)
+    )
     df = df[df[TARGET_COL].notna()].copy()
     log.info("After dropping rows without ret_1y: %d rows", len(df))
 
