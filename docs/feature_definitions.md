@@ -157,6 +157,55 @@ The live scoring script filters to rows where `feature_available_date <= today`,
 
 ---
 
+## Earnings Quality
+
+Measures whether reported earnings are backed by actual cash flow. Based on the Sloan (1996) accruals anomaly: high-accrual firms tend to subsequently underperform.
+
+| Feature | Formula | Signal direction | Data source |
+|---|---|---|---|
+| `earnings_quality` | (TTM OCF − TTM net_income) / avg(total_assets over TTM) | Higher is better | cash_flow_statements, income_statements, balance_sheets |
+
+Notes:
+- OCF = operating_cashflow from cash_flow_statements.
+- avg_assets = average of beginning and ending TTM total_assets.
+- A high positive value means cash flow substantially exceeds reported earnings — the company is converting income to cash efficiently.
+- A low or negative value (high accruals) is a quality warning: earnings are not being confirmed by cash receipts.
+- NULL when OCF, net_income, or total_assets are unavailable.
+- Used in both the composite baseline score and as an XGBoost feature.
+
+---
+
+## Asset Growth
+
+Captures the asset-growth anomaly (Titman, Wei, and Xie 2004): firms that aggressively grow total assets tend to underperform subsequently.
+
+| Feature | Formula | Signal direction | Data source |
+|---|---|---|---|
+| `asset_growth` | (total_assets_latest − total_assets_4q_ago) / total_assets_4q_ago | Lower is better | balance_sheets (quarterly, PIT-safe) |
+
+Notes:
+- Uses the most recent PIT-safe quarterly balance sheet available at `month_end_date` versus the row four quarters prior (one year earlier).
+- Clipped to [−0.5, 2.0] to limit outlier influence.
+- NULL when fewer than 5 quarterly observations are available.
+- **XGBoost-only feature.** Adding to the linear composite score decreases portfolio CAGR because the relationship with future returns is non-linear and interaction-dependent. XGBoost captures this naturally.
+
+---
+
+## Momentum
+
+12-minus-1 month price momentum (Jegadeesh and Titman 1993). Excludes the most recent month to avoid short-term reversal contamination.
+
+| Feature | Formula | Signal direction | Data source |
+|---|---|---|---|
+| `momentum_12_1` | (price_11m_ago / price_1m_ago) − 1 | Higher is better | prices.duckdb (stock_prices adj_close) |
+
+Notes:
+- Computed as the return from 12 months ago to 1 month ago, skipping the most recent month.
+- NULL when fewer than 12 months of price history are available.
+- Computed using monthly price data inside `pe.py` at each `month_end_date`.
+
+---
+
 ## Rolling Median Periods
 
 Features with "5yr" or "rolling" in their names use a 60-month window with a minimum of 36 periods. They are NULL for the first 35 months of a ticker's history.

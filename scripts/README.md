@@ -258,3 +258,138 @@ uv run scripts/hf_query.py --all --view stats --out output.csv # export all to C
 | `--out FILE` | none | Write CSV to FILE; prints to stdout if omitted |
 | `--db PATH` | from `.env` | Override DB path |
 | `--verbose` | off | Enable DEBUG logging |
+
+---
+
+## run_baselines.py
+
+Computes IC, ICIR, Newey-West ICIR, hit rate, and quintile spreads for six single-factor baselines and the composite score. Writes `docs/baseline_results.md`.
+
+```bash
+uv run scripts/run_baselines.py
+uv run scripts/run_baselines.py --min-cap 300e6
+```
+
+Required: `HF_DB_PATH`, `AV_DB_PATH`.
+
+---
+
+## validate_model.py
+
+Walk-forward XGBoost validation with embargo. Per-fold and yearly OOS IC, ICIR, NW-ICIR, hit rate, Q5-Q1 spread, and feature importance. Writes `docs/validation_report.md`.
+
+```bash
+uv run scripts/validate_model.py
+uv run scripts/validate_model.py --train-years 5 --test-years 1 --min-cap 1e9
+uv run scripts/validate_model.py --verbose
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--train-years` | 5 | Rolling training window in years |
+| `--test-years` | 1 | Test fold length in years |
+| `--min-cap` | 1e9 | Minimum market cap filter |
+| `--verbose` | off | Enable DEBUG logging |
+
+Required: `HF_DB_PATH`, `AV_DB_PATH`.
+
+---
+
+## train_model.py
+
+Trains a final XGBoost model on the full dataset and saves `data/model.joblib`. Run after adding new features or after a significant data refresh.
+
+```bash
+uv run scripts/train_model.py
+uv run scripts/train_model.py --min-cap 1e9 --verbose
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--min-cap` | 1e9 | Minimum market cap filter |
+| `--verbose` | off | Enable DEBUG logging |
+
+Required: `HF_DB_PATH`, `AV_DB_PATH`.
+
+---
+
+## run_backtest.py
+
+True monthly non-overlapping portfolio backtest vs SPY. Writes `docs/backtest_results.md`.
+
+```bash
+uv run scripts/run_backtest.py
+uv run scripts/run_backtest.py --guardrails --vol-weight
+uv run scripts/run_backtest.py --guardrails --vol-weight --regime-filter
+uv run scripts/run_backtest.py --tc-bps 20 --min-cap 1e9
+uv run scripts/run_backtest.py --model --guardrails
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--guardrails` | off | Apply risk guardrails + 25% sector cap; produces `gr_*` portfolios |
+| `--vol-weight` | off | Inverse-vol position sizing (12m rolling); produces `vw_gr_*` portfolios |
+| `--regime-filter` | off | SPY 12m regime filter (50% exposure when >25% or <-20%); produces `rf_gr_*` |
+| `--model` | off | Also backtest saved XGBoost model (requires `data/model.joblib`) |
+| `--tc-bps` | 10 | One-way transaction cost in basis points |
+| `--score-buffer` | 0.10 | IQR hysteresis buffer for existing holdings |
+| `--max-sector-pct` | 0.25 | Maximum sector weight fraction |
+| `--save-returns` | off | Save monthly return series CSV alongside results |
+
+Required: `HF_DB_PATH`, `AV_DB_PATH`, `PRICES_DB_PATH`.
+
+**Recommended portfolio variants (211-month backtest 2005-2025, 25 stocks):**
+
+| Portfolio | CAGR | Sharpe | MaxDD | Notes |
+|---|---|---|---|---|
+| `gr_top_n_25` | 25.2% | 1.32 | -23.7% | Best CAGR, equal-weight |
+| `vw_gr_top_n_25` | 24.5% | 1.35 | -21.6% | Recommended default |
+| `rf_gr_top_n_25` | 21.6% | 1.37 | -21.3% | Capital-preservation, regime filter |
+
+---
+
+## score_live.py
+
+Live scoring pipeline. Produces a ranked, investable portfolio with position sizes and regime signal. Writes `docs/live_scores_YYYYMMDD.csv`.
+
+```bash
+uv run scripts/score_live.py
+uv run scripts/score_live.py --top 25
+uv run scripts/score_live.py --top 50 --verbose
+uv run scripts/score_live.py --output /tmp/scores.csv
+uv run scripts/score_live.py --model /path/to/model.joblib
+uv run scripts/score_live.py --no-model     # composite score only
+uv run scripts/score_live.py --no-guardrails
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--top` | 25 | Number of portfolio positions to display and size |
+| `--model` | auto-detect | Path to model.joblib; auto-loads from HF_DB_PATH directory |
+| `--no-model` | off | Force composite baseline score only |
+| `--guardrails` | on | Apply value-trap and quality guardrails |
+| `--no-guardrails` | off | Disable guardrails |
+| `--max-sector-pct` | 0.25 | Maximum sector weight in portfolio |
+| `--max-missing` | 2 | Max allowed missing factors per stock |
+| `--output` | auto | Override output CSV path |
+
+**What it outputs:**
+
+- Regime banner: SPY 12-month trailing return and current exposure level (FULL = 100%, REDUCED = 50%).
+- Portfolio table with `weight_pct` (inverse-vol position weight) and `alloc_pct` (regime-adjusted allocation).
+- CSV with all ranked universe stocks; `weight_pct`/`alloc_pct` populated only for top-N portfolio.
+
+Required: `HF_DB_PATH`, `AV_DB_PATH`. `PRICES_DB_PATH` optional but required for vol-weighted sizing and regime signal.
+
+---
+
+## run_risk.py
+
+Risk diagnostics: sector exposure, position concentration, value-trap flags, drawdown statistics, rolling beta. Writes `docs/risk_report.md`.
+
+```bash
+uv run scripts/run_risk.py
+uv run scripts/run_risk.py --tc-bps 20 --verbose
+```
+
+Required: `HF_DB_PATH`, `AV_DB_PATH`, `PRICES_DB_PATH`.

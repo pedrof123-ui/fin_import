@@ -108,10 +108,31 @@ Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`.
 ```
 uv run scripts/run_backtest.py
 uv run scripts/run_backtest.py --tc-bps 20 --min-cap 1e9
+uv run scripts/run_backtest.py --guardrails --vol-weight
+uv run scripts/run_backtest.py --guardrails --vol-weight --regime-filter
 uv run scripts/run_backtest.py --help
 ```
 
-Runs a non-overlapping monthly portfolio simulation for four portfolio configurations (top 20%, top 10%, top 50 names, top 25 names), all equal-weight. Computes CAGR, annualized volatility, Sharpe, max drawdown, beta to SPY, information ratio, tracking error, turnover, and transaction cost drag. Writes `docs/backtest_results.md`.
+Runs a non-overlapping monthly portfolio simulation. Computes CAGR, annualized volatility, Sharpe, max drawdown, beta to SPY, information ratio, tracking error, turnover, and transaction cost drag. Writes `docs/backtest_results.md`.
+
+Key flags:
+
+| Flag | Description |
+|---|---|
+| `--guardrails` | Apply risk guardrails and 25% sector cap; produces `gr_*` portfolios |
+| `--vol-weight` | Inverse-volatility position sizing (12-month rolling); produces `vw_gr_*` portfolios |
+| `--regime-filter` | SPY 12-month regime filter (50% exposure when SPY 12m >25% or <-20%); produces `rf_gr_*` portfolios |
+| `--model` | Also backtest the saved XGBoost model alongside composite baseline |
+| `--tc-bps` | One-way transaction cost in basis points (default: 10) |
+| `--score-buffer` | IQR hysteresis buffer for existing holdings (default: 10%) |
+
+Recommended production portfolio variants (from 211-month backtest 2005-2025, 25-stock):
+
+| Portfolio | CAGR | Sharpe | MaxDD | Notes |
+|---|---|---|---|---|
+| `gr_top_n_25` | 25.2% | 1.32 | -23.7% | Best CAGR, equal-weight |
+| `vw_gr_top_n_25` | 24.5% | 1.35 | -21.6% | Recommended default — best risk-adjusted |
+| `rf_gr_top_n_25` | 21.6% | 1.37 | -21.3% | Capital-preservation priority; regime filter active |
 
 Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`, `PRICES_DB_PATH`.
 
@@ -144,15 +165,24 @@ Produces a ranked list of investable stocks as of today. Output is printed to th
 
 1. Loads the most recent `month_end_date` per ticker from `monthly_pe`, filtered to rows where `feature_available_date <= today`.
 2. Joins sector, industry, and company name from `company_overview`.
-3. Applies universe filters: market cap >= $1B, price >= $5, sector must be known.
-4. Computes composite baseline score (cross-sectional z-score of six valuation and quality factors).
+3. Applies universe filters: market cap >= $1B, price >= $5, sector must be known, avg daily volume >= $5M.
+4. Computes composite baseline score (cross-sectional z-score of six valuation and quality factors plus momentum and earnings quality).
 5. Attempts to load a saved XGBoost model from `model.joblib` next to `HF_DB_PATH`. Falls back to composite baseline score if the file is not found.
-6. Ranks tickers by score (1 = highest-scoring).
+6. Ranks tickers by score (1 = highest-scoring). Applies 25% per-sector cap.
 7. Attaches value-trap flags and missing-data counts per row.
+8. Computes inverse-volatility position weights (12-month rolling vol, 10% per-position cap). Falls back to equal-weight when `PRICES_DB_PATH` is unavailable.
+9. Checks SPY 12-month trailing return for regime. Prints a regime banner and scales `alloc_pct` by 50% exposure in extreme regimes (SPY 12m >25% or <-20%).
 
-**Output columns:** `rank`, `percentile`, `ticker`, `company_name`, `score`, `sector`, `market_cap`, `price`, `liquidity` (NaN placeholder — see Known Limitations), `pe_ratio`, `fcf_yield`, `earnings_yield`, `ttm_gross_margin`, `ttm_operating_margin`, `debt_to_ebitda`, `roa`, `top_factor`, `value_trap`, `missing_factor_count`, `data_quality`, `feature_available_date`.
+**Output columns:** `rank`, `percentile`, `ticker`, `company_name`, `score`, `sector`, `market_cap`, `price`, `liquidity`, `weight_pct` (inverse-vol portfolio weight), `alloc_pct` (regime-adjusted allocation), `pe_ratio`, `fcf_yield`, `earnings_yield`, `ttm_gross_margin`, `ttm_operating_margin`, `debt_to_ebitda`, `roa`, `top_factor`, `value_trap`, `missing_factor_count`, `data_quality`, `feature_available_date`.
 
-Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`.
+**Regime banner example:**
+
+```
+Regime:   REDUCED (SPY 12m: +26.6%)
+Cash:     50.0%
+```
+
+Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`. `PRICES_DB_PATH` is optional but required for vol-weighted sizing and the regime signal.
 
 ---
 
@@ -209,18 +239,24 @@ The 12-month embargo ensures that training labels do not embed prices from the t
 
 **Composite baseline score**
 
-Cross-sectional z-score of six factors within each month:
+Cross-sectional z-score of eight factors within each month:
 
-| Factor | Direction |
-|---|---|
-| `ps_ratio` | Lower is better |
-| `fcf_yield` | Higher is better |
-| `ev_ebitda` | Lower is better |
-| `earnings_yield` | Higher is better |
-| `roic` | Higher is better |
-| `roa` | Higher is better |
+| Factor | Direction | Group |
+|---|---|---|
+| `ps_ratio` | Lower is better | Value |
+| `fcf_yield` | Higher is better | Value |
+| `ev_ebitda` | Lower is better | Value |
+| `earnings_yield` | Higher is better | Value |
+| `roic` | Higher is better | Quality |
+| `roa` | Higher is better | Quality |
+| `earnings_quality` | Higher is better | Quality (Sloan accruals: OCF−NI / avg_assets; higher = less accrual = more cash-backed) |
+| `momentum_12_1` | Higher is better | Momentum |
 
 Factors with the "lower is better" convention are sign-flipped before z-scoring so that a higher composite score always means a better-ranked stock.
+
+**XGBoost model features (35 total)**
+
+The XGBoost model uses all composite factors plus additional features: normalized multiples (`earnings_yield_norm`, `fcf_yield_norm`, `ev_ebitda_norm`, `ps_ratio_norm`), margin levels and stability (gross/operating/FCF margins, 5y medians and slopes), leverage (`debt_to_ebitda`, `interest_coverage`), return-on-capital stability (`roa_stability_5y`), asset growth (`asset_growth`, YoY total_assets growth — XGBoost only, not in composite), and rolling median multiples.
 
 **Transaction costs**
 
@@ -228,7 +264,12 @@ Default: 10 basis points one-way per trade. Configurable via `--tc-bps` on the v
 
 **Rebalancing**
 
-Monthly, equal-weight. No leverage.
+Monthly. Position sizing depends on variant:
+- `gr_top_n_25`: Equal-weight, 25% per-sector cap, 10% IQR score buffer for current holdings.
+- `vw_gr_top_n_25`: Inverse-volatility weighted (12-month rolling monthly std), 10% per-position cap, same guardrails.
+- `rf_gr_top_n_25`: Same as `vw_gr_top_n_25` with SPY 12m regime filter (50% exposure in extreme regimes).
+
+No leverage in any variant.
 
 ---
 
@@ -236,11 +277,11 @@ Monthly, equal-weight. No leverage.
 
 **No filing-date data.** Alpha Vantage does not provide SEC EDGAR `accepted_date`. The conservative fiscal-period-end lag (quarterly +60d, annual +90d) is used as a proxy. This can understate freshness for companies that file early, and may fail to catch late filers. True point-in-time safety would require SEC EDGAR accepted dates.
 
-**No ADV liquidity filter.** The `liquidity` column in live scoring output is always NaN. Alpha Vantage free-tier data does not include daily volume. Illiquid stocks in the $1B+ market-cap universe are not filtered out. A volume-based filter should be added before any live use.
+**Liquidity filter uses historical ADV.** The backtest computes 30-day rolling average daily dollar volume from price history and requires >= $5M ADV. Live scoring reads the `liquidity` column from `monthly_pe` when available; if volume data is absent for a ticker it is excluded from the filtered universe. ADV data is sourced from `PRICES_DB_PATH`.
 
 **Sector classification is point-in-time unsafe.** The `company_overview` table stores the most recent sector snapshot per ticker. Historical sector changes are not tracked. Backtest sector exposure is therefore an approximation.
 
-**XGBoost model not auto-saved.** The walk-forward validation script does not persist a model artifact. Live scoring falls back to the composite baseline score unless a `model.joblib` file is manually placed in the same directory as `HF_DB_PATH`.
+**XGBoost model artifact.** `train_model.py` trains a final model on the full dataset and saves `data/model.joblib`. Live scoring loads this file automatically from the same directory as `HF_DB_PATH`. The model is retrained manually after adding new features; it is not auto-refreshed by `hf_update.py`.
 
 **`roa_stability_5y` naming is inverted.** This feature is `std(ROA over 5 years)`. A higher value means more volatile ROA — which is worse. The name implies stability but the value is volatility. Use with care in model interpretation.
 
@@ -258,15 +299,17 @@ Monthly, equal-weight. No leverage.
 
 The model should be treated as a research tool until all criteria below are verified. Do not use it to place live trades if any item is unchecked.
 
-- [ ] Walk-forward OOS rank IC > 0.03 (positive predictive power in held-out periods)
-- [ ] Walk-forward hit rate > 50%
-- [ ] Backtest Sharpe ratio (net of transaction costs) > 0.5
+- [x] Walk-forward OOS rank IC > 0.03 — **PASSED** (mean IC = 0.035, NW-ICIR = 3.33 across 16 folds)
+- [x] Walk-forward hit rate > 50% — **PASSED** (58.3%)
+- [x] Backtest Sharpe ratio (net of transaction costs) > 0.5 — **PASSED** (vw_gr_top_n_25: 1.35)
 - [ ] No single sector > 40% of live portfolio in the current month
 - [ ] No more than 20% of live output flagged as `value_trap = True`
-- [ ] All 168 unit tests pass (`uv run pytest tests/ --ignore=tests/test_api.py`)
+- [ ] All unit tests pass (`uv run pytest tests/ --ignore=tests/test_api.py`)
 - [ ] `feature_available_date` <= today for all rows in live scoring output
 - [ ] Investable universe contains >= 50 stocks in the current month
 - [ ] Live scoring output has been reviewed for obvious data anomalies before acting
+
+**Note on survivorship bias:** The historical universe is built from currently-active tickers. Bankruptcies, acquisitions, and delistings are absent. Estimated inflation: 0.5–1.5 pp/year CAGR. This does not change the go/no-go decision given 15+ pp outperformance versus SPY. See `docs/survivorship_bias_report.md`.
 
 ---
 
