@@ -63,7 +63,8 @@ log = logging.getLogger(__name__)
 _OUTPUT_COLS = [
     "rank", "percentile", "ticker", "company_name", "score",
     "sector", "market_cap", "price",
-    "liquidity",  # liquidity: not yet populated (no ADV data); column included for schema stability
+    "liquidity",
+    "weight_pct", "alloc_pct",
     "pe_ratio", "fcf_yield", "earnings_yield", "ttm_gross_margin",
     "ttm_operating_margin", "debt_to_ebitda", "roa",
     "top_factor",
@@ -358,6 +359,76 @@ def _compute_top_factor(df: pd.DataFrame, factor_map: dict) -> pd.Series:
     return result
 
 
+def _compute_stock_vols(prices_db_path: str, tickers: list[str], lookback_months: int = 12) -> pd.Series:
+    """Trailing 12-month monthly return vol per ticker (std of monthly returns)."""
+    try:
+        conn = duckdb.connect(prices_db_path, read_only=True)
+        placeholders = ", ".join(["?"] * len(tickers))
+        df_px = conn.execute(
+            f"SELECT ticker, date, adj_close FROM stock_prices "
+            f"WHERE ticker IN ({placeholders}) ORDER BY ticker, date",
+            tickers,
+        ).df()
+        conn.close()
+    except Exception as exc:
+        log.warning("Could not load prices for vol computation: %s", exc)
+        return pd.Series(dtype=float)
+
+    if df_px.empty:
+        return pd.Series(dtype=float)
+
+    df_px["date"] = pd.to_datetime(df_px["date"])
+    # Monthly prices: last price in each calendar month
+    df_px["month"] = df_px["date"].dt.to_period("M")
+    monthly = (
+        df_px.sort_values("date")
+        .groupby(["ticker", "month"])["adj_close"]
+        .last()
+        .reset_index()
+    )
+    monthly = monthly.sort_values(["ticker", "month"])
+    monthly["ret"] = monthly.groupby("ticker")["adj_close"].pct_change()
+
+    # Keep only the trailing lookback_months return observations per ticker
+    vols = (
+        monthly.groupby("ticker")["ret"]
+        .apply(lambda s: s.dropna().tail(lookback_months).std())
+    )
+    vols.name = "vol_12m"
+    log.info("Vol computed for %d / %d tickers", vols.notna().sum(), len(tickers))
+    return vols
+
+
+def _compute_regime(prices_db_path: str, high: float = 0.25, low: float = -0.20) -> tuple[float, float, str]:
+    """Compute SPY 12-month trailing return and derive regime exposure.
+
+    Returns (exposure_fraction, spy_12m_return, label).
+    exposure_fraction = 0.5 if SPY 12m > high or < low, else 1.0.
+    """
+    try:
+        conn = duckdb.connect(prices_db_path, read_only=True)
+        spy = conn.execute(
+            "SELECT date, adj_close FROM stock_prices WHERE ticker='SPY' ORDER BY date"
+        ).df()
+        conn.close()
+    except Exception as exc:
+        log.warning("Could not load SPY for regime: %s", exc)
+        return 1.0, float("nan"), "UNKNOWN"
+
+    spy["date"] = pd.to_datetime(spy["date"])
+    spy = spy.set_index("date").sort_index()
+    spy_monthly = spy["adj_close"].resample("ME").last().dropna()
+
+    if len(spy_monthly) < 13:
+        return 1.0, float("nan"), "UNKNOWN"
+
+    r12 = float(spy_monthly.iloc[-1] / spy_monthly.iloc[-13] - 1)
+    if r12 > high or r12 < low:
+        label = f"REDUCED 50% (SPY 12m={r12:+.1%} {'>' if r12 > high else '<'} {high if r12 > high else low:.0%})"
+        return 0.5, r12, label
+    return 1.0, r12, f"FULL 100% (SPY 12m={r12:+.1%})"
+
+
 def _select_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Select OUTPUT_COLS that exist in df."""
     cols = [c for c in _OUTPUT_COLS if c in df.columns]
@@ -493,7 +564,7 @@ _PCT_FRACTION_COLS = {
 }
 # Columns already in percentage points (0–100) that just need a % suffix
 _PCT_POINT_COLS = {
-    "percentile",
+    "percentile", "weight_pct", "alloc_pct",
 }
 # Columns to display with 1 decimal (plain numbers)
 _DECIMAL_COLS = {
@@ -634,11 +705,67 @@ def main() -> None:
         top_display = out_df.loc[capped_idx]
     else:
         top_display = out_df.head(top_n)
+    # Regime signal and inverse-vol position sizing
+    prices_db = os.getenv("PRICES_DB_PATH", "")
+    regime_exposure, spy_r12, regime_label = 1.0, float("nan"), "UNKNOWN (no PRICES_DB_PATH)"
+    if prices_db and Path(prices_db).exists():
+        regime_exposure, spy_r12, regime_label = _compute_regime(prices_db)
+
+    # Compute inverse-vol weights for the top-display portfolio
+    top_tickers = top_display["ticker"].tolist() if "ticker" in top_display.columns else []
+    max_position_pct = 10.0  # cap any single position at 10% to prevent extreme concentration
+    if top_tickers and prices_db and Path(prices_db).exists():
+        vols = _compute_stock_vols(prices_db, top_tickers)
+        inv_vols = {t: 1.0 / vols[t] for t in top_tickers if t in vols.index and np.isfinite(vols[t]) and vols[t] > 0}
+        if inv_vols:
+            # Initial weights (pct)
+            total_iv = sum(inv_vols.values())
+            n_no_vol = len(top_tickers) - len(inv_vols)
+            vw_frac = len(inv_vols) / len(top_tickers) if n_no_vol > 0 else 1.0
+            ew_weight = (n_no_vol / len(top_tickers) / n_no_vol * 100.0) if n_no_vol > 0 else 0.0
+            raw_weights = {
+                t: (inv_vols[t] / total_iv) * vw_frac * 100.0 if t in inv_vols else ew_weight
+                for t in top_tickers
+            }
+            # Iterative cap-and-renormalize: cap at max_position_pct, redistribute excess
+            weights = dict(raw_weights)
+            for _ in range(20):
+                capped = {t: min(w, max_position_pct) for t, w in weights.items()}
+                total = sum(capped.values())
+                if abs(total - 100.0) < 0.01:
+                    break
+                scale = 100.0 / total
+                weights = {t: min(w * scale, max_position_pct) for t, w in capped.items()}
+            top_display = top_display.copy()
+            top_display["weight_pct"] = top_display["ticker"].map(weights)
+        else:
+            top_display = top_display.copy()
+            top_display["weight_pct"] = 100.0 / len(top_tickers) if top_tickers else float("nan")
+    else:
+        top_display = top_display.copy()
+        top_display["weight_pct"] = 100.0 / len(top_tickers) if top_tickers else float("nan")
+
+    top_display["alloc_pct"] = top_display["weight_pct"] * regime_exposure
+
+    # Propagate weight_pct/alloc_pct back to out_df for CSV (NaN for non-portfolio stocks)
+    out_df = out_df.copy()
+    out_df["weight_pct"] = float("nan")
+    out_df["alloc_pct"] = float("nan")
+    if "ticker" in out_df.columns and "ticker" in top_display.columns:
+        weight_map = top_display.set_index("ticker")["weight_pct"].to_dict()
+        alloc_map = top_display.set_index("ticker")["alloc_pct"].to_dict()
+        out_df["weight_pct"] = out_df["ticker"].map(weight_map)
+        out_df["alloc_pct"] = out_df["ticker"].map(alloc_map)
+
     guardrail_note = " [guardrails: value traps and poor data excluded]" if args.guardrails else ""
     cap_note = f", sector cap {args.max_sector_pct:.0%}" if args.max_sector_pct < 1.0 else ""
+    cash_pct = (1.0 - regime_exposure) * 100.0
     print(f"\nFundamentals Alpha — Live Scores ({today}){guardrail_note}{cap_note}")
     print(f"Universe: {len(out_df)} tickers after filters")
-    print(f"\nTop {top_n} (sector-capped portfolio):")
+    print(f"Regime:   {regime_label}")
+    if cash_pct > 0:
+        print(f"          {cash_pct:.0f}% in cash — reduce all positions proportionally")
+    print(f"\nTop {top_n} (sector-capped portfolio, inverse-vol weighted):")
     print(_format_display(top_display).to_string(index=False))
 
     # Write CSV
