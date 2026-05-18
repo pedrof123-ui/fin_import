@@ -58,6 +58,21 @@ from historic_fundamentals.backtest import (  # noqa: E402
     load_spy_returns,
     PORTFOLIO_CONFIGS,
 )
+from historic_fundamentals.model import _apply_sector_zscore  # noqa: E402
+
+FEATURE_COLS = [
+    "pe_ratio", "ps_ratio", "fcf_yield", "ev_ebitda", "dividend_yield",
+    "earnings_yield", "roa", "roe", "roic", "pbv", "ptbv",
+    "pe_rolling_5yr_median", "pfcf_ratio", "pfcf_rolling_5yr_median",
+    "ps_rolling_5yr_median", "ev_ebitda_rolling_5yr_median",
+    "roa_rolling_5yr_median", "roic_rolling_5yr_median",
+    "gross_margin_5y_median", "gross_margin_slope_5y",
+    "operating_margin_5y_median", "operating_margin_change_3y",
+    "operating_margin_slope_5y", "fcf_margin_5y_median",
+    "fcf_margin_change_3y", "roa_stability_5y",
+    "debt_to_ebitda", "interest_coverage", "momentum_12_1",
+    "earnings_yield_norm", "fcf_yield_norm", "ev_ebitda_norm", "ps_ratio_norm",
+]
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +144,42 @@ def _compute_pit_composite_score(df: pd.DataFrame) -> pd.Series:
     return composite_score(df, cols, sign_map)
 
 
+def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
+    """
+    Score each monthly cross-section with the XGBoost model.
+
+    Applies sector-relative z-scores per month (using only that month's
+    cross-section) before predicting, matching the transformation used
+    at training time. PIT-safe: each month's z-scores use only that
+    month's stocks.
+    """
+    feature_names = model.get_booster().feature_names
+    sector_col = "sector"
+    scores = {}
+
+    for date, month_df in universe.groupby("month_end_date"):
+        present = [f for f in feature_names if f in month_df.columns]
+
+        if sector_col in month_df.columns and month_df[sector_col].notna().any():
+            scored_df, _ = _apply_sector_zscore(
+                month_df, month_df.head(0), present, sector_col
+            )
+        else:
+            scored_df = month_df.copy()
+
+        X = scored_df[present].copy()
+        for f in feature_names:
+            if f not in X.columns:
+                X[f] = np.nan
+        X = X[feature_names]
+        X = X.fillna(X.median())
+        preds = model.predict(X.to_numpy(dtype=float))
+        for idx, val in zip(month_df.index, preds):
+            scores[idx] = val
+
+    return pd.Series(scores)
+
+
 def _format_metrics_row(name: str, m: dict) -> str:
     def _f(v, pct=False):
         if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -160,6 +211,7 @@ def _build_md_report(
     tc_bps: float,
     factor_bt_results: dict | None = None,
     rebalance_label: str = "monthly",
+    model_bt_results: dict | None = None,
 ) -> str:
     rebalance_months = 3 if rebalance_label == "quarterly" else 1
     lines = [
@@ -217,6 +269,21 @@ def _build_md_report(
             lines.append(f"{'f_' + factor_name:<18} {avg_to:>14.1%} {avg_tc:>17.2f} {ann_drag:>13.2f}")
         lines.append("```\n")
 
+    # XGBoost model turnover
+    if model_bt_results:
+        lines.append("\n## XGBoost Model Turnover\n")
+        lines.append("```")
+        lines.append(f"{'Portfolio':<18} {'Avg Turnover':>14} {'Avg TC/Mo (bps)':>17} {'Ann TC Drag':>13}")
+        lines.append("-" * 70)
+        for port_name, bt_df in model_bt_results.items():
+            if bt_df.empty:
+                continue
+            avg_to = bt_df["turnover"].mean()
+            avg_tc = bt_df["tc_cost"].mean() * 1e4
+            ann_drag = bt_df["tc_cost"].mean() * 12 * 1e4
+            lines.append(f"{port_name:<18} {avg_to:>14.1%} {avg_tc:>17.2f} {ann_drag:>13.2f}")
+        lines.append("```\n")
+
     return "\n".join(lines)
 
 
@@ -234,6 +301,8 @@ def main() -> None:
                         help="Disable sector filter")
     parser.add_argument("--quarterly", action="store_true",
                         help="Rebalance quarterly instead of monthly; saves to backtest_results_quarterly.md")
+    parser.add_argument("--model", action="store_true",
+                        help="Also run backtest using XGBoost model scores (requires data/model.joblib)")
     parser.add_argument("--verbose", action="store_true",
                         help="Show DEBUG-level logging")
     args = parser.parse_args()
@@ -276,6 +345,20 @@ def main() -> None:
     universe = universe.copy()
     universe["composite_score"] = _compute_pit_composite_score(universe)
 
+    # Optionally compute XGBoost model scores per month
+    model_loaded = None
+    if args.model:
+        import joblib
+        model_path = ROOT / "data" / "model.joblib"
+        if model_path.exists():
+            log.info("Loading XGBoost model from %s", model_path)
+            model_loaded = joblib.load(model_path)
+            log.info("Scoring universe with XGBoost model (per-month sector z-scores) ...")
+            universe["model_score"] = _score_with_model(universe, model_loaded)
+            log.info("Model scores computed for %d rows", universe["model_score"].notna().sum())
+        else:
+            log.warning("--model requested but %s not found — skipping model backtest", model_path)
+
     # Load SPY returns
     spy_returns = None
     if Path(prices_db).exists():
@@ -305,6 +388,20 @@ def main() -> None:
         portfolios=port_configs,
         rebalance_months=rebalance_months,
     )
+
+    # XGBoost model backtest (if model loaded)
+    model_bt_results: dict[str, pd.DataFrame] = {}
+    if model_loaded is not None and "model_score" in universe.columns:
+        log.info("Running XGBoost model %s backtest ...", rebalance_label)
+        raw_model_results = run_monthly_backtest(
+            universe,
+            score_col="model_score",
+            tc_bps=args.tc_bps,
+            portfolios=port_configs,
+            rebalance_months=rebalance_months,
+        )
+        # Prefix names with "xgb_" to distinguish from composite in the table
+        model_bt_results = {f"xgb_{k}": v for k, v in raw_model_results.items()}
 
     # Single-factor baselines: run top_pct_20 for each factor in BASELINE_FACTORS
     log.info("Running single-factor baseline backtests (top 20% only) ...")
@@ -356,6 +453,12 @@ def main() -> None:
         net_rets = factor_bt_df["net_return"]
         all_metrics[f"f_{factor_name}"] = portfolio_metrics(net_rets, spy_returns=spy_returns)
 
+    for port_name, bt_df in model_bt_results.items():
+        if bt_df.empty:
+            all_metrics[port_name] = {}
+            continue
+        all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
+
     # Print summary table
     header = (
         f"{'Portfolio':<18} {'CAGR':>8} {'AnnVol':>8} {'Sharpe':>8} {'Sortino':>8} "
@@ -386,7 +489,8 @@ def main() -> None:
     # Write markdown report
     docs_dir = ROOT / "docs"
     docs_dir.mkdir(exist_ok=True)
-    out_path = docs_dir / f"backtest_results{'_quarterly' if args.quarterly else ''}.md"
+    suffix = ("_model" if args.model else "") + ("_quarterly" if args.quarterly else "")
+    out_path = docs_dir / f"backtest_results{suffix}.md"
     md = _build_md_report(
         universe_n=f"{universe['ticker'].nunique()} tickers",
         universe_filters=universe_kwargs,
@@ -395,6 +499,7 @@ def main() -> None:
         tc_bps=args.tc_bps,
         factor_bt_results=factor_bt_results,
         rebalance_label=rebalance_label,
+        model_bt_results=model_bt_results if model_bt_results else None,
     )
     out_path.write_text(md)
     log.info("Wrote results to %s", out_path)
