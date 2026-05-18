@@ -365,6 +365,8 @@ def main() -> None:
                         help="Max missing features allowed before a stock is excluded (default: 2)")
     parser.add_argument("--max-sector-pct", type=float, default=0.25,
                         help="Max fraction of portfolio from any single sector (default: 0.25 = 25%%)")
+    parser.add_argument("--save-returns", action="store_true",
+                        help="Save monthly returns for each portfolio to docs/monthly_returns_*.csv")
     parser.add_argument("--verbose", action="store_true",
                         help="Show DEBUG-level logging")
     args = parser.parse_args()
@@ -623,6 +625,35 @@ def main() -> None:
     )
     out_path.write_text(md)
     log.info("Wrote results to %s", out_path)
+
+    # Save monthly returns CSVs if requested
+    if args.save_returns:
+        all_returns = {
+            **bt_results,
+            **model_bt_results,
+            **gr_bt_results,
+            **gr_model_bt_results,
+        }
+        if spy_returns is not None:
+            spy_df = spy_returns.rename("net_return").to_frame()
+            spy_df["gross_return"] = spy_df["net_return"]
+            spy_df["tc_cost"] = 0.0
+            spy_df["turnover"] = 0.0
+            spy_df["n_stocks"] = 1
+            all_returns["SPY"] = spy_df
+
+        returns_path = docs_dir / f"monthly_returns{suffix}.csv"
+        combined = []
+        for port_name, bt_df in all_returns.items():
+            if isinstance(bt_df, pd.DataFrame) and not bt_df.empty:
+                tmp = bt_df[["net_return", "gross_return", "tc_cost", "turnover", "n_stocks"]].copy()
+                tmp.index.name = "date"
+                tmp = tmp.reset_index()
+                tmp.insert(0, "portfolio", port_name)
+                combined.append(tmp)
+        if combined:
+            pd.concat(combined, ignore_index=True).to_csv(returns_path, index=False)
+            log.info("Wrote monthly returns to %s", returns_path)
 
 
 if __name__ == "__main__":
