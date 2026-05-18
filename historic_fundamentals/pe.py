@@ -779,6 +779,18 @@ def build_monthly_pe(
                 val = (ttm_ocf - ttm_net_income) / avg_ta
                 earnings_quality = max(-1.0, min(1.0, val))
 
+        # ── Asset growth (Titman et al. 2004) ────────────────────────────────
+        # YoY total assets growth. High growth predicts underperformance.
+        # Need 5+ quarterly observations: latest vs 4 quarters prior.
+        asset_growth = None
+        if not q_pit.empty:
+            avail_ta = q_pit[q_pit["fiscal_date_ending"] <= month_end]["total_assets"].dropna()
+            if len(avail_ta) >= 5:
+                ta_latest = float(avail_ta.iloc[-1])
+                ta_4q_ago = float(avail_ta.iloc[-5])
+                if ta_4q_ago > 0:
+                    asset_growth = max(-0.5, min(2.0, (ta_latest - ta_4q_ago) / ta_4q_ago))
+
         # ── ROIC ─────────────────────────────────────────────────────────────
         nopat = _get_ttm_nopat(month_end, q_pit, a_pit)
         roic = None
@@ -847,6 +859,7 @@ def build_monthly_pe(
             "debt_to_ebitda":         debt_to_ebitda,
             "interest_coverage":      interest_coverage,
             "earnings_quality":       earnings_quality,
+            "asset_growth":           asset_growth,
             "feature_available_date": feature_available_date,
         })
 

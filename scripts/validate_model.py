@@ -64,7 +64,7 @@ FEATURE_COLS = [
     "fcf_margin_change_3y", "roa_stability_5y",
     "debt_to_ebitda", "interest_coverage", "momentum_12_1",
     "earnings_yield_norm", "fcf_yield_norm", "ev_ebitda_norm", "ps_ratio_norm",
-    "earnings_quality",
+    "earnings_quality", "asset_growth",
 ]
 
 TARGET_COL = "ret_1y"
