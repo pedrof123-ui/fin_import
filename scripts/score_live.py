@@ -828,13 +828,6 @@ def main() -> None:
         f.write(f"# universe_size: {len(out_df)}\n")
         f.write(f"# regime: {regime_label}\n")
         f.write(f"# regime_exposure: {regime_exposure:.0%}\n")
-        if metrics:
-            f.write(f"# backtest_cagr: {metrics['cagr']}\n")
-            f.write(f"# backtest_sharpe: {metrics['sharpe']}\n")
-            f.write(f"# backtest_max_dd: {metrics['max_dd']}\n")
-            f.write(f"# backtest_beta: {metrics['beta']}\n")
-            f.write(f"# backtest_win_rate: {metrics['win_rate']}\n")
-            f.write(f"# backtest_months: {metrics['months']}\n")
     _format_display(out_df).to_csv(csv_path, mode="a", index=False)
     log.info("Wrote %d rows to %s", len(out_df), csv_path)
     print(f"\nWrote {len(out_df)} rows to {csv_path}")
