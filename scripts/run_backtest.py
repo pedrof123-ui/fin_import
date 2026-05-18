@@ -159,7 +159,9 @@ def _build_md_report(
     bt_results: dict,
     tc_bps: float,
     factor_bt_results: dict | None = None,
+    rebalance_label: str = "monthly",
 ) -> str:
+    rebalance_months = 3 if rebalance_label == "quarterly" else 1
     lines = [
         "# Backtest Results\n",
         f"**Universe**: {universe_n}\n",
@@ -167,7 +169,7 @@ def _build_md_report(
         f"| min_price={universe_filters.get('min_price', 'N/A'):.2f}\n",
         f"**TC**: {tc_bps:.0f} bps one-way per trade\n",
         f"**Signal**: composite baseline (value+quality+momentum where available)\n",
-        f"**Rebalancing**: monthly equal-weight, non-overlapping 1-month returns\n",
+        f"**Rebalancing**: {rebalance_label} equal-weight, non-overlapping {rebalance_months}-month returns\n",
         "\n## Portfolio weighting\n",
         "All portfolios in this backtest are equal-weight (each selected stock receives "
         "an equal allocation at each monthly rebalance).\n",
@@ -230,6 +232,8 @@ def main() -> None:
                         help="Minimum price override (default: 5.0)")
     parser.add_argument("--no-sector-filter", action="store_true",
                         help="Disable sector filter")
+    parser.add_argument("--quarterly", action="store_true",
+                        help="Rebalance quarterly instead of monthly; saves to backtest_results_quarterly.md")
     parser.add_argument("--verbose", action="store_true",
                         help="Show DEBUG-level logging")
     args = parser.parse_args()
@@ -287,12 +291,19 @@ def main() -> None:
         log.warning("PRICES_DB_PATH not found (%s) — SPY benchmark skipped", prices_db)
 
     # Run backtest
-    log.info("Running monthly backtest (tc_bps=%.0f) ...", args.tc_bps)
+    rebalance_months = 3 if args.quarterly else 1
+    rebalance_label = "quarterly" if args.quarterly else "monthly"
+    port_configs = (
+        {"top_n_25": 25, "top_n_10": 10, "top_pct_20": 0.20}
+        if args.quarterly else PORTFOLIO_CONFIGS
+    )
+    log.info("Running %s backtest (tc_bps=%.0f) ...", rebalance_label, args.tc_bps)
     bt_results = run_monthly_backtest(
         universe,
         score_col="composite_score",
         tc_bps=args.tc_bps,
-        portfolios=PORTFOLIO_CONFIGS,
+        portfolios=port_configs,
+        rebalance_months=rebalance_months,
     )
 
     # Single-factor baselines: run top_pct_20 for each factor in BASELINE_FACTORS
@@ -310,6 +321,7 @@ def main() -> None:
             score_col=score_col_name,
             tc_bps=args.tc_bps,
             portfolios={"top_pct_20": 0.20},
+            rebalance_months=rebalance_months,
         )
         factor_bt_results[factor_name] = factor_result.get("top_pct_20", pd.DataFrame())
         log.info("Factor %s: %d months", factor_name,
@@ -351,7 +363,7 @@ def main() -> None:
     )
     sep = "-" * 110
     print(f"\n{'=' * 110}")
-    print("True Monthly Portfolio Backtest — Fundamentals Alpha")
+    print(f"True {rebalance_label.capitalize()} Portfolio Backtest — Fundamentals Alpha")
     print(f"{'=' * 110}")
     print(header)
     print(sep)
@@ -374,7 +386,7 @@ def main() -> None:
     # Write markdown report
     docs_dir = ROOT / "docs"
     docs_dir.mkdir(exist_ok=True)
-    out_path = docs_dir / "backtest_results.md"
+    out_path = docs_dir / f"backtest_results{'_quarterly' if args.quarterly else ''}.md"
     md = _build_md_report(
         universe_n=f"{universe['ticker'].nunique()} tickers",
         universe_filters=universe_kwargs,
@@ -382,6 +394,7 @@ def main() -> None:
         bt_results=bt_results,
         tc_bps=args.tc_bps,
         factor_bt_results=factor_bt_results,
+        rebalance_label=rebalance_label,
     )
     out_path.write_text(md)
     log.info("Wrote results to %s", out_path)

@@ -50,6 +50,7 @@ def run_monthly_backtest(
     ticker_col: str = "ticker",
     tc_bps: float = 10.0,
     portfolios: Optional[dict] = None,
+    rebalance_months: int = 1,
 ) -> dict[str, pd.DataFrame]:
     """
     Run a true monthly portfolio backtest with non-overlapping 1-month returns.
@@ -78,6 +79,9 @@ def run_monthly_backtest(
         float <= 1.0: top fraction of universe.
         int > 1: top N names.
         Defaults to PORTFOLIO_CONFIGS.
+    rebalance_months : int
+        How often to rebalance. 1 = monthly (default), 3 = quarterly.
+        Between rebalance dates the portfolio is held unchanged with no TC.
 
     Returns
     -------
@@ -105,15 +109,20 @@ def run_monthly_backtest(
     for port_name, config_val in portfolios.items():
         rows = []
         prev_holdings: set = set()
+        current_holdings: set = set()
 
         for i, t0 in enumerate(sorted_dates[:-1]):
             t1 = sorted_dates[i + 1]
 
-            # Stocks available at t0 with valid scores
-            universe_t0 = df[df[date_col] == t0].copy()
-            selected = _select_top(universe_t0, score_col, config_val)
-            holdings_t0 = set(selected[ticker_col].tolist())
+            # Rebalance only at the specified interval
+            should_rebalance = (i % rebalance_months == 0)
 
+            if should_rebalance:
+                universe_t0 = df[df[date_col] == t0].copy()
+                selected = _select_top(universe_t0, score_col, config_val)
+                current_holdings = set(selected[ticker_col].tolist())
+
+            holdings_t0 = current_holdings
             if not holdings_t0:
                 continue
 
@@ -131,16 +140,19 @@ def run_monthly_backtest(
 
             gross_return = float(np.mean(stock_returns))
 
-            # Turnover: fraction of portfolio that changed from prior month
-            if prev_holdings:
-                unchanged = len(holdings_t0 & prev_holdings)
-                n_port = len(holdings_t0)
-                turnover = 1.0 - unchanged / n_port
+            # TC only applied at rebalance months
+            if should_rebalance:
+                if prev_holdings:
+                    unchanged = len(holdings_t0 & prev_holdings)
+                    n_port = len(holdings_t0)
+                    turnover = 1.0 - unchanged / n_port
+                else:
+                    turnover = 1.0
+                tc_cost = turnover * tc_bps * 1e-4
             else:
-                # First period: full turnover (buying everything new)
-                turnover = 1.0
+                turnover = 0.0
+                tc_cost = 0.0
 
-            tc_cost = turnover * tc_bps * 1e-4
             net_return = gross_return - tc_cost
 
             rows.append({
@@ -151,7 +163,8 @@ def run_monthly_backtest(
                 "turnover": turnover,
                 "n_stocks": len(stock_returns),
             })
-            prev_holdings = holdings_t0
+            if should_rebalance:
+                prev_holdings = holdings_t0
 
         results[port_name] = pd.DataFrame(rows)
         if not results[port_name].empty:
