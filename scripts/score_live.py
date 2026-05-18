@@ -241,8 +241,10 @@ def _compute_composite_score(df: pd.DataFrame) -> pd.Series:
     return composite_score(df, cols, sign_map, group_col=group_col)
 
 
-def _load_model(model_path: str):
-    """Load joblib model. Returns None if not found."""
+def _load_model(model_path):
+    """Load joblib model. Returns None if not found or model_path is None."""
+    if model_path is None:
+        return None
     import joblib
     p = Path(model_path)
     if not p.exists():
@@ -545,6 +547,8 @@ def main() -> None:
                         help="Override output CSV path")
     parser.add_argument("--model", type=str, default=None,
                         help="Override model.joblib path")
+    parser.add_argument("--no-model", action="store_true",
+                        help="Use composite score only (no XGBoost) — equivalent to gr_top_n_25")
     parser.add_argument("--guardrails", action="store_true", default=True,
                         help="Exclude value traps and poor data quality (default: on)")
     parser.add_argument("--no-guardrails", dest="guardrails", action="store_false",
@@ -570,7 +574,7 @@ def main() -> None:
         sys.exit(1)
 
     today = date.today()
-    model_path = args.model or str(Path(hf_db).parent / "model.joblib")
+    model_path = None if args.no_model else (args.model or str(Path(hf_db).parent / "model.joblib"))
 
     ranked = score_universe(
         hf_db_path=hf_db,
@@ -639,7 +643,8 @@ def main() -> None:
     else:
         docs_dir = ROOT / "docs"
         docs_dir.mkdir(exist_ok=True)
-        csv_path = docs_dir / f"live_scores_{out_date}.csv"
+        suffix = "_composite" if args.no_model else ""
+        csv_path = docs_dir / f"live_scores_{out_date}{suffix}.csv"
 
     _format_display(out_df).to_csv(csv_path, index=False)
     log.info("Wrote %d rows to %s", len(out_df), csv_path)
