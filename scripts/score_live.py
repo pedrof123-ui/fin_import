@@ -59,6 +59,31 @@ from historic_fundamentals.model import _apply_sector_zscore  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+# Backtest reference metrics (2005–2025, 211 months, composite score variants).
+# rf_vw_* entries reflect rf_* backtest runs (which used --vol-weight; naming is equivalent).
+_BACKTEST_METRICS: dict[str, dict] = {
+    "gr_top_n_25":          dict(cagr="25.2%", sharpe="1.318", max_dd="-23.7%", beta="1.038", win_rate="67.8%", months=211),
+    "vw_gr_top_n_25":       dict(cagr="24.5%", sharpe="1.351", max_dd="-21.6%", beta="0.984", win_rate="71.1%", months=211),
+    "rf_gr_top_n_25":       dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
+    "rf_vw_gr_top_n_25":    dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
+    "xgb_gr_top_n_25":      dict(cagr="20.5%", sharpe="1.076", max_dd="-26.6%", beta="1.054", win_rate="62.6%", months=211),
+    "vw_xgb_gr_top_n_25":   dict(cagr="19.5%", sharpe="1.089", max_dd="-23.5%", beta="0.989", win_rate="62.6%", months=211),
+    "rf_xgb_gr_top_n_25":   dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
+    "rf_vw_xgb_gr_top_n_25": dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
+}
+
+
+def _portfolio_label(use_model: bool, vol_weighted: bool, regime_active: bool, top_n: int) -> str:
+    parts = []
+    if regime_active:
+        parts.append("rf")
+    if vol_weighted:
+        parts.append("vw")
+    parts.append("xgb_gr" if use_model else "gr")
+    parts.append(f"top_n_{top_n}")
+    return "_".join(parts)
+
+
 # Columns to include in output (skip gracefully if absent)
 _OUTPUT_COLS = [
     "rank", "percentile", "ticker", "company_name", "score",
@@ -622,9 +647,11 @@ def main() -> None:
     parser.add_argument("--output", type=str, default=None,
                         help="Override output CSV path")
     parser.add_argument("--model", type=str, default=None,
-                        help="Override model.joblib path")
+                        help="Explicit path to model.joblib to use XGBoost scoring")
+    parser.add_argument("--use-model", action="store_true",
+                        help="Use saved XGBoost model from HF_DB_PATH directory")
     parser.add_argument("--no-model", action="store_true",
-                        help="Use composite score only (no XGBoost) — equivalent to gr_top_n_25")
+                        help="Force composite score (default; kept for backwards compatibility)")
     parser.add_argument("--guardrails", action="store_true", default=True,
                         help="Exclude value traps and poor data quality (default: on)")
     parser.add_argument("--no-guardrails", dest="guardrails", action="store_false",
@@ -650,7 +677,14 @@ def main() -> None:
         sys.exit(1)
 
     today = date.today()
-    model_path = None if args.no_model else (args.model or str(Path(hf_db).parent / "model.joblib"))
+    # Composite score is default; XGBoost requires --use-model or --model PATH
+    if args.no_model or (not args.use_model and not args.model):
+        model_path = None
+    elif args.model:
+        model_path = args.model
+    else:
+        model_path = str(Path(hf_db).parent / "model.joblib")
+    use_model = model_path is not None
 
     ranked = score_universe(
         hf_db_path=hf_db,
@@ -757,30 +791,54 @@ def main() -> None:
         out_df["weight_pct"] = out_df["ticker"].map(weight_map)
         out_df["alloc_pct"] = out_df["ticker"].map(alloc_map)
 
-    guardrail_note = " [guardrails: value traps and poor data excluded]" if args.guardrails else ""
-    cap_note = f", sector cap {args.max_sector_pct:.0%}" if args.max_sector_pct < 1.0 else ""
+    vol_weighted = bool(prices_db and Path(prices_db).exists())
+    regime_active = regime_exposure < 1.0
+    port_label = _portfolio_label(use_model, vol_weighted, regime_active, top_n)
+    metrics = _BACKTEST_METRICS.get(port_label, {})
+
     cash_pct = (1.0 - regime_exposure) * 100.0
-    print(f"\nFundamentals Alpha — Live Scores ({today}){guardrail_note}{cap_note}")
-    print(f"Universe: {len(out_df)} tickers after filters")
-    print(f"Regime:   {regime_label}")
+    guardrail_note = " [guardrails on]" if args.guardrails else ""
+    print(f"\nFundamentals Alpha — Live Scores ({today})")
+    print(f"Portfolio: {port_label}{guardrail_note}")
+    print(f"Scoring:   {'XGBoost model' if use_model else 'Composite (value + quality + momentum)'}")
+    print(f"Universe:  {len(out_df)} tickers after filters")
+    print(f"Regime:    {regime_label}")
     if cash_pct > 0:
-        print(f"          {cash_pct:.0f}% in cash — reduce all positions proportionally")
-    print(f"\nTop {top_n} (sector-capped portfolio, inverse-vol weighted):")
+        print(f"           {cash_pct:.0f}% cash — reduce all positions proportionally")
+    if metrics:
+        print(f"Backtest:  CAGR {metrics['cagr']}  Sharpe {metrics['sharpe']}  "
+              f"MaxDD {metrics['max_dd']}  Beta {metrics['beta']}  "
+              f"WinRate {metrics['win_rate']}  ({metrics['months']}m)")
+    print(f"\nTop {top_n} (sector-capped, inverse-vol weighted):")
     print(_format_display(top_display).to_string(index=False))
 
-    # Write CSV
+    # Write CSV with metadata header
     out_date = today.strftime("%Y%m%d")
     if args.output:
         csv_path = Path(args.output)
     else:
         docs_dir = ROOT / "docs"
         docs_dir.mkdir(exist_ok=True)
-        suffix = "_composite" if args.no_model else ""
-        csv_path = docs_dir / f"live_scores_{out_date}{suffix}.csv"
+        csv_path = docs_dir / f"live_scores_{out_date}_{port_label}.csv"
 
-    _format_display(out_df).to_csv(csv_path, index=False)
+    with open(csv_path, "w") as f:
+        f.write(f"# portfolio: {port_label}\n")
+        f.write(f"# run_date: {today}\n")
+        f.write(f"# scoring: {'xgboost' if use_model else 'composite'}\n")
+        f.write(f"# universe_size: {len(out_df)}\n")
+        f.write(f"# regime: {regime_label}\n")
+        f.write(f"# regime_exposure: {regime_exposure:.0%}\n")
+        if metrics:
+            f.write(f"# backtest_cagr: {metrics['cagr']}\n")
+            f.write(f"# backtest_sharpe: {metrics['sharpe']}\n")
+            f.write(f"# backtest_max_dd: {metrics['max_dd']}\n")
+            f.write(f"# backtest_beta: {metrics['beta']}\n")
+            f.write(f"# backtest_win_rate: {metrics['win_rate']}\n")
+            f.write(f"# backtest_months: {metrics['months']}\n")
+    _format_display(out_df).to_csv(csv_path, mode="a", index=False)
     log.info("Wrote %d rows to %s", len(out_df), csv_path)
     print(f"\nWrote {len(out_df)} rows to {csv_path}")
+    print("(Read with: pd.read_csv(path, comment='#'))")
 
 
 if __name__ == "__main__":
