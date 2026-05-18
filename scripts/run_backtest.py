@@ -187,6 +187,41 @@ def _load_historical_adv(prices_db_path: str, tickers: list[str], lookback_days:
     return result
 
 
+def _compute_regime_exposure(
+    prices_db_path: str,
+    high_threshold: float = 0.25,
+    low_threshold: float = -0.20,
+    reduced_exposure: float = 0.50,
+) -> pd.Series:
+    """
+    Build a monthly regime exposure series from SPY 12-month trailing return.
+
+    SPY 12m return > high_threshold → momentum/growth regime (value underperforms)
+    SPY 12m return < low_threshold  → severe bear (value also crashes)
+    Both cases: reduce exposure to reduced_exposure (default 50%).
+    Otherwise: 100% invested.
+
+    All signals use data available at t0 → PIT safe.
+    """
+    import duckdb
+    conn = duckdb.connect(prices_db_path, read_only=True)
+    spy = conn.execute(
+        "SELECT date, adj_close FROM stock_prices WHERE ticker = 'SPY' ORDER BY date"
+    ).df()
+    conn.close()
+
+    spy["date"] = pd.to_datetime(spy["date"])
+    spy = spy.set_index("date").sort_index()
+    spy_monthly = spy["adj_close"].resample("ME").last().dropna()
+    spy_12m = spy_monthly.pct_change(12)
+
+    exposure = spy_12m.apply(
+        lambda r: reduced_exposure if (np.isfinite(r) and (r > high_threshold or r < low_threshold)) else 1.0
+    )
+    exposure.index.name = "month_end_date"
+    return exposure
+
+
 def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
     """
     Score each monthly cross-section with the XGBoost model.
@@ -412,6 +447,9 @@ def main() -> None:
                              "before ranking; 0 disables (default: 0.10 = 10%% of IQR)")
     parser.add_argument("--vol-weight", action="store_true",
                         help="Also run inverse-volatility-weighted guardrailed backtests (vw_gr_* and vw_xgb_gr_*)")
+    parser.add_argument("--regime-filter", action="store_true",
+                        help="Also run regime-filtered guardrailed backtests (rf_gr_*): "
+                             "50%% exposure when SPY 12m return >25%% or <-20%%")
     parser.add_argument("--save-returns", action="store_true",
                         help="Save monthly returns for each portfolio to docs/monthly_returns_*.csv")
     parser.add_argument("--verbose", action="store_true",
@@ -621,6 +659,53 @@ def main() -> None:
             vw_gr_model_bt_results = {f"vw_xgb_gr_{k}": v for k, v in raw_vw_gr_model.items()}
             log.info("Vol-weighted guardrailed model backtest complete.")
 
+    # Regime-filtered guardrailed backtests
+    rf_gr_bt_results: dict[str, pd.DataFrame] = {}
+    rf_vw_gr_bt_results: dict[str, pd.DataFrame] = {}
+    if args.guardrails and args.regime_filter and Path(prices_db).exists():
+        log.info("Computing SPY regime exposure signal ...")
+        regime_exp = _compute_regime_exposure(prices_db)
+        n_reduced = int((regime_exp < 1.0).sum())
+        log.info(
+            "Regime: %d months at reduced exposure (%.0f%%), %d months fully invested",
+            n_reduced, 50.0, len(regime_exp) - n_reduced,
+        )
+
+        log.info("Running regime-filtered guardrailed composite backtest ...")
+        universe_gr_rf = _apply_guardrails(universe, "composite_score", max_missing=args.max_missing)
+        raw_rf_gr = run_monthly_backtest(
+            universe_gr_rf,
+            score_col="composite_score",
+            tc_bps=args.tc_bps,
+            portfolios=port_configs,
+            rebalance_months=rebalance_months,
+            sector_col=sector_col,
+            max_sector_pct=max_sector_pct,
+            score_buffer=score_buffer,
+            use_vol_weighting=args.vol_weight,
+            regime_exposure=regime_exp,
+        )
+        rf_gr_bt_results = {f"rf_gr_{k}": v for k, v in raw_rf_gr.items()}
+        log.info("Regime-filtered composite backtest complete.")
+
+        if model_loaded is not None and "model_score" in universe.columns:
+            log.info("Running regime-filtered guardrailed model backtest ...")
+            universe_model_gr_rf = _apply_guardrails(universe, "model_score", max_missing=args.max_missing)
+            raw_rf_gr_model = run_monthly_backtest(
+                universe_model_gr_rf,
+                score_col="model_score",
+                tc_bps=args.tc_bps,
+                portfolios=port_configs,
+                rebalance_months=rebalance_months,
+                sector_col=sector_col,
+                max_sector_pct=max_sector_pct,
+                score_buffer=score_buffer,
+                use_vol_weighting=args.vol_weight,
+                regime_exposure=regime_exp,
+            )
+            rf_vw_gr_bt_results = {f"rf_xgb_gr_{k}": v for k, v in raw_rf_gr_model.items()}
+            log.info("Regime-filtered model backtest complete.")
+
     # Single-factor baselines: run top_pct_20 for each factor in BASELINE_FACTORS
     log.info("Running single-factor baseline backtests (top 20% only) ...")
     factor_bt_results: dict[str, pd.DataFrame] = {}
@@ -695,6 +780,12 @@ def main() -> None:
             continue
         all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
 
+    for port_name, bt_df in {**rf_gr_bt_results, **rf_vw_gr_bt_results}.items():
+        if bt_df.empty:
+            all_metrics[port_name] = {}
+            continue
+        all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
+
     # Print summary table
     header = (
         f"{'Portfolio':<18} {'CAGR':>8} {'AnnVol':>8} {'Sharpe':>8} {'Sortino':>8} "
@@ -755,6 +846,8 @@ def main() -> None:
             **gr_model_bt_results,
             **vw_gr_bt_results,
             **vw_gr_model_bt_results,
+            **rf_gr_bt_results,
+            **rf_vw_gr_bt_results,
         }
         if spy_returns is not None:
             spy_df = spy_returns.rename("net_return").to_frame()

@@ -103,6 +103,7 @@ def run_monthly_backtest(
     score_buffer: Optional[float] = None,
     use_vol_weighting: bool = False,
     vol_lookback: int = 12,
+    regime_exposure: Optional[pd.Series] = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Run a true monthly portfolio backtest with non-overlapping 1-month returns.
@@ -140,6 +141,14 @@ def run_monthly_backtest(
         to equal weight within their cohort. Default False (equal weight).
     vol_lookback : int
         Rolling window in months for volatility computation. Default 12.
+    regime_exposure : pd.Series or None
+        Optional Series indexed by month-end date (same frequency as df) with
+        values in [0, 1] representing the fraction of capital to deploy that month.
+        1.0 = fully invested, 0.5 = 50% in portfolio / 50% cash. The remaining
+        fraction earns 0% (cash). TC is also scaled by exposure. Default None
+        (always fully invested). Regime is determined at t0 (rebalance date) and
+        applies to the [t0, t1] holding period — PIT safe when the series is built
+        from information available at t0.
 
     Returns
     -------
@@ -249,6 +258,12 @@ def run_monthly_backtest(
             else:
                 turnover = 0.0
                 tc_cost = 0.0
+
+            # Regime filter: scale both return and TC by the exposure fraction at t0
+            if regime_exposure is not None and t0 in regime_exposure.index:
+                exposure = float(regime_exposure.loc[t0])
+                gross_return = exposure * gross_return
+                tc_cost = exposure * tc_cost
 
             net_return = gross_return - tc_cost
 
