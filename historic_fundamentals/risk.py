@@ -32,6 +32,7 @@ VTF_DEFAULTS: dict = {
     "vtf_max_debt_to_ebitda": 10.0,
     "vtf_min_operating_margin": 0.0,
     "vtf_min_roa": -0.05,
+    "vtf_min_earnings_yield": -0.05,
     "vtf_top_quintile_cutoff": 0.80,
 }
 
@@ -128,6 +129,7 @@ def value_trap_flags(
         - ttm_operating_margin < vtf_min_operating_margin (default 0)
         - debt_to_ebitda > vtf_max_debt_to_ebitda (default 10)
         - roa < vtf_min_roa (default -0.05)
+        - earnings_yield < vtf_min_earnings_yield (default -0.05)
 
     Parameters
     ----------
@@ -173,6 +175,9 @@ def value_trap_flags(
     if "roa" in df.columns:
         df["_flag_negative_roa"] = df["roa"] < float(cfg["vtf_min_roa"])
         flag_names.append("_flag_negative_roa")
+    if "earnings_yield" in df.columns:
+        df["_flag_negative_earnings_yield"] = df["earnings_yield"] < float(cfg["vtf_min_earnings_yield"])
+        flag_names.append("_flag_negative_earnings_yield")
 
     if not flag_names:
         return pd.DataFrame()
@@ -187,6 +192,7 @@ def value_trap_flags(
         "_flag_neg_operating_margin": "neg_operating_margin",
         "_flag_high_debt_to_ebitda": "high_debt_to_ebitda",
         "_flag_negative_roa": "negative_roa",
+        "_flag_negative_earnings_yield": "negative_earnings_yield",
     }
     out["flags"] = out[flag_names].apply(
         lambda row: ", ".join(label_map[c] for c in flag_names if row[c]),
