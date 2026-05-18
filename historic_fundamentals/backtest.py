@@ -101,19 +101,16 @@ def run_monthly_backtest(
     sector_col: Optional[str] = None,
     max_sector_pct: Optional[float] = None,
     score_buffer: Optional[float] = None,
+    use_vol_weighting: bool = False,
+    vol_lookback: int = 12,
 ) -> dict[str, pd.DataFrame]:
     """
     Run a true monthly portfolio backtest with non-overlapping 1-month returns.
-
-    Weighting: all portfolios are equal-weight. Capped-weight portfolios
-    (e.g., max 5% per position) are deferred to Phase 7 risk diagnostics,
-    where position concentration limits are configured as guardrails.
 
     Parameters
     ----------
     df : pd.DataFrame
         Must contain date_col, ticker_col, score_col, price_col.
-        Each row is one stock at one month-end.
     score_col : str
         Column used to rank stocks. Higher = better.
     price_col : str
@@ -131,17 +128,18 @@ def run_monthly_backtest(
         Defaults to PORTFOLIO_CONFIGS.
     rebalance_months : int
         How often to rebalance. 1 = monthly (default), 3 = quarterly.
-        Between rebalance dates the portfolio is held unchanged with no TC.
     sector_col : str or None
-        Column name for sector. Required for sector cap. Default None.
+        Column name for sector. Required for sector cap.
     max_sector_pct : float or None
         Maximum fraction of portfolio from any single sector (e.g. 0.25 = 25%).
-        Applied at selection time relative to portfolio size. Default None (no cap).
     score_buffer : float or None
-        Hysteresis threshold. Current holdings receive a score bonus of
-        score_buffer × cross-sectional IQR before ranking, so a new stock
-        must beat a held stock by that margin to displace it.
-        Typical value: 0.10 (10% of IQR). Default None (disabled).
+        Hysteresis threshold (10% IQR bonus for current holdings). Default None.
+    use_vol_weighting : bool
+        If True, weight positions by inverse of 12-month rolling monthly return
+        volatility (normalized to sum to 1). Stocks with no vol history fall back
+        to equal weight within their cohort. Default False (equal weight).
+    vol_lookback : int
+        Rolling window in months for volatility computation. Default 12.
 
     Returns
     -------
@@ -163,6 +161,15 @@ def run_monthly_backtest(
         .pivot(index=date_col, columns=ticker_col, values=price_col)
     )
     sorted_dates = sorted(price_pivot.index)
+
+    # Pre-compute rolling vol for inverse-vol weighting (uses only past prices → PIT safe)
+    vol_pivot: Optional[pd.DataFrame] = None
+    if use_vol_weighting:
+        vol_pivot = (
+            price_pivot.pct_change()
+            .rolling(vol_lookback, min_periods=6)
+            .std()
+        )
 
     results: dict[str, pd.DataFrame] = {}
 
@@ -191,19 +198,44 @@ def run_monthly_backtest(
             if not holdings_t0:
                 continue
 
-            # Compute equal-weight 1-month returns: price_{t1} / price_{t0} - 1
-            stock_returns = []
+            # Compute 1-month returns per stock: price_{t1} / price_{t0} - 1
+            ticker_returns: dict[str, float] = {}
             for tkr in holdings_t0:
                 p0 = price_pivot.at[t0, tkr] if tkr in price_pivot.columns else np.nan
                 p1 = price_pivot.at[t1, tkr] if tkr in price_pivot.columns else np.nan
                 if np.isfinite(p0) and np.isfinite(p1) and p0 > 0:
-                    stock_returns.append(p1 / p0 - 1.0)
+                    ticker_returns[tkr] = p1 / p0 - 1.0
 
-            if not stock_returns:
+            if not ticker_returns:
                 prev_holdings = holdings_t0
                 continue
 
-            gross_return = float(np.mean(stock_returns))
+            # Weighting: inverse-vol if enabled, else equal-weight
+            if vol_pivot is not None and t0 in vol_pivot.index:
+                vol_row = vol_pivot.loc[t0]
+                inv_vols = {
+                    tkr: 1.0 / vol_row[tkr]
+                    for tkr in ticker_returns
+                    if tkr in vol_row.index and np.isfinite(vol_row[tkr]) and vol_row[tkr] > 0
+                }
+                if inv_vols:
+                    total_iv = sum(inv_vols.values())
+                    gross_return = sum(
+                        (inv_vols[tkr] / total_iv) * ticker_returns[tkr]
+                        for tkr in inv_vols
+                    )
+                    # Stocks with no vol history contribute equal weight among themselves
+                    no_vol = [tkr for tkr in ticker_returns if tkr not in inv_vols]
+                    if no_vol:
+                        ew_frac = len(no_vol) / (len(no_vol) + len(inv_vols))
+                        vw_frac = 1.0 - ew_frac
+                        gross_return = vw_frac * gross_return + ew_frac * float(np.mean([ticker_returns[t] for t in no_vol]))
+                else:
+                    gross_return = float(np.mean(list(ticker_returns.values())))
+            else:
+                gross_return = float(np.mean(list(ticker_returns.values())))
+
+            stock_returns = list(ticker_returns.values())
 
             # TC only applied at rebalance months
             if should_rebalance:

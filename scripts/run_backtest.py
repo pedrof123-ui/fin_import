@@ -410,6 +410,8 @@ def main() -> None:
     parser.add_argument("--score-buffer", type=float, default=0.10,
                         help="Score buffer fraction: current holdings get a bonus of buffer × IQR "
                              "before ranking; 0 disables (default: 0.10 = 10%% of IQR)")
+    parser.add_argument("--vol-weight", action="store_true",
+                        help="Also run inverse-volatility-weighted guardrailed backtests (vw_gr_* and vw_xgb_gr_*)")
     parser.add_argument("--save-returns", action="store_true",
                         help="Save monthly returns for each portfolio to docs/monthly_returns_*.csv")
     parser.add_argument("--verbose", action="store_true",
@@ -582,6 +584,43 @@ def main() -> None:
             gr_model_bt_results = {f"xgb_gr_{k}": v for k, v in raw_gr_model.items()}
             log.info("Guardrailed model backtest complete.")
 
+    # Vol-weighted guardrailed backtests
+    vw_gr_bt_results: dict[str, pd.DataFrame] = {}
+    vw_gr_model_bt_results: dict[str, pd.DataFrame] = {}
+    if args.guardrails and args.vol_weight:
+        log.info("Running vol-weighted guardrailed composite backtest ...")
+        universe_gr_vw = _apply_guardrails(universe, "composite_score", max_missing=args.max_missing)
+        raw_vw_gr = run_monthly_backtest(
+            universe_gr_vw,
+            score_col="composite_score",
+            tc_bps=args.tc_bps,
+            portfolios=port_configs,
+            rebalance_months=rebalance_months,
+            sector_col=sector_col,
+            max_sector_pct=max_sector_pct,
+            score_buffer=score_buffer,
+            use_vol_weighting=True,
+        )
+        vw_gr_bt_results = {f"vw_gr_{k}": v for k, v in raw_vw_gr.items()}
+        log.info("Vol-weighted guardrailed composite backtest complete.")
+
+        if model_loaded is not None and "model_score" in universe.columns:
+            log.info("Running vol-weighted guardrailed model backtest ...")
+            universe_model_gr_vw = _apply_guardrails(universe, "model_score", max_missing=args.max_missing)
+            raw_vw_gr_model = run_monthly_backtest(
+                universe_model_gr_vw,
+                score_col="model_score",
+                tc_bps=args.tc_bps,
+                portfolios=port_configs,
+                rebalance_months=rebalance_months,
+                sector_col=sector_col,
+                max_sector_pct=max_sector_pct,
+                score_buffer=score_buffer,
+                use_vol_weighting=True,
+            )
+            vw_gr_model_bt_results = {f"vw_xgb_gr_{k}": v for k, v in raw_vw_gr_model.items()}
+            log.info("Vol-weighted guardrailed model backtest complete.")
+
     # Single-factor baselines: run top_pct_20 for each factor in BASELINE_FACTORS
     log.info("Running single-factor baseline backtests (top 20% only) ...")
     factor_bt_results: dict[str, pd.DataFrame] = {}
@@ -650,6 +689,12 @@ def main() -> None:
             continue
         all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
 
+    for port_name, bt_df in {**vw_gr_bt_results, **vw_gr_model_bt_results}.items():
+        if bt_df.empty:
+            all_metrics[port_name] = {}
+            continue
+        all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
+
     # Print summary table
     header = (
         f"{'Portfolio':<18} {'CAGR':>8} {'AnnVol':>8} {'Sharpe':>8} {'Sortino':>8} "
@@ -708,6 +753,8 @@ def main() -> None:
             **model_bt_results,
             **gr_bt_results,
             **gr_model_bt_results,
+            **vw_gr_bt_results,
+            **vw_gr_model_bt_results,
         }
         if spy_returns is not None:
             spy_df = spy_returns.rename("net_return").to_frame()
