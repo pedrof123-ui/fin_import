@@ -545,6 +545,12 @@ def main() -> None:
                         help="Override output CSV path")
     parser.add_argument("--model", type=str, default=None,
                         help="Override model.joblib path")
+    parser.add_argument("--guardrails", action="store_true", default=True,
+                        help="Exclude value traps and poor data quality (default: on)")
+    parser.add_argument("--no-guardrails", dest="guardrails", action="store_false",
+                        help="Disable guardrail filters (include value traps and partial data)")
+    parser.add_argument("--max-missing", type=int, default=2,
+                        help="Max missing features before a stock is excluded (default: 2)")
     parser.add_argument("--verbose", action="store_true",
                         help="Verbose logging")
     args = parser.parse_args()
@@ -582,10 +588,28 @@ def main() -> None:
 
     out_df = _select_output_columns(ranked)
 
+    # Apply guardrail filters
+    if args.guardrails:
+        n_before = len(out_df)
+        vt_mask = out_df["value_trap"] == True if "value_trap" in out_df.columns else pd.Series(False, index=out_df.index)
+        dq_mask = out_df["missing_factor_count"] > args.max_missing if "missing_factor_count" in out_df.columns else pd.Series(False, index=out_df.index)
+        exclude_mask = vt_mask | dq_mask
+        out_df = out_df[~exclude_mask].copy()
+        # Re-rank after exclusions
+        out_df = out_df.reset_index(drop=True)
+        out_df["rank"] = range(1, len(out_df) + 1)
+        n_vt = int(vt_mask.sum())
+        n_dq = int(dq_mask.sum())
+        log.info(
+            "Guardrails applied: removed %d stocks (%d value traps, %d poor data quality) → %d remain",
+            n_before - len(out_df), n_vt, n_dq, len(out_df),
+        )
+
     # Print top N
     top_n = min(args.top, len(out_df))
-    print(f"\nFundamentals Alpha — Live Scores ({today})")
-    print(f"Universe: {len(ranked)} tickers after filters")
+    guardrail_note = " [guardrails: value traps and poor data excluded]" if args.guardrails else ""
+    print(f"\nFundamentals Alpha — Live Scores ({today}){guardrail_note}")
+    print(f"Universe: {len(out_df)} tickers after filters")
     print(f"\nTop {top_n}:")
     print(_format_display(out_df.head(top_n)).to_string(index=False))
 
