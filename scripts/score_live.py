@@ -55,6 +55,7 @@ from historic_fundamentals.baselines import (  # noqa: E402
     _MOMENTUM_COL,
 )
 from historic_fundamentals.risk import value_trap_flags  # noqa: E402
+from historic_fundamentals.model import _apply_sector_zscore  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -151,7 +152,8 @@ def _join_overview(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
 
     # Bring in sector if missing; market_cap from overview as fallback
     if "sector" not in df.columns or df["sector"].isna().all():
-        df = df.merge(overview[["ticker", "sector"]], on="ticker", how="left")
+        merge_cols = [c for c in ["ticker", "company_name", "sector"] if c in overview.columns]
+        df = df.merge(overview[merge_cols], on="ticker", how="left")
     else:
         df = df.merge(
             overview[ov_cols],
@@ -259,12 +261,25 @@ def _predict_with_model(model, df: pd.DataFrame) -> pd.Series:
     """Score using XGBoost model. Falls back to None if feature columns missing."""
     try:
         feature_names = model.get_booster().feature_names
-        present = [f for f in feature_names if f in df.columns]
         missing_feats = [f for f in feature_names if f not in df.columns]
         if missing_feats:
             log.warning("Model features missing from data: %s", missing_feats)
-        X = df[present].copy()
-        # Add missing feature columns filled with column median (matches training imputation)
+
+        # Apply sector-relative z-scores to match the transformation used at training time.
+        # _apply_sector_zscore(train, test, ...) computes stats from train and applies to both;
+        # passing empty test mirrors what train_model.py does on the full training set.
+        sector_col = "sector"
+        present_features = [f for f in feature_names if f in df.columns]
+        if sector_col in df.columns and df[sector_col].notna().any():
+            scored_df, _ = _apply_sector_zscore(
+                df, df.head(0), present_features, sector_col
+            )
+            log.info("Sector z-scores applied before model prediction.")
+        else:
+            scored_df = df.copy()
+            log.warning("No sector column — skipping sector z-score normalization.")
+
+        X = scored_df[present_features].copy()
         for f in feature_names:
             if f not in X.columns:
                 X[f] = np.nan
