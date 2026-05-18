@@ -118,3 +118,30 @@ pfcf_ratio                                         0.0238
 gross_margin_5y_median                             0.0232
 fcf_margin_5y_median                               0.0226
 ```
+
+## SHAP Feature Stability
+
+```
+Feature                                   Mean |SHAP|
+------------------------------------------------------
+roa                                            0.0300
+momentum_12_1                                  0.0288
+ps_ratio                                       0.0164
+dividend_yield                                 0.0154
+roe                                            0.0153
+ptbv                                           0.0141
+earnings_yield                                 0.0140
+interest_coverage                              0.0131
+operating_margin_slope_5y                      0.0129
+earnings_yield_norm                            0.0117
+fcf_yield                                      0.0101
+operating_margin_change_3y                     0.0100
+pbv                                            0.0096
+roa_rolling_5yr_median                         0.0092
+roa_stability_5y                               0.0075
+roic                                           0.0072
+pe_ratio                                       0.0070
+pe_rolling_5yr_median                          0.0070
+debt_to_ebitda                                 0.0067
+pfcf_ratio                                     0.0066
+```
