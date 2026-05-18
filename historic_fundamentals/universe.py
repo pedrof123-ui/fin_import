@@ -38,6 +38,7 @@ UNIVERSE_DEFAULTS: dict = {
     "min_price": 5.0,
     "require_sector": True,
     "excluded_sectors": ["REAL ESTATE", "FINANCIAL SERVICES"],
+    "min_avg_dollar_volume": 5_000_000,
 }
 
 
@@ -58,8 +59,7 @@ def filter_universe(
     2. price >= min_price            (NaN fails the filter)
     3. require_sector: drop rows where sector is NaN or empty string
     4. excluded_sectors: drop rows whose sector matches any entry (case-insensitive)
-
-    min_avg_dollar_volume is reserved for future use when volume data is available.
+    5. avg_dollar_volume >= min_avg_dollar_volume (skipped if column absent)
 
     Parameters
     ----------
@@ -77,19 +77,15 @@ def filter_universe(
         Default None (no exclusion). UNIVERSE_DEFAULTS excludes
         REAL ESTATE and FINANCIAL SERVICES.
     min_avg_dollar_volume : float or None
-        Reserved. Not implemented — no volume data available yet.
+        Minimum 30-day average daily dollar volume (volume × adj_close).
+        Requires 'avg_dollar_volume' column in df. Default 5_000_000 ($5M).
+        Rows with NaN avg_dollar_volume fail the filter.
 
     Returns
     -------
     pd.DataFrame
         Filtered copy of df. Logs row counts at each step.
     """
-    if min_avg_dollar_volume is not None:
-        logger.warning(
-            "min_avg_dollar_volume filter is not yet implemented (no volume data). "
-            "Parameter ignored."
-        )
-
     out = df.copy()
     n_start = len(out)
     logger.info("filter_universe: starting with %d rows", n_start)
@@ -153,6 +149,25 @@ def filter_universe(
             n_before_excl - len(out),
             len(out),
         )
+
+    # ── Step 5: liquidity filter ──────────────────────────────────────────────
+    if min_avg_dollar_volume is not None:
+        if "avg_dollar_volume" in out.columns:
+            mask_liq = out["avg_dollar_volume"].notna() & (out["avg_dollar_volume"] >= min_avg_dollar_volume)
+            n_before_liq = len(out)
+            out = out[mask_liq].copy()
+            logger.info(
+                "filter_universe: avg_dollar_volume >= %.0f  removed %d rows → %d remain",
+                min_avg_dollar_volume,
+                n_before_liq - len(out),
+                len(out),
+            )
+        else:
+            logger.warning(
+                "filter_universe: min_avg_dollar_volume=%.0f set but 'avg_dollar_volume' "
+                "column not present — skipping liquidity filter",
+                min_avg_dollar_volume,
+            )
 
     logger.info(
         "filter_universe: complete. %d rows removed total (%d → %d)",

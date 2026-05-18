@@ -38,9 +38,31 @@ def _select_top(
     config_val: float | int,
     sector_col: Optional[str] = None,
     max_sector_pct: Optional[float] = None,
+    score_buffer: Optional[float] = None,
+    prev_holdings: Optional[set] = None,
+    ticker_col: str = "ticker",
 ) -> pd.DataFrame:
-    """Select top stocks from a monthly cross-section by score."""
-    grp = grp.dropna(subset=[score_col]).sort_values(score_col, ascending=False)
+    """Select top stocks from a monthly cross-section by score.
+
+    If score_buffer is set and prev_holdings is non-empty, current holdings receive
+    a score bonus equal to score_buffer × IQR of cross-sectional scores. This means
+    a new stock must beat an existing holding by that margin to displace it, reducing
+    unnecessary churn when scores are close.
+    """
+    grp = grp.dropna(subset=[score_col])
+
+    # Score buffer: boost current holdings so they need a clear margin to be displaced
+    if score_buffer and prev_holdings and ticker_col in grp.columns:
+        q75 = grp[score_col].quantile(0.75)
+        q25 = grp[score_col].quantile(0.25)
+        iqr = max(float(q75 - q25), 1e-9)
+        bonus = score_buffer * iqr
+        grp = grp.copy()
+        in_prev = grp[ticker_col].isin(prev_holdings)
+        grp.loc[in_prev, score_col] = grp.loc[in_prev, score_col] + bonus
+
+    grp = grp.sort_values(score_col, ascending=False)
+
     if isinstance(config_val, float) and config_val <= 1.0:
         n = max(1, int(np.ceil(len(grp) * config_val)))
     else:
@@ -78,6 +100,7 @@ def run_monthly_backtest(
     rebalance_months: int = 1,
     sector_col: Optional[str] = None,
     max_sector_pct: Optional[float] = None,
+    score_buffer: Optional[float] = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Run a true monthly portfolio backtest with non-overlapping 1-month returns.
@@ -114,6 +137,11 @@ def run_monthly_backtest(
     max_sector_pct : float or None
         Maximum fraction of portfolio from any single sector (e.g. 0.25 = 25%).
         Applied at selection time relative to portfolio size. Default None (no cap).
+    score_buffer : float or None
+        Hysteresis threshold. Current holdings receive a score bonus of
+        score_buffer × cross-sectional IQR before ranking, so a new stock
+        must beat a held stock by that margin to displace it.
+        Typical value: 0.10 (10% of IQR). Default None (disabled).
 
     Returns
     -------
@@ -151,7 +179,12 @@ def run_monthly_backtest(
 
             if should_rebalance:
                 universe_t0 = df[df[date_col] == t0].copy()
-                selected = _select_top(universe_t0, score_col, config_val, sector_col, max_sector_pct)
+                selected = _select_top(
+                    universe_t0, score_col, config_val,
+                    sector_col=sector_col, max_sector_pct=max_sector_pct,
+                    score_buffer=score_buffer, prev_holdings=prev_holdings,
+                    ticker_col=ticker_col,
+                )
                 current_holdings = set(selected[ticker_col].tolist())
 
             holdings_t0 = current_holdings

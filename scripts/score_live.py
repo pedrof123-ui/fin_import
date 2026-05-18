@@ -423,8 +423,18 @@ def score_universe(
     df = _join_overview(df, av_db_path)
     df = _compute_market_cap(df)
 
+    # 4. Load ADV for liquidity filter (must happen before filter_universe)
+    prices_db = os.getenv("PRICES_DB_PATH", "")
+    if prices_db and Path(prices_db).exists():
+        liq = _load_liquidity(prices_db, df["ticker"].tolist())
+        df["avg_dollar_volume"] = df["ticker"].map(liq)
+        log.info("ADV loaded: %d/%d tickers have avg_dollar_volume",
+                 df["avg_dollar_volume"].notna().sum(), len(df))
+    else:
+        df["avg_dollar_volume"] = float("nan")
+
     n_before = len(df)
-    # 4. Universe filters
+    # 5. Universe filters (includes liquidity filter via avg_dollar_volume column)
     df = filter_universe(df, **uk)
     log.info("Universe filter: %d -> %d tickers (%d removed)",
              n_before, len(df), n_before - len(df))
@@ -433,11 +443,14 @@ def score_universe(
         log.warning("No tickers pass universe filter.")
         return df
 
-    # 5. Compute composite score
+    # Map avg_dollar_volume → liquidity for display
     df = df.copy()
+    df["liquidity"] = df["avg_dollar_volume"] if "avg_dollar_volume" in df.columns else float("nan")
+
+    # 6. Compute composite score
     df["_composite_score"] = _compute_composite_score(df)
 
-    # 6. Attempt model load; fall back to composite
+    # 7. Attempt model load; fall back to composite
     model = _load_model(model_path)
     if model is not None:
         preds = _predict_with_model(model, df)
@@ -449,32 +462,24 @@ def score_universe(
     else:
         df["score"] = df["_composite_score"]
 
-    # 7. Rank by score descending
+    # 8. Rank by score descending
     df = df.sort_values("score", ascending=False).reset_index(drop=True)
     n_ranked = len(df)
     df["rank"] = range(1, n_ranked + 1)
     # percentile: rank=1 -> 100, rank=N -> near 0
     df["percentile"] = (1.0 - (df["rank"] - 1) / n_ranked) * 100.0
 
-    # liquidity: 30-day average daily dollar volume from prices.duckdb
-    prices_db = os.getenv("PRICES_DB_PATH", "")
-    if prices_db and Path(prices_db).exists():
-        liq = _load_liquidity(prices_db, df["ticker"].tolist())
-        df["liquidity"] = df["ticker"].map(liq)
-    else:
-        df["liquidity"] = float("nan")
-
-    # 7b. Top-factor reason code (composite-score path)
+    # 9. Top-factor reason code (composite-score path)
     df["top_factor"] = _compute_top_factor(df, BASELINE_FACTORS)
 
-    # 8. Risk flags
+    # 10. Risk flags
     df = _attach_value_trap(df, score_col="score")
 
-    # 9. Missing-data flags
+    # 11. Missing-data flags
     factor_cols = _FACTOR_COLS_FOR_MISSING
     df = _missing_factor_stats(df, factor_cols)
 
-    # 10. Output validation (warn only)
+    # 12. Output validation (warn only)
     _validate_feature_dates(df, today)
 
     return df

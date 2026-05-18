@@ -145,6 +145,47 @@ def _compute_pit_composite_score(df: pd.DataFrame) -> pd.Series:
     return composite_score(df, cols, sign_map)
 
 
+def _load_historical_adv(prices_db_path: str, tickers: list[str], lookback_days: int = 30) -> pd.DataFrame:
+    """
+    Compute monthly avg daily dollar volume per (ticker, calendar month) for backtest.
+
+    For each month, ADV = mean(volume * adj_close) over the lookback_days
+    ending on the last trading day of that month. Returns a DataFrame with
+    columns [ticker, year_month (Period), avg_dollar_volume].
+    """
+    import duckdb
+
+    placeholders = ", ".join(["?"] * len(tickers))
+    conn = duckdb.connect(prices_db_path, read_only=True)
+    df = conn.execute(
+        f"SELECT ticker, date, CAST(volume AS DOUBLE) * adj_close AS dollar_vol "
+        f"FROM stock_prices WHERE ticker IN ({placeholders}) ORDER BY ticker, date",
+        tickers,
+    ).df()
+    conn.close()
+
+    if df.empty:
+        return pd.DataFrame(columns=["ticker", "year_month", "avg_dollar_volume"])
+
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["ticker", "date"])
+
+    # Rolling lookback_days ADV per ticker (trading-day rolling window)
+    df["adv"] = df.groupby("ticker")["dollar_vol"].transform(
+        lambda s: s.rolling(lookback_days, min_periods=5).mean()
+    )
+
+    # Take the last-in-month ADV value for each (ticker, calendar month)
+    df["year_month"] = df["date"].dt.to_period("M")
+    result = (
+        df.groupby(["ticker", "year_month"])["adv"]
+        .last()
+        .reset_index()
+        .rename(columns={"adv": "avg_dollar_volume"})
+    )
+    return result
+
+
 def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
     """
     Score each monthly cross-section with the XGBoost model.
@@ -365,6 +406,9 @@ def main() -> None:
                         help="Max missing features allowed before a stock is excluded (default: 2)")
     parser.add_argument("--max-sector-pct", type=float, default=0.25,
                         help="Max fraction of portfolio from any single sector (default: 0.25 = 25%%)")
+    parser.add_argument("--score-buffer", type=float, default=0.10,
+                        help="Score buffer fraction: current holdings get a bonus of buffer × IQR "
+                             "before ranking; 0 disables (default: 0.10 = 10%% of IQR)")
     parser.add_argument("--save-returns", action="store_true",
                         help="Save monthly returns for each portfolio to docs/monthly_returns_*.csv")
     parser.add_argument("--verbose", action="store_true",
@@ -398,6 +442,28 @@ def main() -> None:
         universe_kwargs["min_price"] = args.min_price
     if args.no_sector_filter:
         universe_kwargs["require_sector"] = False
+
+    # Join historical ADV for liquidity filter (before filter_universe)
+    if Path(prices_db).exists() and universe_kwargs.get("min_avg_dollar_volume"):
+        tickers_all = raw["ticker"].unique().tolist()
+        log.info("Loading historical ADV for %d tickers (this may take ~30s) ...", len(tickers_all))
+        adv_df = _load_historical_adv(prices_db, tickers_all)
+        if not adv_df.empty:
+            raw["_month"] = pd.to_datetime(raw["month_end_date"]).dt.to_period("M")
+            raw = raw.merge(
+                adv_df.rename(columns={"year_month": "_month"}),
+                on=["ticker", "_month"], how="left",
+            )
+            raw = raw.drop(columns=["_month"])
+            log.info(
+                "ADV joined: %d/%d rows have avg_dollar_volume",
+                raw["avg_dollar_volume"].notna().sum(), len(raw),
+            )
+        else:
+            log.warning("Historical ADV is empty — liquidity filter will be skipped.")
+    else:
+        if not Path(prices_db).exists():
+            log.warning("PRICES_DB_PATH not found (%s) — liquidity filter skipped", prices_db)
 
     log.info("Applying universe filters: %s", universe_kwargs)
     universe = filter_universe(raw, **universe_kwargs)
@@ -446,9 +512,13 @@ def main() -> None:
     )
     sector_col = "sector" if "sector" in universe.columns else None
     max_sector_pct = args.max_sector_pct if args.max_sector_pct < 1.0 else None
-    log.info("Running %s backtest (tc_bps=%.0f, max_sector_pct=%s) ...",
-             rebalance_label, args.tc_bps,
-             f"{max_sector_pct:.0%}" if max_sector_pct else "none")
+    score_buffer = args.score_buffer if args.score_buffer > 0 else None
+    log.info(
+        "Running %s backtest (tc_bps=%.0f, max_sector_pct=%s, score_buffer=%s) ...",
+        rebalance_label, args.tc_bps,
+        f"{max_sector_pct:.0%}" if max_sector_pct else "none",
+        f"{score_buffer:.2f}" if score_buffer else "none",
+    )
     bt_results = run_monthly_backtest(
         universe,
         score_col="composite_score",
@@ -457,6 +527,7 @@ def main() -> None:
         rebalance_months=rebalance_months,
         sector_col=sector_col,
         max_sector_pct=max_sector_pct,
+        score_buffer=score_buffer,
     )
 
     # XGBoost model backtest (if model loaded)
@@ -471,6 +542,7 @@ def main() -> None:
             rebalance_months=rebalance_months,
             sector_col=sector_col,
             max_sector_pct=max_sector_pct,
+            score_buffer=score_buffer,
         )
         model_bt_results = {f"xgb_{k}": v for k, v in raw_model_results.items()}
 
@@ -488,6 +560,7 @@ def main() -> None:
             rebalance_months=rebalance_months,
             sector_col=sector_col,
             max_sector_pct=max_sector_pct,
+            score_buffer=score_buffer,
         )
         gr_bt_results = {f"gr_{k}": v for k, v in raw_gr.items()}
         log.info("Guardrailed composite backtest complete.")
@@ -503,6 +576,7 @@ def main() -> None:
                 rebalance_months=rebalance_months,
                 sector_col=sector_col,
                 max_sector_pct=max_sector_pct,
+                score_buffer=score_buffer,
             )
             gr_model_bt_results = {f"xgb_gr_{k}": v for k, v in raw_gr_model.items()}
             log.info("Guardrailed model backtest complete.")
