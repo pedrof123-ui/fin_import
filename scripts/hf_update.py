@@ -419,7 +419,8 @@ def main() -> int:
         hf_db.close()
 
     log.info("Update complete: %d ok, %d failed", ok, failed)
-    return 0 if failed == 0 else 1
+    # Exit 1 only if ALL tickers failed — a handful of bad tickers is normal
+    return 1 if ok == 0 else 0
 
 
 if __name__ == "__main__":
