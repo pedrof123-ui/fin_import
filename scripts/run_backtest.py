@@ -59,6 +59,7 @@ from historic_fundamentals.backtest import (  # noqa: E402
     PORTFOLIO_CONFIGS,
 )
 from historic_fundamentals.model import _apply_sector_zscore  # noqa: E402
+from historic_fundamentals.risk import value_trap_flags  # noqa: E402
 
 FEATURE_COLS = [
     "pe_ratio", "ps_ratio", "fcf_yield", "ev_ebitda", "dividend_yield",
@@ -180,6 +181,43 @@ def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
     return pd.Series(scores)
 
 
+def _apply_guardrails(universe: pd.DataFrame, score_col: str, max_missing: int = 2) -> pd.DataFrame:
+    """
+    Return a copy of universe with score set to NaN for excluded stocks.
+
+    Excludes two categories:
+    - Value traps: top-quintile by score with deteriorating fundamentals
+      (negative operating margin, debt/EBITDA > 10, or ROA < -5%)
+    - Poor data quality: more than max_missing features missing from FEATURE_COLS
+
+    Setting score to NaN causes _select_top() in the backtest to skip these
+    stocks without otherwise altering universe composition or price data.
+    """
+    df = universe.copy()
+
+    # Value trap mask: use MultiIndex for fast lookup
+    trap_df = value_trap_flags(df, score_col=score_col)
+    if not trap_df.empty and "month_end_date" in trap_df.columns:
+        trap_idx = pd.MultiIndex.from_arrays([trap_df["ticker"], trap_df["month_end_date"]])
+        df_idx = pd.MultiIndex.from_arrays([df["ticker"], df["month_end_date"]])
+        vt_mask = pd.Series(df_idx.isin(trap_idx), index=df.index)
+    else:
+        vt_mask = pd.Series(False, index=df.index)
+
+    # Data quality mask: count NaN across model feature columns
+    present_features = [c for c in FEATURE_COLS if c in df.columns]
+    dq_mask = df[present_features].isna().sum(axis=1) > max_missing
+
+    exclude_mask = vt_mask | dq_mask
+    df.loc[exclude_mask, score_col] = np.nan
+
+    log.info(
+        "Guardrails (%s): excluded %d row-months — %d value traps, %d poor data quality (>%d missing)",
+        score_col, int(exclude_mask.sum()), int(vt_mask.sum()), int(dq_mask.sum()), max_missing,
+    )
+    return df
+
+
 def _format_metrics_row(name: str, m: dict) -> str:
     def _f(v, pct=False):
         if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -212,6 +250,8 @@ def _build_md_report(
     factor_bt_results: dict | None = None,
     rebalance_label: str = "monthly",
     model_bt_results: dict | None = None,
+    gr_bt_results: dict | None = None,
+    max_missing: int | None = None,
 ) -> str:
     rebalance_months = 3 if rebalance_label == "quarterly" else 1
     lines = [
@@ -269,6 +309,22 @@ def _build_md_report(
             lines.append(f"{'f_' + factor_name:<18} {avg_to:>14.1%} {avg_tc:>17.2f} {ann_drag:>13.2f}")
         lines.append("```\n")
 
+    # Guardrailed portfolio turnover
+    if gr_bt_results:
+        miss_label = f"max_missing={max_missing}" if max_missing is not None else ""
+        lines.append(f"\n## Guardrailed Portfolio Turnover (value traps excluded, {miss_label})\n")
+        lines.append("```")
+        lines.append(f"{'Portfolio':<20} {'Avg Turnover':>14} {'Avg TC/Mo (bps)':>17} {'Ann TC Drag':>13}")
+        lines.append("-" * 72)
+        for port_name, bt_df in gr_bt_results.items():
+            if bt_df.empty:
+                continue
+            avg_to = bt_df["turnover"].mean()
+            avg_tc = bt_df["tc_cost"].mean() * 1e4
+            ann_drag = bt_df["tc_cost"].mean() * 12 * 1e4
+            lines.append(f"{port_name:<20} {avg_to:>14.1%} {avg_tc:>17.2f} {ann_drag:>13.2f}")
+        lines.append("```\n")
+
     # XGBoost model turnover
     if model_bt_results:
         lines.append("\n## XGBoost Model Turnover\n")
@@ -303,6 +359,10 @@ def main() -> None:
                         help="Rebalance quarterly instead of monthly; saves to backtest_results_quarterly.md")
     parser.add_argument("--model", action="store_true",
                         help="Also run backtest using XGBoost model scores (requires data/model.joblib)")
+    parser.add_argument("--guardrails", action="store_true",
+                        help="Also run guardrailed backtest excluding value traps and poor data quality")
+    parser.add_argument("--max-missing", type=int, default=2,
+                        help="Max missing features allowed before a stock is excluded (default: 2)")
     parser.add_argument("--verbose", action="store_true",
                         help="Show DEBUG-level logging")
     args = parser.parse_args()
@@ -403,6 +463,35 @@ def main() -> None:
         # Prefix names with "xgb_" to distinguish from composite in the table
         model_bt_results = {f"xgb_{k}": v for k, v in raw_model_results.items()}
 
+    # Guardrailed backtests (composite and/or model)
+    gr_bt_results: dict[str, pd.DataFrame] = {}
+    gr_model_bt_results: dict[str, pd.DataFrame] = {}
+    if args.guardrails:
+        log.info("Applying guardrails to composite score (max_missing=%d) ...", args.max_missing)
+        universe_gr = _apply_guardrails(universe, "composite_score", max_missing=args.max_missing)
+        raw_gr = run_monthly_backtest(
+            universe_gr,
+            score_col="composite_score",
+            tc_bps=args.tc_bps,
+            portfolios=port_configs,
+            rebalance_months=rebalance_months,
+        )
+        gr_bt_results = {f"gr_{k}": v for k, v in raw_gr.items()}
+        log.info("Guardrailed composite backtest complete.")
+
+        if model_loaded is not None and "model_score" in universe.columns:
+            log.info("Applying guardrails to model score (max_missing=%d) ...", args.max_missing)
+            universe_model_gr = _apply_guardrails(universe, "model_score", max_missing=args.max_missing)
+            raw_gr_model = run_monthly_backtest(
+                universe_model_gr,
+                score_col="model_score",
+                tc_bps=args.tc_bps,
+                portfolios=port_configs,
+                rebalance_months=rebalance_months,
+            )
+            gr_model_bt_results = {f"xgb_gr_{k}": v for k, v in raw_gr_model.items()}
+            log.info("Guardrailed model backtest complete.")
+
     # Single-factor baselines: run top_pct_20 for each factor in BASELINE_FACTORS
     log.info("Running single-factor baseline backtests (top 20% only) ...")
     factor_bt_results: dict[str, pd.DataFrame] = {}
@@ -459,6 +548,18 @@ def main() -> None:
             continue
         all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
 
+    for port_name, bt_df in gr_bt_results.items():
+        if bt_df.empty:
+            all_metrics[port_name] = {}
+            continue
+        all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
+
+    for port_name, bt_df in gr_model_bt_results.items():
+        if bt_df.empty:
+            all_metrics[port_name] = {}
+            continue
+        all_metrics[port_name] = portfolio_metrics(bt_df["net_return"], spy_returns=spy_returns)
+
     # Print summary table
     header = (
         f"{'Portfolio':<18} {'CAGR':>8} {'AnnVol':>8} {'Sharpe':>8} {'Sortino':>8} "
@@ -489,7 +590,11 @@ def main() -> None:
     # Write markdown report
     docs_dir = ROOT / "docs"
     docs_dir.mkdir(exist_ok=True)
-    suffix = ("_model" if args.model else "") + ("_quarterly" if args.quarterly else "")
+    suffix = (
+        ("_model" if args.model else "")
+        + ("_guardrails" if args.guardrails else "")
+        + ("_quarterly" if args.quarterly else "")
+    )
     out_path = docs_dir / f"backtest_results{suffix}.md"
     md = _build_md_report(
         universe_n=f"{universe['ticker'].nunique()} tickers",
@@ -500,6 +605,8 @@ def main() -> None:
         factor_bt_results=factor_bt_results,
         rebalance_label=rebalance_label,
         model_bt_results=model_bt_results if model_bt_results else None,
+        gr_bt_results={**gr_bt_results, **gr_model_bt_results} if args.guardrails else None,
+        max_missing=args.max_missing if args.guardrails else None,
     )
     out_path.write_text(md)
     log.info("Wrote results to %s", out_path)
