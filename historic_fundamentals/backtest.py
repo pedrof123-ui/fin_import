@@ -32,14 +32,39 @@ PORTFOLIO_CONFIGS: dict[str, float | int] = {
 }
 
 
-def _select_top(grp: pd.DataFrame, score_col: str, config_val: float | int) -> pd.DataFrame:
+def _select_top(
+    grp: pd.DataFrame,
+    score_col: str,
+    config_val: float | int,
+    sector_col: Optional[str] = None,
+    max_sector_pct: Optional[float] = None,
+) -> pd.DataFrame:
     """Select top stocks from a monthly cross-section by score."""
     grp = grp.dropna(subset=[score_col]).sort_values(score_col, ascending=False)
     if isinstance(config_val, float) and config_val <= 1.0:
         n = max(1, int(np.ceil(len(grp) * config_val)))
     else:
         n = int(config_val)
-    return grp.head(n)
+
+    if sector_col is None or max_sector_pct is None or sector_col not in grp.columns:
+        return grp.head(n)
+
+    # Sector-aware selection: walk sorted list, cap each sector at max_sector_pct * n
+    max_per_sector = max(1, int(n * max_sector_pct))
+    selected_idx = []
+    sector_counts: dict = {}
+    for idx, row in grp.iterrows():
+        if len(selected_idx) >= n:
+            break
+        sec = row.get(sector_col)
+        if pd.isna(sec):
+            selected_idx.append(idx)
+            continue
+        if sector_counts.get(sec, 0) < max_per_sector:
+            selected_idx.append(idx)
+            sector_counts[sec] = sector_counts.get(sec, 0) + 1
+
+    return grp.loc[selected_idx] if selected_idx else grp.iloc[0:0]
 
 
 def run_monthly_backtest(
@@ -51,6 +76,8 @@ def run_monthly_backtest(
     tc_bps: float = 10.0,
     portfolios: Optional[dict] = None,
     rebalance_months: int = 1,
+    sector_col: Optional[str] = None,
+    max_sector_pct: Optional[float] = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Run a true monthly portfolio backtest with non-overlapping 1-month returns.
@@ -82,6 +109,11 @@ def run_monthly_backtest(
     rebalance_months : int
         How often to rebalance. 1 = monthly (default), 3 = quarterly.
         Between rebalance dates the portfolio is held unchanged with no TC.
+    sector_col : str or None
+        Column name for sector. Required for sector cap. Default None.
+    max_sector_pct : float or None
+        Maximum fraction of portfolio from any single sector (e.g. 0.25 = 25%).
+        Applied at selection time relative to portfolio size. Default None (no cap).
 
     Returns
     -------
@@ -119,7 +151,7 @@ def run_monthly_backtest(
 
             if should_rebalance:
                 universe_t0 = df[df[date_col] == t0].copy()
-                selected = _select_top(universe_t0, score_col, config_val)
+                selected = _select_top(universe_t0, score_col, config_val, sector_col, max_sector_pct)
                 current_holdings = set(selected[ticker_col].tolist())
 
             holdings_t0 = current_holdings

@@ -363,6 +363,8 @@ def main() -> None:
                         help="Also run guardrailed backtest excluding value traps and poor data quality")
     parser.add_argument("--max-missing", type=int, default=2,
                         help="Max missing features allowed before a stock is excluded (default: 2)")
+    parser.add_argument("--max-sector-pct", type=float, default=0.25,
+                        help="Max fraction of portfolio from any single sector (default: 0.25 = 25%%)")
     parser.add_argument("--verbose", action="store_true",
                         help="Show DEBUG-level logging")
     args = parser.parse_args()
@@ -440,13 +442,19 @@ def main() -> None:
         {"top_n_25": 25, "top_n_10": 10, "top_pct_20": 0.20}
         if args.quarterly else PORTFOLIO_CONFIGS
     )
-    log.info("Running %s backtest (tc_bps=%.0f) ...", rebalance_label, args.tc_bps)
+    sector_col = "sector" if "sector" in universe.columns else None
+    max_sector_pct = args.max_sector_pct if args.max_sector_pct < 1.0 else None
+    log.info("Running %s backtest (tc_bps=%.0f, max_sector_pct=%s) ...",
+             rebalance_label, args.tc_bps,
+             f"{max_sector_pct:.0%}" if max_sector_pct else "none")
     bt_results = run_monthly_backtest(
         universe,
         score_col="composite_score",
         tc_bps=args.tc_bps,
         portfolios=port_configs,
         rebalance_months=rebalance_months,
+        sector_col=sector_col,
+        max_sector_pct=max_sector_pct,
     )
 
     # XGBoost model backtest (if model loaded)
@@ -459,8 +467,9 @@ def main() -> None:
             tc_bps=args.tc_bps,
             portfolios=port_configs,
             rebalance_months=rebalance_months,
+            sector_col=sector_col,
+            max_sector_pct=max_sector_pct,
         )
-        # Prefix names with "xgb_" to distinguish from composite in the table
         model_bt_results = {f"xgb_{k}": v for k, v in raw_model_results.items()}
 
     # Guardrailed backtests (composite and/or model)
@@ -475,6 +484,8 @@ def main() -> None:
             tc_bps=args.tc_bps,
             portfolios=port_configs,
             rebalance_months=rebalance_months,
+            sector_col=sector_col,
+            max_sector_pct=max_sector_pct,
         )
         gr_bt_results = {f"gr_{k}": v for k, v in raw_gr.items()}
         log.info("Guardrailed composite backtest complete.")
@@ -488,6 +499,8 @@ def main() -> None:
                 tc_bps=args.tc_bps,
                 portfolios=port_configs,
                 rebalance_months=rebalance_months,
+                sector_col=sector_col,
+                max_sector_pct=max_sector_pct,
             )
             gr_model_bt_results = {f"xgb_gr_{k}": v for k, v in raw_gr_model.items()}
             log.info("Guardrailed model backtest complete.")

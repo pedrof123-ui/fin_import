@@ -551,6 +551,8 @@ def main() -> None:
                         help="Disable guardrail filters (include value traps and partial data)")
     parser.add_argument("--max-missing", type=int, default=2,
                         help="Max missing features before a stock is excluded (default: 2)")
+    parser.add_argument("--max-sector-pct", type=float, default=0.25,
+                        help="Max fraction of portfolio from any single sector (default: 0.25 = 25%%)")
     parser.add_argument("--verbose", action="store_true",
                         help="Verbose logging")
     args = parser.parse_args()
@@ -605,13 +607,30 @@ def main() -> None:
             n_before - len(out_df), n_vt, n_dq, len(out_df),
         )
 
-    # Print top N
+    # Print top N (sector-capped)
     top_n = min(args.top, len(out_df))
+    if args.max_sector_pct < 1.0 and "sector" in out_df.columns:
+        # Walk ranked list, enforce max sector_pct × top_n per sector in the display portfolio
+        max_per_sector = max(1, int(args.top * args.max_sector_pct))
+        sector_counts: dict = {}
+        capped_idx = []
+        for _, row in out_df.iterrows():
+            if len(capped_idx) >= args.top:
+                break
+            sec = row.get("sector")
+            if pd.isna(sec) or sector_counts.get(sec, 0) < max_per_sector:
+                capped_idx.append(row.name)
+                if not pd.isna(sec):
+                    sector_counts[sec] = sector_counts.get(sec, 0) + 1
+        top_display = out_df.loc[capped_idx]
+    else:
+        top_display = out_df.head(top_n)
     guardrail_note = " [guardrails: value traps and poor data excluded]" if args.guardrails else ""
-    print(f"\nFundamentals Alpha — Live Scores ({today}){guardrail_note}")
+    cap_note = f", sector cap {args.max_sector_pct:.0%}" if args.max_sector_pct < 1.0 else ""
+    print(f"\nFundamentals Alpha — Live Scores ({today}){guardrail_note}{cap_note}")
     print(f"Universe: {len(out_df)} tickers after filters")
-    print(f"\nTop {top_n}:")
-    print(_format_display(out_df.head(top_n)).to_string(index=False))
+    print(f"\nTop {top_n} (sector-capped portfolio):")
+    print(_format_display(top_display).to_string(index=False))
 
     # Write CSV
     out_date = today.strftime("%Y%m%d")
