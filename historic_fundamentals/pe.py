@@ -318,6 +318,27 @@ def _get_ttm_fcf(
     return None
 
 
+def _get_ttm_ocf(
+    month_end,
+    cashflow_q: pd.DataFrame,
+    cashflow_a: pd.DataFrame,
+) -> float | None:
+    """TTM operating cashflow (without capex deduction) from trailing 4 quarters."""
+    if not cashflow_q.empty:
+        avail = cashflow_q[cashflow_q["fiscal_date_ending"] <= month_end]
+        if len(avail) >= 4:
+            last4 = avail.tail(4)["operating_cashflow"].dropna()
+            if len(last4) == 4:
+                return float(last4.sum())
+    if not cashflow_a.empty:
+        avail = cashflow_a[cashflow_a["fiscal_date_ending"] <= month_end]
+        if not avail.empty:
+            ocf = avail.iloc[-1]["operating_cashflow"]
+            if pd.notna(ocf):
+                return float(ocf)
+    return None
+
+
 def _get_ttm_ebitda(
     month_end,
     quarterly: pd.DataFrame,
@@ -736,6 +757,28 @@ def build_monthly_pe(
         if bs_equity is not None and bs_equity > 0:
             roe = ttm_net_income / bs_equity
 
+        # ── Earnings quality (Sloan accruals) ─────────────────────────────────
+        # earnings_quality = (TTM OCF - TTM net income) / avg total assets
+        # Positive = OCF exceeds reported earnings = cash-backed, higher quality.
+        # Negative = net income exceeds OCF = accruals inflating earnings (Sloan 1996).
+        earnings_quality = None
+        ttm_ocf = _get_ttm_ocf(month_end, cfq_pit, cfa_pit)
+        if ttm_ocf is not None and ttm_net_income is not None:
+            avg_ta = None
+            if not q_pit.empty:
+                avail_ta = (
+                    q_pit[q_pit["fiscal_date_ending"] <= month_end]["total_assets"].dropna()
+                )
+                if len(avail_ta) >= 5:
+                    avg_ta = (float(avail_ta.iloc[-5]) + float(avail_ta.iloc[-1])) / 2
+                elif not avail_ta.empty:
+                    avg_ta = float(avail_ta.iloc[-1])
+            if avg_ta is None and bs_assets is not None:
+                avg_ta = bs_assets
+            if avg_ta is not None and avg_ta > 0:
+                val = (ttm_ocf - ttm_net_income) / avg_ta
+                earnings_quality = max(-1.0, min(1.0, val))
+
         # ── ROIC ─────────────────────────────────────────────────────────────
         nopat = _get_ttm_nopat(month_end, q_pit, a_pit)
         roic = None
@@ -803,6 +846,7 @@ def build_monthly_pe(
             "ttm_fcf_margin":         ttm_fcf_margin,
             "debt_to_ebitda":         debt_to_ebitda,
             "interest_coverage":      interest_coverage,
+            "earnings_quality":       earnings_quality,
             "feature_available_date": feature_available_date,
         })
 

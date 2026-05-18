@@ -174,6 +174,7 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ev_ebitda_norm          DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ps_ratio_norm           DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS momentum_12_1           DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_quality        DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS feature_available_date DATE")
 
         self.conn.execute("""
@@ -451,7 +452,7 @@ class HistoricFundamentalsDB:
             "ttm_fcf_margin", "fcf_margin_5y_median", "fcf_margin_change_3y",
             "roa_stability_5y", "debt_to_ebitda", "interest_coverage",
             "earnings_yield_norm", "fcf_yield_norm", "ev_ebitda_norm", "ps_ratio_norm",
-            "momentum_12_1",
+            "momentum_12_1", "earnings_quality",
             "feature_available_date",
             "updated_at",
         ]
@@ -484,7 +485,7 @@ class HistoricFundamentalsDB:
                  ttm_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
                  roa_stability_5y, debt_to_ebitda, interest_coverage,
                  earnings_yield_norm, fcf_yield_norm, ev_ebitda_norm, ps_ratio_norm,
-                 momentum_12_1,
+                 momentum_12_1, earnings_quality,
                  feature_available_date,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
@@ -509,7 +510,7 @@ class HistoricFundamentalsDB:
                        ttm_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
                        roa_stability_5y, debt_to_ebitda, interest_coverage,
                        earnings_yield_norm, fcf_yield_norm, ev_ebitda_norm, ps_ratio_norm,
-                       momentum_12_1,
+                       momentum_12_1, earnings_quality,
                        feature_available_date,
                        updated_at
                 FROM _tmp_pe
