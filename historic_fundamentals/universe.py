@@ -37,6 +37,7 @@ UNIVERSE_DEFAULTS: dict = {
     "min_market_cap": 1_000_000_000,
     "min_price": 5.0,
     "require_sector": True,
+    "excluded_sectors": ["REAL ESTATE", "FINANCIAL SERVICES"],
 }
 
 
@@ -45,6 +46,7 @@ def filter_universe(
     min_market_cap: float = 1_000_000_000,
     min_price: float = 5.0,
     require_sector: bool = True,
+    excluded_sectors: Optional[list[str]] = None,
     min_avg_dollar_volume: Optional[float] = None,
 ) -> pd.DataFrame:
     """
@@ -55,6 +57,7 @@ def filter_universe(
        NaN market_cap fails the filter — it does not bypass it)
     2. price >= min_price            (NaN fails the filter)
     3. require_sector: drop rows where sector is NaN or empty string
+    4. excluded_sectors: drop rows whose sector matches any entry (case-insensitive)
 
     min_avg_dollar_volume is reserved for future use when volume data is available.
 
@@ -69,6 +72,10 @@ def filter_universe(
         Minimum share price. Default 5.0.
     require_sector : bool
         Drop rows where sector is NaN or empty. Default True.
+    excluded_sectors : list of str or None
+        Sectors to exclude entirely. Matched case-insensitively.
+        Default None (no exclusion). UNIVERSE_DEFAULTS excludes
+        REAL ESTATE and FINANCIAL SERVICES.
     min_avg_dollar_volume : float or None
         Reserved. Not implemented — no volume data available yet.
 
@@ -133,6 +140,19 @@ def filter_universe(
             logger.warning(
                 "filter_universe: require_sector=True but 'sector' column not found — skipping sector filter"
             )
+
+    # ── Step 4: excluded sectors ──────────────────────────────────────────────
+    if excluded_sectors and "sector" in out.columns:
+        excluded_upper = [s.upper() for s in excluded_sectors]
+        mask_excl = out["sector"].str.upper().isin(excluded_upper)
+        n_before_excl = len(out)
+        out = out[~mask_excl].copy()
+        logger.info(
+            "filter_universe: excluded_sectors %s  removed %d rows → %d remain",
+            excluded_sectors,
+            n_before_excl - len(out),
+            len(out),
+        )
 
     logger.info(
         "filter_universe: complete. %d rows removed total (%d → %d)",
