@@ -958,6 +958,19 @@ class HistoricFundamentalsDB:
             params,
         ).df()
 
+    def delete_ticker(self, ticker: str) -> int:
+        """Delete all data for ticker from every table. Returns total rows deleted."""
+        tables = ["monthly_pe", "pe_stats", "earnings_estimates"]
+        total = 0
+        for table in tables:
+            before = self.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE ticker = ?", [ticker]
+            ).fetchone()[0]
+            self.conn.execute(f"DELETE FROM {table} WHERE ticker = ?", [ticker])
+            total += before
+        log.info("Deleted %s from historic_fundamentals: %d rows across %d tables", ticker, total, len(tables))
+        return total
+
     def list_tickers(self) -> list[str]:
         return [r[0] for r in self.conn.execute(
             "SELECT DISTINCT ticker FROM pe_stats ORDER BY ticker"

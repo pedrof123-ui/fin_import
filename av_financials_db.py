@@ -866,6 +866,28 @@ class AVFinancialsDB:
             [ticker, first_of_month],
         ).fetchone()[0] > 0
 
+    def delete_ticker(self, ticker: str) -> int:
+        """Delete all data for ticker from every table. Returns total rows deleted."""
+        tables = [
+            "companies",
+            "income_statements",
+            "balance_sheets",
+            "cash_flow_statements",
+            "shares_outstanding",
+            "dividends",
+            "company_overview",
+            "import_log",
+        ]
+        total = 0
+        for table in tables:
+            before = self.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE ticker = ?", [ticker]
+            ).fetchone()[0]
+            self.conn.execute(f"DELETE FROM {table} WHERE ticker = ?", [ticker])
+            total += before
+        log.info("Deleted %s from av_financials: %d rows across %d tables", ticker, total, len(tables))
+        return total
+
     def list_tickers(self) -> list[str]:
         return [r[0] for r in self.conn.execute("SELECT ticker FROM companies ORDER BY ticker").fetchall()]
 
