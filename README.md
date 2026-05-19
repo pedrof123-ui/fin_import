@@ -10,6 +10,7 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 - **DuckDB** (`data/av_financials.duckdb`) — stores income, balance sheet, and cash flow tables from Alpha Vantage API
 - **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
+- **IB Trader** (`ib_trader/`) — Interactive Brokers execution layer: connects to TWS, computes target positions from live scores, diffs current holdings, and submits MOC/MKT/LMT orders; includes a CLI rebalancer and an interactive REPL for ad-hoc orders
 
 ## Quick Start
 
@@ -176,6 +177,51 @@ uv run scripts/hf_query.py --view sector-history --name TECHNOLOGY  # monthly se
 
 The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker costs 6 AV calls for raw data (3 statements + shares + dividends + overview); bulk throughput is ~12 tickers/minute.
 
+## IB Trader
+
+Execution layer for Interactive Brokers TWS. Requires TWS or IB Gateway running locally with API enabled.
+
+### .env variables
+
+```
+IB_HOST=127.0.0.1              # TWS hostname (default: 127.0.0.1)
+IB_PORT=7497                   # 7497 = paper, 7496 = live
+IB_CLIENT_ID=1                 # TWS client ID (must be unique per connection)
+IB_ACCOUNT=                    # account number (auto-detected if blank)
+IB_MARKET_DATA_TYPE=3          # 1 = live (default for live accounts), 3 = delayed (default for paper)
+```
+
+### Portfolio rebalance (CLI)
+
+```bash
+# Dry run — preview orders without submitting (default)
+uv run scripts/rebalance.py
+
+# Dry run with explicit scores CSV
+uv run scripts/rebalance.py --scores docs/live_scores_20260519.csv
+
+# Submit orders to IB
+uv run scripts/rebalance.py --no-dry-run
+
+# Show account status only
+uv run scripts/rebalance.py --status
+
+# Cancel all open orders
+uv run scripts/rebalance.py --cancel-all
+```
+
+Scores are loaded from the latest `docs/live_scores_*.csv` (produced by `score_live.py`) unless `--scores` is given. Only rows with a non-empty `alloc_pct` are treated as portfolio positions. Run `score_live.py` before rebalancing.
+
+### Interactive REPL
+
+```bash
+uv run scripts/ib_repl.py
+```
+
+Ad-hoc trading and inspection. Commands: `status`, `buy/sell TICKER QTY [TYPE [PRICE]]`, `quote TICKER`, `cancel ORDER_ID|all`, `preview [PATH]`, `rebalance [PATH] [--confirm]`, `help`, `quit`.
+
+---
+
 ## Tests
 
 ```bash
@@ -258,6 +304,16 @@ scripts/
   hf_update.py                 Monthly update: recompute PE/yield + refresh estimates + sector stats (--skip-sector, --full-sector-rebuild)
   hf_query.py                  CLI query: stats, timeseries, estimates, sector, sector-history views; CSV export
   update_alpha_vantage_estimates.py  Update analyst EPS/revenue estimates from AV
+  score_live.py                Live scoring: ranked investable portfolio with alloc_pct; writes docs/live_scores_YYYYMMDD.csv
+  rebalance.py                 IB portfolio rebalancer CLI (dry run by default); reads latest live_scores CSV
+  ib_repl.py                   Interactive REPL for IB: status, buy/sell, quote, cancel, rebalance
+ib_trader/
+  __init__.py                  Public API: IBClient, make_order, place_order, cancel_all_open_orders, get_order_status, OrderSpec, load_scores_csv, find_latest_scores, build_target, diff_portfolio, summarise_diff, run_rebalance
+  client.py                    IBClient: connect, get_nav, get_positions, qualify_contracts, get_live_prices, get_live_midprices
+  orders.py                    make_order, place_order, cancel_all_open_orders, get_order_status; MOC cutoff warning
+  portfolio.py                 OrderSpec, load_scores_csv, find_latest_scores, build_target, diff_portfolio, summarise_diff
+  rebalance.py                 run_rebalance: NAV fetch, live prices, target build, diff, dry-run/submit
+  interactive.py               run_repl, _print_status, _print_quote, _handle_buy_sell, _handle_cancel, _handle_rebalance
 xbrl_concept_mapper.py          AI-assisted fallback mapper (openai-agents)
 av_financials_db.py             Alpha Vantage DB class: schema, rate limiter, fetch, upsert, query (includes company_overview)
 financial_statements_db.py      SEC EDGAR DB class: schema, insert helpers, log_extraction()

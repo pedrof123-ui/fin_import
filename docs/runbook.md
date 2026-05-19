@@ -18,6 +18,11 @@ This runbook describes how to operate the fundamentals-alpha stock-selection pip
 | `AV_DB_PATH` | Absolute path to `data/av_financials.duckdb` |
 | `PRICES_DB_PATH` | Absolute path to prices.duckdb (contains `stock_prices` and SPY data) |
 | `ALPHA_VANTAGE_API_KEY` | Alpha Vantage API key (required for data imports only) |
+| `IB_HOST` | TWS hostname (default: `127.0.0.1`) |
+| `IB_PORT` | TWS port: `7497` = paper, `7496` = live (default: `7497`) |
+| `IB_CLIENT_ID` | TWS client ID, must be unique per connection (default: `1`) |
+| `IB_ACCOUNT` | IB account number; auto-detected from TWS if blank |
+| `IB_MARKET_DATA_TYPE` | `1` = live data (default for live accounts), `3` = delayed (default for paper) |
 
 **External databases:**
 
@@ -215,6 +220,78 @@ Cash:     50.0%
 ```
 
 Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`. `PRICES_DB_PATH` is optional but required for vol-weighted sizing and the regime signal.
+
+---
+
+## Trade Execution
+
+Requires TWS or IB Gateway running locally with API enabled. Set IB env vars in `.env` before running any script below.
+
+### Step 1 — Generate live scores
+
+```
+uv run scripts/score_live.py
+```
+
+Writes `docs/live_scores_YYYYMMDD.csv` with `alloc_pct` populated for the top-N portfolio positions. Always regenerate scores before rebalancing to ensure the allocation reflects the latest data and regime signal.
+
+### Step 2 — Preview the rebalance
+
+```
+uv run scripts/rebalance.py
+```
+
+Dry-run by default. Connects to TWS, fetches live prices, computes target shares from `alloc_pct × NAV / price` (whole shares, floor), diffs against current holdings, and prints a blotter. No orders are submitted.
+
+```
+uv run scripts/rebalance.py --scores docs/live_scores_20260519_vw_gr_top_n_25.csv
+```
+
+### Step 3 — Submit orders
+
+```
+uv run scripts/rebalance.py --no-dry-run
+```
+
+Cancels any open orders for affected tickers, then submits MOC orders for all buy/sell changes. Positions in current holdings that are not in the new portfolio are auto-exited (full SELL).
+
+**MOC cutoff:** orders must be submitted before 15:50 ET. A warning is printed if you run after 15:45 ET.
+
+### Additional CLI flags
+
+| Flag | Description |
+|---|---|
+| `--scores PATH` | Explicit scores CSV path (default: latest `docs/live_scores_*.csv`) |
+| `--dry-run` / `--no-dry-run` | Dry run (default) or live submission |
+| `--order-type MOC\|MKT\|LMT` | Order type (default: MOC) |
+| `--strategy TAG` | IB `orderRef` tag for order tracking (default: `fundamentals_alpha`) |
+| `--status` | Print NAV, positions, open orders and exit |
+| `--cancel-all` | Cancel all open orders and exit |
+| `--verbose` | DEBUG-level logging |
+
+### Interactive REPL
+
+```
+uv run scripts/ib_repl.py
+```
+
+For ad-hoc orders and inspection. Available commands:
+
+```
+status                         Show NAV, positions, and open orders
+buy  TICKER QTY [TYPE [PRICE]] Buy shares  (default: MOC)
+sell TICKER QTY [TYPE [PRICE]] Sell shares (default: MOC)
+quote TICKER                   Show live bid / ask / last
+cancel ORDER_ID                Cancel a specific open order
+cancel all                     Cancel all open orders
+preview [PATH]                 Show rebalance diff without submitting
+rebalance [PATH]               Dry-run rebalance (latest CSV if no PATH)
+rebalance [PATH] --confirm     Submit rebalance orders
+help                           Show this help
+quit / exit                    Disconnect and exit
+```
+
+Order types: `MOC` (default), `MKT`, `LMT`. Limit example: `sell MSFT 30 LMT 450.00`.
 
 ---
 

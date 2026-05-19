@@ -437,7 +437,7 @@ def _compute_regime(prices_db_path: str, high: float = 0.25, low: float = -0.20)
     try:
         conn = duckdb.connect(prices_db_path, read_only=True)
         spy = conn.execute(
-            "SELECT date, adj_close FROM stock_prices WHERE ticker='SPY' ORDER BY date"
+            "SELECT date, adj_close FROM etf_prices WHERE ticker='SPY' ORDER BY date"
         ).df()
         conn.close()
     except Exception as exc:

@@ -445,3 +445,61 @@ uv run scripts/run_risk.py --tc-bps 20 --verbose
 ```
 
 Required: `HF_DB_PATH`, `AV_DB_PATH`, `PRICES_DB_PATH`.
+
+---
+
+## rebalance.py
+
+CLI rebalancer for Interactive Brokers. Connects to TWS, fetches live prices, computes target shares from `alloc_pct × NAV / price` (whole shares), diffs against current holdings, and submits MOC orders. Dry-run by default — no orders submitted unless `--no-dry-run` is given.
+
+Scores are loaded from the latest `docs/live_scores_*.csv` (written by `score_live.py`) unless `--scores` is given. Only rows with a non-empty `alloc_pct` are treated as portfolio positions. Positions in the current account but absent from the scores CSV are auto-exited.
+
+```bash
+uv run scripts/rebalance.py                           # dry run, latest scores CSV
+uv run scripts/rebalance.py --scores PATH             # dry run, explicit CSV
+uv run scripts/rebalance.py --no-dry-run              # submit orders
+uv run scripts/rebalance.py --status                  # print NAV + positions + open orders and exit
+uv run scripts/rebalance.py --cancel-all              # cancel all open orders and exit
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scores PATH` | latest `docs/live_scores_*.csv` | Explicit scores CSV path |
+| `--dry-run` / `--no-dry-run` | dry-run on | Preview only / submit orders |
+| `--order-type` | `MOC` | `MOC`, `MKT`, or `LMT` |
+| `--strategy` | `fundamentals_alpha` | IB `orderRef` tag for order tracking |
+| `--status` | off | Print account status and exit |
+| `--cancel-all` | off | Cancel all open orders and exit |
+| `--verbose` | off | DEBUG-level logging |
+
+Required: `IB_HOST`, `IB_PORT`, `IB_CLIENT_ID`. `IB_ACCOUNT` auto-detected if not set.
+
+---
+
+## ib_repl.py
+
+Interactive REPL for ad-hoc IB orders and account inspection. Connects to TWS on startup and disconnects on exit.
+
+```bash
+uv run scripts/ib_repl.py
+```
+
+Available commands:
+
+```
+status                         Show NAV, positions, and open orders
+buy  TICKER QTY [TYPE [PRICE]] Buy shares  (default: MOC)
+sell TICKER QTY [TYPE [PRICE]] Sell shares (default: MOC)
+quote TICKER                   Show live bid / ask / last
+cancel ORDER_ID                Cancel a specific open order
+cancel all                     Cancel all open orders
+preview [PATH]                 Show rebalance diff without submitting
+rebalance [PATH]               Dry-run rebalance (latest CSV if no PATH)
+rebalance [PATH] --confirm     Submit rebalance orders
+help                           Show this help
+quit / exit                    Disconnect and exit
+```
+
+Order types: `MOC` (default), `MKT`, `LMT`. Limit example: `sell MSFT 30 LMT 450.00`.
+
+Required: `IB_HOST`, `IB_PORT`, `IB_CLIENT_ID`.

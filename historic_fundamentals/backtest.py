@@ -480,7 +480,7 @@ def load_spy_returns(
     where_sql = " AND ".join(where_clauses)
 
     spy = conn.execute(
-        f"SELECT date, adj_close FROM stock_prices WHERE {where_sql} ORDER BY date",
+        f"SELECT date, adj_close FROM etf_prices WHERE {where_sql} ORDER BY date",
         params,
     ).df()
     conn.close()
