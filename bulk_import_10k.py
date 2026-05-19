@@ -20,6 +20,8 @@ Usage:
     )
 """
 
+import os
+
 import pandas as pd
 import time
 from datetime import datetime
@@ -27,6 +29,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import asyncio
 from tqdm import tqdm
+
+_DEFAULT_FS_DB = os.environ.get("FINANCIAL_STATEMENTS_DB_PATH", "data/financial_statements.duckdb")
 
 from extractors.income_statement_extractor import extract_income_statement
 from extractors.balance_sheet_extractor import extract_balance_sheet
@@ -333,7 +337,7 @@ async def process_ticker(
 async def bulk_import_10k(
     ticker_csv: str,
     periods: int = 20,
-    db_path: str = 'data/financial_statements.duckdb',
+    db_path: str = _DEFAULT_FS_DB,
     log_file: str = 'bulk_import.log',
     output_dir: str = './bulk_import_results',
     use_ai_fallback: bool = True,

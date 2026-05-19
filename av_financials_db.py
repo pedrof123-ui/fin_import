@@ -32,12 +32,14 @@ _NON_USD_CURRENCIES = frozenset({
 class ADRRejectedError(ValueError):
     """Raised when a ticker reports financials in a non-USD currency (ADR)."""
 
+import os
+
 import duckdb
 import pandas as pd
 import requests
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB_PATH = str(ROOT / "data" / "av_financials.duckdb")
+DEFAULT_DB_PATH = os.environ.get("AV_FINANCIALS_DB_PATH", str(ROOT / "data" / "av_financials.duckdb"))
 _AV_URL = "https://www.alphavantage.co/query"
 
 log = logging.getLogger(__name__)

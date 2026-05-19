@@ -26,11 +26,15 @@ Usage:
     revenue_ts = db.get_time_series('AAPL', 'income', 'revenue')
 """
 
+import os
+
 import duckdb
 import pandas as pd
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+
+_DEFAULT_FS_DB = os.environ.get("FINANCIAL_STATEMENTS_DB_PATH", "data/financial_statements.duckdb")
 
 
 class FinancialStatementsDB:
@@ -38,7 +42,7 @@ class FinancialStatementsDB:
     Manages DuckDB database for financial statements storage and analysis
     """
     
-    def __init__(self, db_path: str = 'data/financial_statements.duckdb'):
+    def __init__(self, db_path: str = _DEFAULT_FS_DB):
         """
         Initialize database connection and create tables if needed
         

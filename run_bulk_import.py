@@ -49,6 +49,7 @@ Output (written to --output directory):
 
 import asyncio
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -86,8 +87,8 @@ Examples:
     
     parser.add_argument(
         '--db',
-        default='data/financial_statements.duckdb',
-        help='Database file path (default: financial_statements.duckdb)'
+        default=os.environ.get("FINANCIAL_STATEMENTS_DB_PATH", "data/financial_statements.duckdb"),
+        help='Database file path (default: $FINANCIAL_STATEMENTS_DB_PATH or data/financial_statements.duckdb)'
     )
     
     parser.add_argument(
