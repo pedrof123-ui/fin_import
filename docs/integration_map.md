@@ -22,8 +22,8 @@ for factor research and live scoring.
 
 | Module | Path | Purpose |
 |---|---|---|
-| `HistoricFundamentalsDB` | `historic_fundamentals/db.py` | DuckDB wrapper for `monthly_pe`, `pe_stats`, `earnings_estimates`, `sector_stats` |
-| `AVFinancialsDB` | `av_financials_db.py` | DuckDB wrapper for `av_financials.duckdb` — income, balance, cashflow, shares, dividends, company_overview |
+| `HistoricFundamentalsDB` | `historic_fundamentals/db.py` | DuckDB wrapper for `monthly_pe`, `pe_stats`, `earnings_estimates`, `sector_stats`; includes `delete_ticker()` |
+| `AVFinancialsDB` | `av_financials_db.py` | DuckDB wrapper for `av_financials.duckdb` — income, balance, cashflow, shares, dividends, company_overview; includes `delete_ticker()` |
 | `api.db` | `api/db.py` | FastAPI database connection helpers |
 
 ### 2.2 Price / Market Data Loading
@@ -38,11 +38,13 @@ for factor research and live scoring.
 
 | Source | Path | Note |
 |---|---|---|
-| Alpha Vantage import | `scripts/av_import.py`, `scripts/av_update.py` | Fetches income, balance, cashflow, shares, dividends from AV API |
+| **Unified ticker management** | `scripts/manage_tickers.py` | **Preferred entry point.** `add` runs full 8-step pipeline (prices → financials → shares → dividends → overview → PE → estimates → forward multiples). `delete` removes ticker from all 3 databases. |
+| Alpha Vantage import | `scripts/av_import.py`, `scripts/av_update.py` | Fetches income, balance, cashflow, shares, dividends from AV API (existing tickers, monthly refresh) |
 | Company overview import | `scripts/av_import_overview.py` | Fetches sector, industry, name, beta per ticker |
 | `av_financials.duckdb` | Project root `data/` | Tables: `income_statements`, `balance_sheets`, `cash_flow_statements`, `shares_outstanding`, `dividends`, `company_overview` |
 | `_load_av_data()` | `historic_fundamentals/pe.py:108` | Loads income + balance sheet data |
 | `_load_cashflow_data()` | `historic_fundamentals/pe.py:149` | Loads cash flow data |
+| trade_systems bridge | `trade_systems/utilities/ticker_manager.py` | Exposes `add_tickers()` and `delete_tickers()` for use from trade_systems; delegates to fin_import2 manage_tickers logic |
 
 ### 2.4 Feature Engineering
 

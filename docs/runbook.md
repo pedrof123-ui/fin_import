@@ -29,9 +29,41 @@ This runbook describes how to operate the fundamentals-alpha stock-selection pip
 
 ## Data Pipeline
 
-Run the following in order when setting up or refreshing data.
+### Adding new tickers
 
-### Step 1 — Import financial statements
+Use `manage_tickers.py` to add a ticker to all three databases in one command (~8 AV calls per ticker):
+
+```
+uv run scripts/manage_tickers.py add AAPL MSFT NVDA
+uv run scripts/manage_tickers.py add --csv data/new_tickers.csv
+uv run scripts/manage_tickers.py add AAPL --dry-run     # preview without writing
+```
+
+The `add` pipeline runs automatically: price backfill → financials + shares + dividends → company overview → PE timeseries + goal prices → analyst estimates → all forward multiples. The ticker is immediately model-ready.
+
+From `trade_systems`, use the programmatic bridge:
+
+```python
+from utilities.ticker_manager import add_tickers
+add_tickers(["AAPL", "MSFT"])
+```
+
+### Removing tickers (delisted or irrelevant)
+
+```
+uv run scripts/manage_tickers.py delete GME BB
+uv run scripts/manage_tickers.py delete --csv data/delisted.csv
+```
+
+Deletes from all three databases: `stock_prices`, `av_financials.duckdb` (8 tables), and `historic_fundamentals.duckdb` (3 tables). No AV API calls required.
+
+---
+
+### Monthly refresh for existing tickers
+
+Run the following in order when refreshing data for tickers already in the pipeline.
+
+#### Step 1 — Import financial statements
 
 ```
 uv run scripts/av_import.py
@@ -41,7 +73,7 @@ Fetches income, balance sheet, and cash flow statements from Alpha Vantage for e
 
 **API rate limit:** 75 calls/minute. The importer enforces this limit internally. Do not run multiple import processes in parallel.
 
-### Step 2 — Import company overview
+#### Step 2 — Import company overview
 
 ```
 uv run scripts/av_import_overview.py
@@ -49,7 +81,7 @@ uv run scripts/av_import_overview.py
 
 Fetches sector, industry, company name, beta, and 41 other OVERVIEW fields per ticker. Required for sector filters and live scoring. Writes to `company_overview` table in `av_financials.duckdb`.
 
-### Step 3 — Incremental update for existing tickers
+#### Step 3 — Incremental update for existing tickers
 
 ```
 uv run scripts/av_update.py
@@ -57,7 +89,7 @@ uv run scripts/av_update.py
 
 Refreshes statements and overview for tickers already in the database. Use monthly to keep the feature store current.
 
-### Step 4 — Feature computation
+#### Step 4 — Feature computation
 
 Feature computation is not a standalone script. It is performed by calling `HistoricFundamentalsDB.upsert_monthly_pe()`, which internally calls `build_monthly_pe()` from `historic_fundamentals/pe.py`.
 

@@ -15,36 +15,88 @@ HF_DB_PATH=data/historic_fundamentals.duckdb  # optional; this is the default
 
 ---
 
+## manage_tickers.py
+
+**Recommended script for all ticker add and delete operations.** Manages tickers across all three databases: `prices.duckdb`, `av_financials.duckdb`, and `historic_fundamentals.duckdb`.
+
+### add — full onboarding pipeline
+
+For each ticker, runs in sequence:
+
+1. Backfills price history (AV `TIME_SERIES_DAILY_ADJUSTED`) → `prices.duckdb / stock_prices`
+2. Fetches income / balance / cashflow statements → `av_financials.duckdb`
+3. Fetches shares outstanding → `av_financials.duckdb`
+4. Fetches dividend history → `av_financials.duckdb`
+5. Fetches company overview (sector, industry, name) → `av_financials.duckdb`
+6. Computes monthly PE timeseries + goal prices → `historic_fundamentals.duckdb / monthly_pe`
+7. Fetches analyst earnings estimates → `historic_fundamentals.duckdb`
+8. Computes all forward multiples (P/E, P/FCF, EV/EBITDA, P/S, market cap) → `pe_stats`
+
+A ticker added via `manage_tickers.py add` is immediately model-ready: it has prices, sector data, PE history, and all forward multiples.
+
+```bash
+uv run scripts/manage_tickers.py add AAPL MSFT NVDA
+uv run scripts/manage_tickers.py add --csv data/new_tickers.csv
+uv run scripts/manage_tickers.py add AAPL --force           # re-import even if in DB
+uv run scripts/manage_tickers.py add AAPL --skip-estimates  # skip EARNINGS_ESTIMATES call
+uv run scripts/manage_tickers.py add AAPL --dry-run         # preview without writing
+```
+
+Rate: ~8 AV calls/ticker (prices + 3 statements + shares + dividends + overview + estimates). At 75/min: ~9 tickers/min.
+
+### delete — remove from all databases
+
+Removes all rows for the ticker from `stock_prices`, `av_financials.duckdb` (8 tables), and `historic_fundamentals.duckdb` (3 tables). Use for delisted or irrelevant tickers.
+
+```bash
+uv run scripts/manage_tickers.py delete GME BB AMC
+uv run scripts/manage_tickers.py delete --csv data/delisted.csv
+uv run scripts/manage_tickers.py delete AAPL --dry-run      # preview without writing
+```
+
+No AV API calls; instant.
+
+### Options (both subcommands)
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--csv FILE` | add, delete | Read tickers from first column of a CSV file |
+| `--dry-run` | add, delete | Print plan without modifying any database |
+| `--verbose` | add, delete | Show DEBUG-level output |
+| `--force` | add | Re-import tickers already present in the DB |
+| `--skip-estimates` | add | Skip EARNINGS_ESTIMATES API call (saves 1 AV call/ticker) |
+
+### Using from trade_systems
+
+```python
+from utilities.ticker_manager import add_tickers, delete_tickers
+
+add_tickers(["AAPL", "MSFT"])   # full pipeline
+delete_tickers(["GME", "BB"])   # all three databases
+```
+
+---
+
 ## add_tickers.py
 
-All-in-one script for onboarding new tickers. For each ticker it runs in sequence:
+Legacy onboarding script. Kept for backward compatibility. For new work, prefer `manage_tickers.py`, which additionally backfills price history, imports company overview (sector/industry), enriches goal prices, and computes all forward multiples.
+
+For each ticker it runs:
 
 1. Fetches income / balance / cashflow statements → `av_financials.duckdb`
 2. Fetches shares outstanding → `av_financials.duckdb`
 3. Fetches dividend history → `av_financials.duckdb`
 4. Computes monthly PE + dividend yield timeseries → `historic_fundamentals.duckdb`
-5. Computes revenue growth (1yr, 3yr CAGR, 5yr CAGR) + earnings EPS growth (1yr, 3yr CAGR, 5yr CAGR) → `pe_stats`
+5. Computes revenue growth + earnings EPS growth → `pe_stats`
 6. Fetches analyst earnings estimates → `historic_fundamentals.duckdb`
 7. Computes forward PE, NTM revenue growth estimate, NTM earnings growth estimate → `pe_stats`
-
-This is the recommended way to add new tickers. Running `av_import.py` + `hf_import.py` separately is equivalent but requires two commands.
-
-### Usage
 
 ```bash
 uv run scripts/add_tickers.py AAPL MSFT GOOGL
 uv run scripts/add_tickers.py --csv data/new_tickers.csv
-uv run scripts/add_tickers.py AAPL --force           # re-import even if already in DB
-uv run scripts/add_tickers.py AAPL --skip-estimates  # skip EARNINGS_ESTIMATES call
+uv run scripts/add_tickers.py AAPL --force
+uv run scripts/add_tickers.py AAPL --skip-estimates
 ```
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Re-import tickers already in av_financials and recompute all derived metrics. |
-| `--skip-estimates` | Skip the Alpha Vantage EARNINGS_ESTIMATES call. PE + dividend yield still computed. |
-| `--verbose` | Enable DEBUG-level logging. |
 
 Rate: 6 AV calls/ticker (3 statements + shares + dividends + estimates). At 75/min: ~12 tickers/min.
 
