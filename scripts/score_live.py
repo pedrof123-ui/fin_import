@@ -62,13 +62,17 @@ log = logging.getLogger(__name__)
 # Backtest reference metrics (2005–2025, 211 months, composite score variants).
 # rf_vw_* entries reflect rf_* backtest runs (which used --vol-weight; naming is equivalent).
 _BACKTEST_METRICS: dict[str, dict] = {
-    "gr_top_n_25":          dict(cagr="25.2%", sharpe="1.318", max_dd="-23.7%", beta="1.038", win_rate="67.8%", months=211),
-    "vw_gr_top_n_25":       dict(cagr="24.5%", sharpe="1.351", max_dd="-21.6%", beta="0.984", win_rate="71.1%", months=211),
-    "rf_gr_top_n_25":       dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
-    "rf_vw_gr_top_n_25":    dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
-    "xgb_gr_top_n_25":      dict(cagr="20.5%", sharpe="1.076", max_dd="-26.6%", beta="1.054", win_rate="62.6%", months=211),
-    "vw_xgb_gr_top_n_25":   dict(cagr="19.5%", sharpe="1.089", max_dd="-23.5%", beta="0.989", win_rate="62.6%", months=211),
-    "rf_xgb_gr_top_n_25":   dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
+    "gr_top_n_25":           dict(cagr="25.2%", sharpe="1.318", max_dd="-23.7%", beta="1.038", win_rate="67.8%", months=211),
+    "gr_top_n_10":           dict(cagr="25.9%", sharpe="1.328", max_dd="-26.8%", beta="0.997", win_rate="68.7%", months=211),
+    "vw_gr_top_n_25":        dict(cagr="24.5%", sharpe="1.351", max_dd="-21.6%", beta="0.984", win_rate="71.1%", months=211),
+    "vw_gr_top_n_10":        dict(cagr="24.4%", sharpe="1.306", max_dd="-27.1%", beta="0.968", win_rate="67.3%", months=211),
+    "rf_gr_top_n_25":        dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
+    "rf_gr_top_n_10":        dict(cagr="21.6%", sharpe="1.329", max_dd="-23.5%", beta="0.843", win_rate="67.3%", months=211),
+    "rf_vw_gr_top_n_25":     dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
+    "rf_vw_gr_top_n_10":     dict(cagr="21.6%", sharpe="1.329", max_dd="-23.5%", beta="0.843", win_rate="67.3%", months=211),
+    "xgb_gr_top_n_25":       dict(cagr="20.5%", sharpe="1.076", max_dd="-26.6%", beta="1.054", win_rate="62.6%", months=211),
+    "vw_xgb_gr_top_n_25":    dict(cagr="19.5%", sharpe="1.089", max_dd="-23.5%", beta="0.989", win_rate="62.6%", months=211),
+    "rf_xgb_gr_top_n_25":    dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
     "rf_vw_xgb_gr_top_n_25": dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
 }
 

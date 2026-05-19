@@ -29,6 +29,7 @@ PORTFOLIO_CONFIGS: dict[str, float | int] = {
     "top_pct_10": 0.10,
     "top_n_50": 50,
     "top_n_25": 25,
+    "top_n_10": 10,
 }
 
 
