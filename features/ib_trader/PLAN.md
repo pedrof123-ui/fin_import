@@ -28,9 +28,19 @@ ib_trader/
     portfolio.py         # diff current positions vs target → order list
     rebalance.py         # end-to-end rebalance: load scores → diff → submit
     interactive.py       # REPL loop with ad-hoc order commands
+    tracker.py           # portfolio tracker DB: fill capture, NAV snapshots, score snapshots
+    performance.py       # P&L, risk metrics, IC, backtest comparison
+    report.py            # snapshot_report() and Jupyter query functions
 
 scripts/
     rebalance.py         # CLI entry point: --scores, --dry-run, --top, --order-type
+    sync_fills.py        # pull IB execDetails → tracker DB (backfill / correct)
+
+notebooks/
+    portfolio_tracker.ipynb  # Jupyter interface for queries and reporting
+
+data/
+    ib_tracker.duckdb    # persistent multi-strategy trade/position store
 ```
 
 ---
@@ -42,9 +52,14 @@ IB_HOST=127.0.0.1
 IB_PORT=7497          # paper: 7497 | live: 7496
 IB_CLIENT_ID=1
 IB_ACCOUNT=           # auto-detect from IB if empty
+
+# Portfolio Tracker
+IB_TRACKER_DB=/home/pedro/projects/fin_import2/data/ib_tracker.duckdb
+IB_TRACKER_BENCHMARK=SPY   # benchmark for beta / alpha calculations
 ```
 
 Switch to live by changing `IB_PORT=7496`. All other code is identical.
+`IB_TRACKER_DB` can be overridden in other projects (e.g., `trade_systems`) to point at the same shared database file.
 
 ---
 
@@ -235,6 +250,245 @@ Launch: `uv run scripts/ib_repl.py`
 
 ---
 
+---
+
+## Portfolio Tracker
+
+### Overview
+
+A persistent, multi-strategy trading ledger that records fills, tracks tax lots (FIFO), computes realized and unrealized P&L, measures live risk-adjusted returns, and compares them against the backtest benchmark and the model's live IC (score rank → forward return correlation).
+
+The database (`data/ib_tracker.duckdb`) is accessed by both `fin_import2` and `trade_systems` via the `IB_TRACKER_DB` env var.
+
+### Database Schema
+
+```sql
+-- One row per registered strategy
+CREATE TABLE strategies (
+    name        VARCHAR PRIMARY KEY,
+    description VARCHAR,
+    inception_date DATE,
+    benchmark   VARCHAR DEFAULT 'SPY'
+);
+
+-- Raw IB execution records; exec_id is the IB unique fill ID (dedup key)
+CREATE TABLE fills (
+    id          INTEGER PRIMARY KEY,
+    strategy    VARCHAR NOT NULL,
+    ticker      VARCHAR NOT NULL,
+    action      VARCHAR NOT NULL,     -- BUY | SELL
+    qty         DOUBLE  NOT NULL,
+    fill_price  DOUBLE  NOT NULL,
+    fill_time   TIMESTAMP NOT NULL,
+    exec_id     VARCHAR UNIQUE,       -- IB execId; NULL for manual entries
+    commission  DOUBLE  DEFAULT 0.0
+);
+
+-- FIFO lots; qty_remaining decreases as sell fills close the lot
+CREATE TABLE tax_lots (
+    id           INTEGER PRIMARY KEY,
+    strategy     VARCHAR NOT NULL,
+    ticker       VARCHAR NOT NULL,
+    open_date    DATE    NOT NULL,
+    open_price   DOUBLE  NOT NULL,
+    qty          DOUBLE  NOT NULL,
+    qty_remaining DOUBLE NOT NULL,
+    close_date   DATE,
+    close_price  DOUBLE,
+    realized_pnl DOUBLE,
+    is_long_term BOOLEAN,            -- holding period > 365 days at close
+    tax_rate     DOUBLE              -- 0.15 LT | 0.24 ST
+);
+
+-- End-of-day NAV snapshots (equity value + cash = NAV)
+CREATE TABLE daily_nav (
+    strategy     VARCHAR NOT NULL,
+    date         DATE    NOT NULL,
+    nav          DOUBLE  NOT NULL,
+    cash         DOUBLE,
+    equity_value DOUBLE,
+    PRIMARY KEY (strategy, date)
+);
+
+-- Score snapshots for IC tracking; forward_return filled 30 days after snapshot
+CREATE TABLE score_snapshots (
+    strategy       VARCHAR NOT NULL,
+    snapshot_date  DATE    NOT NULL,
+    ticker         VARCHAR NOT NULL,
+    rank           INTEGER,
+    score          DOUBLE,
+    alloc_pct      DOUBLE,
+    price_at_score DOUBLE,
+    forward_return DOUBLE,           -- NULL until 30d later
+    PRIMARY KEY (strategy, snapshot_date, ticker)
+);
+
+-- Backtest reference stats loaded from docs/backtest_results_model.md
+CREATE TABLE backtest_benchmarks (
+    strategy  VARCHAR NOT NULL,
+    portfolio VARCHAR NOT NULL,
+    cagr      DOUBLE,
+    ann_vol   DOUBLE,
+    sharpe    DOUBLE,
+    sortino   DOUBLE,
+    max_dd    DOUBLE,
+    beta      DOUBLE,
+    alpha     DOUBLE,
+    win_rate  DOUBLE,
+    PRIMARY KEY (strategy, portfolio)
+);
+```
+
+---
+
+### Phase 7 — Tracker DB & Fill Capture (`ib_trader/tracker.py`) [IMPLEMENTED]
+
+**Goal:** Initialize the database and record fills automatically from `rebalance.py`, with a separate sync path for backfill.
+
+Deliverables:
+- `init_tracker_db(db_path=None) -> duckdb.Connection`
+  - Creates all tables if not exists; reads path from `IB_TRACKER_DB` env var
+- `register_strategy(conn, name, description=None, inception_date=None, benchmark="SPY") -> None`
+- `record_fill(conn, strategy, ticker, action, qty, fill_price, fill_time, exec_id=None, commission=0.0) -> None`
+  - Inserts into `fills`; runs `_apply_fifo_lot(conn, ...)` to update `tax_lots`
+  - exec_id dedup: silently skips if exec_id already present
+- `_apply_fifo_lot(conn, strategy, ticker, action, qty, fill_price, fill_date) -> None`
+  - BUY: inserts a new lot with `qty_remaining = qty`
+  - SELL: walks open lots oldest-first, closes or partial-closes each
+    - Sets `close_date`, `close_price`, `realized_pnl`, `is_long_term`, `tax_rate`
+- `sync_ib_fills(client, conn, strategy, since_date=None) -> int`
+  - Calls `client.ib.reqExecutions(ExecutionFilter())` to fetch IB execution history
+  - Filters to fills after `since_date`; calls `record_fill()` for each
+  - Returns count of new fills inserted
+- `record_nav(conn, strategy, nav, cash=None, equity_value=None, date=None) -> None`
+  - Upserts into `daily_nav`; date defaults to today
+- `record_score_snapshot(conn, strategy, scores_df, snapshot_date=None) -> None`
+  - Inserts rows into `score_snapshots` from `scores_df` (output of `load_scores_csv()`)
+  - snapshot_date defaults to today
+- `update_forward_returns(conn, strategy, prices_df, lookback_days=30) -> int`
+  - Finds snapshots where `forward_return IS NULL` and snapshot_date ≤ today − 30d
+  - Looks up realized prices from `prices_df`; fills in `forward_return`
+  - Returns count of rows updated
+
+**Integration with `rebalance.py`:**
+After each non-dry-run rebalance, `run_rebalance()` calls a hook:
+```python
+from ib_trader.tracker import record_fills_from_blotter
+record_fills_from_blotter(conn, strategy, blotter_df, fill_time=datetime.utcnow())
+```
+The hook writes fills to the tracker DB automatically.
+
+---
+
+### Phase 8 — Performance & P&L Engine (`ib_trader/performance.py`) [IMPLEMENTED]
+
+**Goal:** Compute P&L, risk-adjusted returns, and IC from tracker data.
+
+Deliverables:
+- `get_open_positions(conn, strategy) -> pd.DataFrame`
+  - Columns: ticker, qty, avg_cost, current_price (None if offline), unrealized_pnl, unrealized_pnl_pct
+  - Derives qty and avg_cost from `tax_lots` where `qty_remaining > 0`
+- `get_pnl_summary(conn, strategy) -> dict`
+  - Returns: unrealized_pnl, realized_pnl_st, realized_pnl_lt, tax_owed_st (24%), tax_owed_lt (15%), total_realized, net_after_tax
+- `get_monthly_returns(conn, strategy) -> pd.Series`
+  - Month-end NAV pct changes from `daily_nav`
+  - Index: period end date; values: float return
+- `get_performance_stats(conn, strategy, period="inception") -> dict`
+  - Computes: CAGR, AnnVol, Sharpe, Sortino, MaxDD, Beta (vs benchmark), Win Rate
+  - Periods: `"week"`, `"month"`, `"ytd"`, `"1y"`, `"inception"`
+  - Beta and Alpha use daily returns of strategy vs SPY (fetched from Alpha Vantage or DuckDB daily_nav)
+- `get_period_returns_table(conn, strategy) -> pd.DataFrame`
+  - One row per period: week, month, ytd, 1y, inception; columns: return, annualized_vol, sharpe
+- `get_ic_series(conn, strategy) -> pd.DataFrame`
+  - Ranks scores and forward_return within each snapshot_date
+  - Computes rank correlation (Spearman) per snapshot — one IC value per month
+  - Columns: snapshot_date, ic, n_stocks, p_value
+- `compare_vs_backtest(conn, strategy) -> pd.DataFrame`
+  - Loads corresponding row from `backtest_benchmarks`
+  - Pairs live stats vs backtest stats for CAGR, Sharpe, MaxDD, etc.
+  - Columns: metric, live_value, backtest_value, delta
+- `get_trade_history(conn, strategy, ticker=None, from_date=None, to_date=None) -> pd.DataFrame`
+  - Columns: fill_time, ticker, action, qty, fill_price, commission, realized_pnl (for SELL fills), holding_days, is_long_term
+
+---
+
+### Phase 9 — Jupyter Interface & Snapshot Report (`ib_trader/report.py`) [IMPLEMENTED]
+
+**Goal:** Clean Python functions for querying the tracker from a Jupyter notebook and a single-call snapshot report.
+
+Deliverables:
+- `snapshot_report(conn, strategy, client=None) -> None`
+  - Prints a full strategy report to stdout / notebook output
+  - Sections:
+    1. **Account summary**: strategy name, inception date, NAV, cash, equity value (live from IB if client provided)
+    2. **Performance**: week/month/YTD/1yr/since-inception returns + Sharpe
+    3. **Risk diagnostics**: MaxDD, Beta, Sortino, Sharpe
+    4. **vs Backtest**: live vs backtest CAGR, Sharpe, MaxDD, Alpha
+    5. **Open positions**: ticker, qty, avg cost, current price, unrealized P&L, weight %
+    6. **Realized P&L & Tax**: ST and LT realized gains, estimated tax owed
+    7. **Model IC**: last 6 months of score IC values with mean
+- `get_trades(conn, strategy, ticker=None, from_date=None, to_date=None) -> pd.DataFrame`
+- `get_positions(conn, strategy) -> pd.DataFrame`
+- `get_performance(conn, strategy) -> pd.DataFrame`  — weekly/monthly/YTD/1yr/inception table
+- `get_tax_summary(conn, strategy, year=None) -> pd.DataFrame`
+  - Columns: ticker, open_date, close_date, holding_days, cost_basis, proceeds, realized_pnl, is_long_term, tax_rate, tax_owed
+- `compare_vs_backtest(conn, strategy) -> pd.DataFrame`
+- `get_ic_series(conn, strategy) -> pd.DataFrame`
+
+Example Jupyter usage:
+```python
+import duckdb, os
+from ib_trader.report import snapshot_report, get_trades, get_tax_summary
+
+conn = duckdb.connect(os.environ["IB_TRACKER_DB"])
+snapshot_report(conn, "fundamentals_alpha")
+get_tax_summary(conn, "fundamentals_alpha", year=2026)
+```
+
+---
+
+### Phase 10 — Fill Sync Script & Notebook (`scripts/sync_fills.py`, `notebooks/portfolio_tracker.ipynb`) [IMPLEMENTED]
+
+**Goal:** Standalone sync script for backfilling fills and an example Jupyter notebook.
+
+`scripts/sync_fills.py` deliverables:
+```
+uv run scripts/sync_fills.py --strategy fundamentals_alpha
+uv run scripts/sync_fills.py --strategy fundamentals_alpha --since 2026-01-01
+uv run scripts/sync_fills.py --strategy ibd_50 --since 2026-04-01
+uv run scripts/sync_fills.py --update-forward-returns   # fill in 30d returns for IC
+```
+Flags:
+| Flag | Default | Description |
+|---|---|---|
+| `--strategy NAME` | required | Strategy name to sync |
+| `--since DATE` | 90 days ago | Only sync fills after this date |
+| `--update-forward-returns` | off | Fill in forward_return for old score snapshots |
+| `--dry-run` | off | Print fills that would be inserted; do not write |
+
+`notebooks/portfolio_tracker.ipynb` deliverables:
+- Cell 1: Imports and DB connection setup
+- Cell 2: `snapshot_report(conn, "fundamentals_alpha")`
+- Cell 3: `get_trades(conn, "fundamentals_alpha")` — filterable by ticker / date
+- Cell 4: `get_tax_summary(conn, "fundamentals_alpha", year=2026)`
+- Cell 5: `compare_vs_backtest(conn, "fundamentals_alpha")` — live vs backtest table
+- Cell 6: `get_ic_series(conn, "fundamentals_alpha")` — model IC time series plot
+
+---
+
+### Tracker Testing Checklist
+
+- [ ] `init_tracker_db()` creates all tables; second call is idempotent
+- [ ] `record_fill()` + `_apply_fifo_lot()`: BUY creates a lot; SELL closes oldest lot(s) first
+- [ ] ST lot (held < 365 days) taxed at 24%; LT lot (held ≥ 365 days) taxed at 15%
+- [ ] Duplicate exec_id is silently skipped (no duplicate fill rows)
+- [ ] `sync_ib_fills()` inserts new fills from IB execution history without duplicates
+- [ ] `get_monthly_returns()` matches manual NAV calculation from daily_nav
+- [ ] `snapshot_report()` runs without error from a Jupyter cell
+- [ ] Multi-strategy: fills for `fundamentals_alpha` and `ibd_50` in same DB do not mix
+
+---
+
 ## Paper Testing Checklist (pre-live)
 
 - [ ] Connect to paper TWS (127.0.0.1:7497) and verify `get_nav()` returns expected value
@@ -266,3 +520,10 @@ Launch: `uv run scripts/ib_repl.py`
 | MOC for sells | Yes — use MOC for sells by default | Backtest returns are close-to-close; exiting at MOC matches the performance baseline. REPL allows `sell TICKER QTY MKT` for emergency overrides |
 | Position exits | Auto-exit dropped positions (full rebalance) | The backtest exits anything not in top-N each month; deviating from this breaks strategy fidelity. Dry-run preview shows all exits before confirmation |
 | Strategy tag | Yes — populate IB `orderRef` with strategy name | One field, zero cost, enables multi-strategy auditing in TWS blotter and account statements. Default: `"fundamentals_alpha"` |
+| Trade capture | Both: auto-log fills in `rebalance.py` hook + `scripts/sync_fills.py` for backfill | Auto-log is primary; sync script corrects missed fills and covers manual trades |
+| Tax lot method | FIFO | Simplest and default for most brokers; correct for cost basis and ST/LT determination |
+| Tracker DB location | `data/ib_tracker.duckdb` in fin_import2; path from `IB_TRACKER_DB` env var | Consistent with project conventions; `trade_systems` sets env var to the same file |
+| Predicted performance | Both IC tracking + live vs backtest comparison | IC measures whether model rankings still work; backtest comparison shows if strategy returns are on track |
+| ST capital gains tax rate | 24% | Per user specification |
+| LT capital gains tax rate | 15% | Per user specification; holding period threshold is 365 days |
+| Benchmark | SPY (configurable via `IB_TRACKER_BENCHMARK`) | Consistent with backtest results; configurable per strategy |

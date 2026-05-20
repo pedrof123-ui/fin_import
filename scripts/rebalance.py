@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -90,6 +91,19 @@ def main() -> None:
         log.info("Loaded %d portfolio positions from %s", len(ranked_df), scores_path)
         run_rebalance(ranked_df, client, order_type=args.order_type,
                       dry_run=args.dry_run, strategy=args.strategy)
+
+        # Record end-of-rebalance NAV to tracker (live runs only)
+        tracker_db = os.getenv("IB_TRACKER_DB")
+        if not args.dry_run and tracker_db:
+            try:
+                from ib_trader.tracker import init_tracker_db, record_nav
+                nav = client.get_nav()
+                tracker_conn = init_tracker_db(tracker_db)
+                record_nav(tracker_conn, args.strategy, nav)
+                tracker_conn.close()
+                log.info("Recorded NAV $%,.0f to tracker DB.", nav)
+            except Exception as exc:
+                log.warning("Could not record NAV to tracker: %s", exc)
 
 
 if __name__ == "__main__":

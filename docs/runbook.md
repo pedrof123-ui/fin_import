@@ -23,6 +23,8 @@ This runbook describes how to operate the fundamentals-alpha stock-selection pip
 | `IB_CLIENT_ID` | TWS client ID, must be unique per connection (default: `1`) |
 | `IB_ACCOUNT` | IB account number; auto-detected from TWS if blank |
 | `IB_MARKET_DATA_TYPE` | `1` = live data (default for live accounts), `3` = delayed (default for paper) |
+| `IB_TRACKER_DB` | Absolute path to `data/ib_tracker.duckdb`. When set, fills, NAV, and score snapshots are automatically recorded after each rebalance and scoring run. Leave blank to disable tracking. |
+| `IB_TRACKER_BENCHMARK` | Benchmark ticker for beta/alpha calculations (default: `SPY`) |
 
 **External databases:**
 
@@ -212,6 +214,8 @@ Produces a ranked list of investable stocks as of today. Output is printed to th
 
 **Output columns:** `rank`, `percentile`, `ticker`, `company_name`, `score`, `sector`, `market_cap`, `price`, `liquidity`, `weight_pct` (inverse-vol portfolio weight), `alloc_pct` (regime-adjusted allocation), `pe_ratio`, `fcf_yield`, `earnings_yield`, `ttm_gross_margin`, `ttm_operating_margin`, `debt_to_ebitda`, `roa`, `top_factor`, `value_trap`, `missing_factor_count`, `data_quality`, `feature_available_date`.
 
+**Portfolio tracker integration:** When `IB_TRACKER_DB` is set in `.env`, `score_live.py` automatically records a score snapshot of all ranked tickers (ticker, rank, score, alloc_pct, price) to `data/ib_tracker.duckdb`. These snapshots are used to compute the model's live Information Coefficient (IC) 30 days later.
+
 **Regime banner example:**
 
 ```
@@ -257,6 +261,21 @@ Cancels any open orders for affected tickers, then submits MOC orders for all bu
 
 **MOC cutoff:** orders must be submitted before 15:50 ET. A warning is printed if you run after 15:45 ET.
 
+**Portfolio tracker integration:** When `IB_TRACKER_DB` is set, `--no-dry-run` automatically records estimated fills (blotter quantities × live prices) and the post-rebalance NAV to the tracker database. The CSV closing price is stored alongside each fill as the reference price, enabling slippage calculation once actual IB fills are synced.
+
+### Step 4 — Sync confirmed fills (same IB session)
+
+```
+uv run scripts/sync_fills.py --strategy fundamentals_alpha
+```
+
+Pulls actual execution records from IB (`reqExecutions`) and writes them to the tracker database with real exec IDs. Also records the current NAV. Run this in the same TWS session where orders were placed, as IB only returns fills from the current session.
+
+```
+uv run scripts/sync_fills.py --strategy fundamentals_alpha --since 2026-01-01
+uv run scripts/sync_fills.py --strategy fundamentals_alpha --dry-run   # preview without writing
+```
+
 ### Additional CLI flags
 
 | Flag | Description |
@@ -292,6 +311,114 @@ quit / exit                    Disconnect and exit
 ```
 
 Order types: `MOC` (default), `MKT`, `LMT`. Limit example: `sell MSFT 30 LMT 450.00`.
+
+---
+
+## Portfolio Tracker
+
+The portfolio tracker is a persistent DuckDB ledger (`data/ib_tracker.duckdb`) that records every fill, tracks FIFO tax lots, measures live risk-adjusted returns, and compares them against the backtest benchmark. It is optional — everything is conditional on `IB_TRACKER_DB` being set.
+
+### First-time setup
+
+Add to `.env`:
+
+```
+IB_TRACKER_DB=/home/pedro/projects/fin_import2/data/ib_tracker.duckdb
+IB_TRACKER_BENCHMARK=SPY
+```
+
+The database is created automatically on the first run that needs it. No manual schema creation is required. Register your strategy once:
+
+```python
+import duckdb, os
+from ib_trader.tracker import init_tracker_db, register_strategy
+
+conn = init_tracker_db()
+register_strategy(conn, "fundamentals_alpha",
+                  description="Composite fundamentals alpha (vw_gr_top_n_25)",
+                  inception_date="2026-01-01")
+conn.close()
+```
+
+### What gets recorded automatically
+
+| Event | Trigger | Function called |
+|---|---|---|
+| Score snapshot | `score_live.py` finishes | `record_score_snapshot()` |
+| Estimated fills | `rebalance.py --no-dry-run` | `record_fills_from_blotter()` |
+| NAV (post-rebalance) | `rebalance.py --no-dry-run` | `record_nav()` |
+| Confirmed fills + NAV | `sync_fills.py` | `sync_ib_fills()`, `record_nav()` |
+| Forward returns (IC) | `sync_fills.py --update-forward-returns` | `update_forward_returns()` |
+
+### Syncing confirmed fills
+
+Immediately after a live rebalance, pull actual IB execution records:
+
+```
+uv run scripts/sync_fills.py --strategy fundamentals_alpha
+uv run scripts/sync_fills.py --strategy fundamentals_alpha --since 2026-01-01
+uv run scripts/sync_fills.py --strategy fundamentals_alpha --dry-run
+```
+
+This replaces the blotter estimates with IB's actual exec IDs, quantities, and fill prices, enabling slippage calculation.
+
+IB's `reqExecutions()` only returns fills from the current TWS session. Run sync_fills.py in the same session where orders were placed.
+
+### Updating forward returns (IC)
+
+Once a month, fill in 30-day forward returns for old score snapshots:
+
+```
+uv run scripts/sync_fills.py --strategy fundamentals_alpha --update-forward-returns
+```
+
+This downloads prices via yfinance and computes `(price_30d_later / price_at_score) - 1` for every snapshot row older than 30 days where `forward_return IS NULL`.
+
+### Viewing the report
+
+Open `notebooks/portfolio_tracker.ipynb` in Jupyter:
+
+```python
+from ib_trader.tracker import init_tracker_db
+from ib_trader.report import snapshot_report
+
+conn = init_tracker_db()
+snapshot_report(conn, "fundamentals_alpha")
+```
+
+The report prints eight sections: account summary, performance (week/month/YTD/1yr/inception), risk diagnostics (Sharpe/Sortino/MaxDD/Beta), live vs backtest comparison, open positions with unrealized P&L, realized P&L and estimated tax, slippage analysis, and model IC time series.
+
+### Jupyter query functions
+
+| Function | Returns |
+|---|---|
+| `get_trades(conn, strategy)` | All fills with realized P&L per SELL |
+| `get_positions(conn, strategy)` | Open positions: qty, avg cost, unrealized P&L |
+| `get_performance(conn, strategy)` | Week/month/YTD/1yr/inception returns + Sharpe |
+| `get_tax_summary(conn, strategy, year=2026)` | Tax lots: ST/LT classification, proceeds, tax owed |
+| `compare_vs_backtest(conn, strategy)` | Live CAGR/Sharpe/MaxDD vs backtest benchmark |
+| `get_ic_series(conn, strategy)` | Spearman IC per snapshot month |
+| `get_slippage_summary(conn, strategy)` | Avg bps, median bps, total dollars vs 10 bps backtest assumption |
+
+### Slippage tracking
+
+Every fill stores a `reference_price` — the CSV closing price from the live scores file. Slippage is computed as:
+
+```
+BUY  slippage_bps = (fill_price - reference_price) / reference_price * 10000
+SELL slippage_bps = (reference_price - fill_price) / reference_price * 10000
+```
+
+Negative slippage means a better-than-reference fill. `get_slippage_summary()` compares mean live slippage against the 10 bps backtest TC assumption.
+
+### Tax lot accounting
+
+The tracker uses FIFO (first-in, first-out) lot assignment. Each BUY creates a new lot; each SELL walks the oldest open lots and closes them in order, splitting partial quantities automatically. Tax treatment:
+
+- Short-term (held < 365 days): taxed at 24%
+- Long-term (held >= 365 days): taxed at 15%
+
+`get_tax_summary()` exports a per-lot breakdown ready for Schedule D filing.
 
 ---
 

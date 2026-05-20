@@ -53,3 +53,10 @@ edgartools/
 # Temporary screenshots
 screenshot.png
 screenshots/
+
+# Browser-exported HTML artifacts
+Financial Quant Development.html
+Financial Quant Development_files/
+
+# Archived / unused agent definitions
+docs/agents - not used/

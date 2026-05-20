@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 
 from .orders import place_order
@@ -96,4 +98,20 @@ def run_rebalance(
     print(f"\nSubmitted {submitted}/{len(specs)} orders.")
     blotter = blotter.copy()
     blotter["order_type"] = order_type
+
+    # Auto-log estimated fills to tracker DB if IB_TRACKER_DB is configured
+    tracker_db = os.getenv("IB_TRACKER_DB")
+    if tracker_db and submitted > 0:
+        try:
+            from .tracker import init_tracker_db, record_fills_from_blotter
+            tracker_conn = init_tracker_db(tracker_db)
+            n_logged = record_fills_from_blotter(
+                tracker_conn, strategy, blotter, live_prices,
+                reference_price_map=csv_prices,
+            )
+            tracker_conn.close()
+            print(f"  Logged {n_logged} estimated fill(s) to tracker DB.")
+        except Exception as exc:
+            print(f"  Warning: tracker log failed: {exc}")
+
     return blotter

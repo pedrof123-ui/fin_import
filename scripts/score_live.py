@@ -837,6 +837,18 @@ def main() -> None:
     print(f"\nWrote {len(out_df)} rows to {csv_path}")
     print("(Read with: pd.read_csv(path, comment='#'))")
 
+    # Record score snapshot to tracker DB if configured
+    tracker_db = os.getenv("IB_TRACKER_DB")
+    if tracker_db:
+        try:
+            from ib_trader.tracker import init_tracker_db, record_score_snapshot
+            tracker_conn = init_tracker_db(tracker_db)
+            record_score_snapshot(tracker_conn, "fundamentals_alpha", out_df, snapshot_date=today)
+            tracker_conn.close()
+            print(f"Recorded score snapshot ({len(out_df)} tickers) to tracker DB.")
+        except Exception as exc:
+            log.warning("Could not record score snapshot to tracker: %s", exc)
+
 
 if __name__ == "__main__":
     main()
