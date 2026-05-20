@@ -289,6 +289,7 @@ Pulls actual execution records from IB (`reqExecutions`) and writes them to the 
 ```
 uv run scripts/sync_fills.py --strategy fundamentals_alpha --since 2026-01-01
 uv run scripts/sync_fills.py --strategy fundamentals_alpha --dry-run   # preview without writing
+uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
 ```
 
 ### Additional CLI flags
@@ -299,6 +300,7 @@ uv run scripts/sync_fills.py --strategy fundamentals_alpha --dry-run   # preview
 | `--dry-run` / `--no-dry-run` | Dry run (default) or live submission |
 | `--order-type MOC\|MKT\|LMT` | Order type (default: MOC) |
 | `--strategy TAG` | IB `orderRef` tag for order tracking (default: `fundamentals_alpha`) |
+| `--tracker-db PATH` | Tracker DuckDB path (overrides `IB_TRACKER_DB` env var) |
 | `--status` | Print NAV, positions, open orders and exit |
 | `--cancel-all` | Cancel all open orders and exit |
 | `--verbose` | DEBUG-level logging |

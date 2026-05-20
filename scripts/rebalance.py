@@ -2,14 +2,15 @@
 """CLI for portfolio rebalancing via Interactive Brokers.
 
 Usage:
-    uv run scripts/rebalance.py                    # dry run, auto-find latest scores CSV
-    uv run scripts/rebalance.py --scores PATH       # dry run, explicit scores CSV
-    uv run scripts/rebalance.py --no-dry-run        # submit orders
-    uv run scripts/rebalance.py --status            # show account status and exit
-    uv run scripts/rebalance.py --cancel-all        # cancel all open orders and exit
+    uv run scripts/rebalance.py                                      # dry run, auto-find latest scores CSV
+    uv run scripts/rebalance.py --scores PATH                        # dry run, explicit scores CSV
+    uv run scripts/rebalance.py --no-dry-run                         # submit orders
+    uv run scripts/rebalance.py --status                             # show account status and exit
+    uv run scripts/rebalance.py --cancel-all                         # cancel all open orders and exit
+    uv run scripts/rebalance.py --tracker-db data/ib_tracker_paper.duckdb  # override tracker DB
 
 Environment variables (in .env):
-    IB_HOST, IB_PORT, IB_CLIENT_ID, IB_ACCOUNT
+    IB_HOST, IB_PORT, IB_CLIENT_ID, IB_ACCOUNT, IB_TRACKER_DB
 """
 
 from __future__ import annotations
@@ -47,6 +48,8 @@ def main() -> None:
                         help="Order type (default: MOC)")
     parser.add_argument("--strategy", default="fundamentals_alpha",
                         help="Strategy tag written to IB orderRef (default: fundamentals_alpha)")
+    parser.add_argument("--tracker-db", default=None,
+                        help="Path to tracker DuckDB (overrides IB_TRACKER_DB env var)")
     parser.add_argument("--cancel-all", action="store_true",
                         help="Cancel all open orders and exit")
     parser.add_argument("--status", action="store_true",
@@ -93,7 +96,7 @@ def main() -> None:
                       dry_run=args.dry_run, strategy=args.strategy)
 
         # Record end-of-rebalance NAV to tracker (live runs only)
-        tracker_db = os.getenv("IB_TRACKER_DB")
+        tracker_db = args.tracker_db or os.getenv("IB_TRACKER_DB")
         if not args.dry_run and tracker_db:
             try:
                 from ib_trader.tracker import init_tracker_db, record_nav

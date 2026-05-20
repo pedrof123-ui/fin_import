@@ -6,10 +6,12 @@ Usage:
     uv run scripts/sync_fills.py --strategy ibd_50 --since 2026-04-01
     uv run scripts/sync_fills.py --strategy fundamentals_alpha --update-forward-returns
     uv run scripts/sync_fills.py --strategy fundamentals_alpha --dry-run
+    uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import date, datetime
 
@@ -40,6 +42,11 @@ def main() -> None:
         action="store_true",
         help="Connect to IB and print fills that would be inserted; do not write to DB",
     )
+    parser.add_argument(
+        "--tracker-db",
+        default=None,
+        help="Path to tracker DuckDB (overrides IB_TRACKER_DB env var)",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -50,11 +57,14 @@ def main() -> None:
         from datetime import timedelta
         since_date = date.today() - timedelta(days=90)
 
+    tracker_db = args.tracker_db or os.getenv("IB_TRACKER_DB")
+
     print(f"Strategy:   {args.strategy}")
     print(f"Since date: {since_date}")
     print(f"Dry run:    {args.dry_run}")
+    print(f"Tracker DB: {tracker_db or '(default)'}")
 
-    conn = init_tracker_db()
+    conn = init_tracker_db(tracker_db)
 
     if args.dry_run:
         print("\nDry-run mode: connecting to IB to preview fills (no DB writes).")
