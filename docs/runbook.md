@@ -23,7 +23,7 @@ This runbook describes how to operate the fundamentals-alpha stock-selection pip
 | `IB_CLIENT_ID` | TWS client ID, must be unique per connection (default: `1`) |
 | `IB_ACCOUNT` | IB account number; auto-detected from TWS if blank |
 | `IB_MARKET_DATA_TYPE` | `1` = live data (default for live accounts), `3` = delayed (default for paper) |
-| `IB_TRACKER_DB` | Absolute path to `data/ib_tracker.duckdb`. When set, fills, NAV, and score snapshots are automatically recorded after each rebalance and scoring run. Leave blank to disable tracking. |
+| `IB_TRACKER_DB` | Absolute path to the tracker DuckDB. Use `data/ib_tracker_paper.duckdb` while paper trading, `data/ib_tracker_live.duckdb` for live. When set, fills, NAV, and score snapshots are automatically recorded. Leave blank to disable tracking. Override per command with `--tracker-db`. |
 | `IB_TRACKER_BENCHMARK` | Benchmark ticker for beta/alpha calculations (default: `SPY`) |
 
 **External databases:**
@@ -246,50 +246,105 @@ Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`. `PRICES_DB_PATH` is 
 
 Requires TWS or IB Gateway running locally with API enabled. Set IB env vars in `.env` before running any script below.
 
+### Paper vs live accounts
+
+Use separate tracker databases for paper and live so the ledgers never mix. The `--tracker-db` flag overrides `IB_TRACKER_DB` per command, letting you run both simultaneously from different terminals.
+
+| Mode | `IB_PORT` | Tracker DB | Typical strategy name |
+|---|---|---|---|
+| Paper | `7497` | `data/ib_tracker_paper.duckdb` | `vw_gr_top_n_25` |
+| Live | `7496` | `data/ib_tracker_live.duckdb` | `fundamentals_alpha` |
+
+---
+
+### Paper trading pipeline — `vw_gr_top_n_25`
+
+Run on the last trading day of each month (before 15:50 ET for steps 3–4). Set `IB_PORT=7497` in `.env` for all paper commands.
+
+| Step | When | Command |
+|---|---|---|
+| 1. Generate scores | Morning | `uv run scripts/score_live.py --guardrails --vol-weight --top 25` |
+| 2. Preview rebalance | Midday | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb` |
+| 3. Submit MOC orders | Before 15:50 ET | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run` |
+| 4. Sync confirmed fills | After close (same session) | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb` |
+| 5. Update forward returns | 30+ days after first rebalance | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --update-forward-returns` |
+| 6. View report | Anytime | `snapshot_report(conn, "vw_gr_top_n_25")` in Jupyter |
+
+**One-time setup (before first rebalance):**
+
+```python
+from ib_trader.tracker import init_tracker_db, register_strategy, load_backtest_benchmarks
+
+conn = init_tracker_db("data/ib_tracker_paper.duckdb")
+register_strategy(conn, "vw_gr_top_n_25",
+                  description="Vol-weighted guardrails top-25, paper $100K",
+                  inception_date="2026-05-29", benchmark="SPY")
+load_backtest_benchmarks(conn, "vw_gr_top_n_25", "vw_gr_top_n_25", {
+    "cagr": 0.245, "ann_vol": 0.182, "sharpe": 1.35, "sortino": 1.62,
+    "max_dd": -0.216, "beta": 1.32, "alpha": 0.10, "win_rate": 0.67,
+})
+conn.close()
+```
+
+**Start at month-end.** The strategy is calibrated on month-end to month-end returns. Starting mid-month creates a partial first period that does not match the backtest methodology.
+
+---
+
+### Live trading pipeline — general workflow
+
+| Step | When | Command |
+|---|---|---|
+| 1. Generate scores | Morning | `uv run scripts/score_live.py --guardrails --vol-weight --top 25` |
+| 2. Preview rebalance | Midday | `uv run scripts/rebalance.py --strategy STRATEGY --tracker-db data/ib_tracker_live.duckdb` |
+| 3. Submit MOC orders | Before 15:50 ET | `uv run scripts/rebalance.py --strategy STRATEGY --tracker-db data/ib_tracker_live.duckdb --no-dry-run` |
+| 4. Sync confirmed fills | After close (same session) | `uv run scripts/sync_fills.py --strategy STRATEGY --tracker-db data/ib_tracker_live.duckdb` |
+| 5. Update forward returns | Monthly | `uv run scripts/sync_fills.py --strategy STRATEGY --tracker-db data/ib_tracker_live.duckdb --update-forward-returns` |
+
+Set `IB_PORT=7496` in `.env` when targeting the live account.
+
+---
+
 ### Step 1 — Generate live scores
 
 ```
-uv run scripts/score_live.py
+uv run scripts/score_live.py --guardrails --vol-weight --top 25
 ```
 
-Writes `docs/live_scores_YYYYMMDD.csv` with `alloc_pct` populated for the top-N portfolio positions. Always regenerate scores before rebalancing to ensure the allocation reflects the latest data and regime signal.
+Writes `docs/live_scores_YYYYMMDD_vw_gr_top_n_25.csv` with `alloc_pct` populated for the top-25 portfolio positions. Always regenerate scores before rebalancing to ensure the allocation reflects the latest data and regime signal.
+
+When `IB_TRACKER_DB` is set (or `--tracker-db` is passed to the downstream scripts), the score snapshot is recorded automatically for IC tracking.
 
 ### Step 2 — Preview the rebalance
 
 ```
-uv run scripts/rebalance.py
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
 ```
 
-Dry-run by default. Connects to TWS, fetches live prices, computes target shares from `alloc_pct × NAV / price` (whole shares, floor), diffs against current holdings, and prints a blotter. No orders are submitted.
-
-```
-uv run scripts/rebalance.py --scores docs/live_scores_20260519_vw_gr_top_n_25.csv
-```
+Dry-run by default. Connects to TWS, fetches live prices, computes target shares from `alloc_pct × NAV / price` (whole shares), diffs against current holdings, and prints a blotter. No orders are submitted.
 
 ### Step 3 — Submit orders
 
 ```
-uv run scripts/rebalance.py --no-dry-run
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run
 ```
 
 Cancels any open orders for affected tickers, then submits MOC orders for all buy/sell changes. Positions in current holdings that are not in the new portfolio are auto-exited (full SELL).
 
 **MOC cutoff:** orders must be submitted before 15:50 ET. A warning is printed if you run after 15:45 ET.
 
-**Portfolio tracker integration:** When `IB_TRACKER_DB` is set, `--no-dry-run` automatically records estimated fills (blotter quantities × live prices) and the post-rebalance NAV to the tracker database. The CSV closing price is stored alongside each fill as the reference price, enabling slippage calculation once actual IB fills are synced.
+Automatically records estimated fills (blotter quantities × live prices) and the post-rebalance NAV to the tracker database.
 
 ### Step 4 — Sync confirmed fills (same IB session)
 
 ```
-uv run scripts/sync_fills.py --strategy fundamentals_alpha
+uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
 ```
 
 Pulls actual execution records from IB (`reqExecutions`) and writes them to the tracker database with real exec IDs. Also records the current NAV. Run this in the same TWS session where orders were placed, as IB only returns fills from the current session.
 
 ```
-uv run scripts/sync_fills.py --strategy fundamentals_alpha --since 2026-01-01
-uv run scripts/sync_fills.py --strategy fundamentals_alpha --dry-run   # preview without writing
-uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
+uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --since 2026-01-01
+uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --dry-run
 ```
 
 ### Additional CLI flags
@@ -299,7 +354,7 @@ uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_trac
 | `--scores PATH` | Explicit scores CSV path (default: latest `docs/live_scores_*.csv`) |
 | `--dry-run` / `--no-dry-run` | Dry run (default) or live submission |
 | `--order-type MOC\|MKT\|LMT` | Order type (default: MOC) |
-| `--strategy TAG` | IB `orderRef` tag for order tracking (default: `fundamentals_alpha`) |
+| `--strategy TAG` | Strategy name written to IB `orderRef` and tracker DB |
 | `--tracker-db PATH` | Tracker DuckDB path (overrides `IB_TRACKER_DB` env var) |
 | `--status` | Print NAV, positions, open orders and exit |
 | `--cancel-all` | Cancel all open orders and exit |
@@ -333,27 +388,45 @@ Order types: `MOC` (default), `MKT`, `LMT`. Limit example: `sell MSFT 30 LMT 450
 
 ## Portfolio Tracker
 
-The portfolio tracker is a persistent DuckDB ledger (`data/ib_tracker.duckdb`) that records every fill, tracks FIFO tax lots, measures live risk-adjusted returns, and compares them against the backtest benchmark. It is optional — everything is conditional on `IB_TRACKER_DB` being set.
+The portfolio tracker is a persistent DuckDB ledger that records every fill, tracks FIFO tax lots, measures live risk-adjusted returns, and compares them against the backtest benchmark. It is optional — all integration is conditional on `IB_TRACKER_DB` being set or `--tracker-db` being passed.
+
+### Paper vs live databases
+
+Use separate databases for paper and live trading so the ledgers never mix. Each database is created automatically on first use.
+
+| Mode | Database path | `.env` setting |
+|---|---|---|
+| Paper | `data/ib_tracker_paper.duckdb` | `IB_TRACKER_DB=.../data/ib_tracker_paper.duckdb` |
+| Live | `data/ib_tracker_live.duckdb` | `IB_TRACKER_DB=.../data/ib_tracker_live.duckdb` |
+
+When running paper and live simultaneously from different terminals, use `--tracker-db` per command instead of relying on the env var:
+
+```
+# Paper terminal
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run
+
+# Live terminal
+uv run scripts/rebalance.py --strategy fundamentals_alpha --tracker-db data/ib_tracker_live.duckdb --no-dry-run
+```
 
 ### First-time setup
 
-Add to `.env`:
+Add to `.env` (use the paper path while paper trading):
 
 ```
-IB_TRACKER_DB=/home/pedro/projects/fin_import2/data/ib_tracker.duckdb
+IB_TRACKER_DB=/home/pedro/projects/fin_import2/data/ib_tracker_paper.duckdb
 IB_TRACKER_BENCHMARK=SPY
 ```
 
-The database is created automatically on the first run that needs it. No manual schema creation is required. Register your strategy once:
+Register each strategy once:
 
 ```python
-import duckdb, os
 from ib_trader.tracker import init_tracker_db, register_strategy
 
-conn = init_tracker_db()
-register_strategy(conn, "fundamentals_alpha",
-                  description="Composite fundamentals alpha (vw_gr_top_n_25)",
-                  inception_date="2026-01-01")
+conn = init_tracker_db("data/ib_tracker_paper.duckdb")
+register_strategy(conn, "vw_gr_top_n_25",
+                  description="Vol-weighted guardrails top-25, paper $100K",
+                  inception_date="2026-05-29", benchmark="SPY")
 conn.close()
 ```
 
