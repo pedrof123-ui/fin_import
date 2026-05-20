@@ -825,17 +825,9 @@ def main() -> None:
         docs_dir.mkdir(exist_ok=True)
         csv_path = docs_dir / f"live_scores_{out_date}_{port_label}.csv"
 
-    with open(csv_path, "w") as f:
-        f.write(f"# portfolio: {port_label}\n")
-        f.write(f"# run_date: {today}\n")
-        f.write(f"# scoring: {'xgboost' if use_model else 'composite'}\n")
-        f.write(f"# universe_size: {len(out_df)}\n")
-        f.write(f"# regime: {regime_label}\n")
-        f.write(f"# regime_exposure: {regime_exposure:.0%}\n")
-    _format_display(out_df).to_csv(csv_path, mode="a", index=False)
+    _format_display(out_df).to_csv(csv_path, index=False)
     log.info("Wrote %d rows to %s", len(out_df), csv_path)
     print(f"\nWrote {len(out_df)} rows to {csv_path}")
-    print("(Read with: pd.read_csv(path, comment='#'))")
 
     # Record score snapshot to tracker DB if configured
     tracker_db = os.getenv("IB_TRACKER_DB")

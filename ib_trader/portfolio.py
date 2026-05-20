@@ -19,12 +19,12 @@ def find_latest_scores(root: Path) -> Path | None:
 
 
 def load_scores_csv(path: str | Path) -> pd.DataFrame:
-    """Load a live_scores CSV (with # comment header).
+    """Load a live_scores CSV.
 
     Returns only portfolio rows (non-empty alloc_pct) with numeric columns.
     alloc_pct is returned as a float 0-100 (e.g. 2.0 = 2% of NAV).
     """
-    df = pd.read_csv(path, comment="#")
+    df = pd.read_csv(path)
 
     if "alloc_pct" not in df.columns:
         raise ValueError(f"alloc_pct column not found in {path}")
