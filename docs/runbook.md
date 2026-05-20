@@ -152,7 +152,7 @@ uv run scripts/run_backtest.py --guardrails --vol-weight --regime-filter
 uv run scripts/run_backtest.py --help
 ```
 
-Runs a non-overlapping monthly portfolio simulation. Computes CAGR, annualized volatility, Sharpe, max drawdown, beta to SPY, information ratio, tracking error, turnover, and transaction cost drag. Writes `docs/backtest_results.md`.
+Runs a non-overlapping monthly portfolio simulation. Computes CAGR, annualized volatility, Sharpe, max drawdown, beta to SPY, information ratio, tracking error, turnover, and transaction cost drag.
 
 Key flags:
 
@@ -165,7 +165,22 @@ Key flags:
 | `--tc-bps` | One-way transaction cost in basis points (default: 10) |
 | `--score-buffer` | IQR hysteresis buffer for existing holdings (default: 10%) |
 
-Recommended production portfolio variants (from 211-month backtest 2005-2025, 25-stock):
+**Results files** — each flag combination writes a separate file:
+
+| Command | Output file |
+|---|---|
+| `run_backtest.py` | `docs/backtest_results.md` — equal-weight composite baseline |
+| `run_backtest.py --guardrails --vol-weight` | `docs/backtest_results_guardrails.md` — `gr_*` and `vw_gr_*` variants (recommended) |
+| `run_backtest.py --model` | `docs/backtest_results_model.md` — XGBoost model, equal-weight |
+| `run_backtest.py --model --guardrails --vol-weight` | `docs/backtest_results_model_guardrails.md` — XGBoost model with guardrails |
+
+To view pre-computed results without re-running, open the file directly:
+
+```
+cat docs/backtest_results_guardrails.md
+```
+
+Recommended production portfolio variants (from the guardrails backtest, 211 months 2005–2025, 25-stock):
 
 | Portfolio | CAGR | Sharpe | MaxDD | Notes |
 |---|---|---|---|---|
