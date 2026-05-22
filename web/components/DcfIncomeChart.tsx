@@ -101,6 +101,9 @@ export default function DcfIncomeChart({ historical, proforma }: Props) {
                 const v = typeof value === "number" ? value : null;
                 return [v != null ? fmtBnTip(v) : "—", name];
               }}
+              itemSorter={(item) =>
+                ["revenue", "gross_profit", "ebit", "net_income"].indexOf(item.dataKey as string)
+              }
             />
             <Legend
               wrapperStyle={{ fontFamily: "monospace", fontSize: 10, color: "#71717a", paddingTop: 8 }}
