@@ -10,11 +10,12 @@ Forecast methodology:
   Revenue Y1-Y2: blended signal —
              50%/25% quarterly momentum (EWM of last-4-quarter YoY rates + linear trend)
              50%/75% annual EWM growth (exponentially weighted, half-life ~1.4 yrs).
-  Revenue Y3-Y5: fade from actual Y2 growth rate toward terminal growth rate, applied
-             after analyst estimates are resolved (see fade_y3_y5).
+  Revenue Y3-Y10: fade from actual Y2 growth rate toward terminal growth rate, applied
+             after analyst estimates are resolved (see fade_growth_years).
+             Y3 = 2/3 Y2 + 1/3 terminal, Y4 = 1/3 Y2 + 2/3 terminal, Y5-Y10 = terminal.
   P&L ratios (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean
-             applied flat across all 5 forecast years. Mean-reversion is the standard DCF
-             assumption — ratios are bounded by competitive dynamics over a 5-year horizon.
+             applied flat across all 10 forecast years. Mean-reversion is the standard DCF
+             assumption — ratios are bounded by competitive dynamics over a 10-year horizon.
   D&A and CapEx: normalized 5-year mean from the CF statement, applied flat across all
              growth years. CapEx/revenue and D&A/revenue are mean-reverting; extrapolating
              a spike would distort FCFF in the terminal period.
@@ -302,26 +303,26 @@ def forecast_assumptions(
     int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
     other_opex_flat = _mean_ratio(hist_other_opex, 0.0, 0.0, 0.8) if has_other_opex else 0.0
 
-    # Revenue Y3-Y5: placeholder using flat g_lr; overwritten by fade_y3_y5() in model.py
+    # Revenue Y3-Y10: placeholder using flat g_lr; overwritten by fade_growth_years() in model.py
     # after analyst estimates and user overrides are fully resolved.
-    rev_y3_5 = []
+    rev_y3_10 = []
     prev = rev_y2
-    for _ in range(3):
+    for _ in range(8):
         nxt = prev * (1 + g_lr)
-        rev_y3_5.append(nxt)
+        rev_y3_10.append(nxt)
         prev = nxt
 
-    rev_all = list(rev_y) + rev_y3_5
-    cogs_all = [cogs_flat] * 5
-    sga_all  = [sga_flat]  * 5
-    rd_all   = [rd_flat]   * 5 if has_rd else [None] * 5
-    int_all  = [int_flat]  * 5
-    other_opex_all = [other_opex_flat] * 5
+    rev_all = list(rev_y) + rev_y3_10
+    cogs_all = [cogs_flat] * 10
+    sga_all  = [sga_flat]  * 10
+    rd_all   = [rd_flat]   * 10 if has_rd else [None] * 10
+    int_all  = [int_flat]  * 10
+    other_opex_all = [other_opex_flat] * 10
 
     prev_rev = [last_rev] + list(rev_all)
 
     forecasts = []
-    for i in range(5):
+    for i in range(10):
         rev_i = float(rev_all[i])
         g = (rev_i - prev_rev[i]) / prev_rev[i] if prev_rev[i] != 0 else 0.0
         forecasts.append(
@@ -344,19 +345,21 @@ def forecast_assumptions(
     return forecasts
 
 
-def fade_y3_y5(year_forecasts: list, terminal_growth: float, overrides) -> list:
+def fade_growth_years(year_forecasts: list, terminal_growth: float, overrides) -> list:
     """
-    Fade Y3-Y5 revenue growth from the final Y2 growth rate toward terminal_growth.
+    Fade Y3+ revenue growth from the final Y2 growth rate toward terminal_growth.
+    Y3 = 2/3 Y2 + 1/3 terminal, Y4 = 1/3 Y2 + 2/3 terminal, Y5+ = terminal.
     Called after analyst estimates and user overrides are fully applied.
     Skips any year the user has explicitly overridden.
     """
     g_y2 = year_forecasts[1].revenue_growth
-    weights = [(2/3, 1/3), (1/3, 2/3), (0.0, 1.0)]  # (w_y2, w_terminal) for Y3, Y4, Y5
+    _early_weights = [(2/3, 1/3), (1/3, 2/3)]  # Y3, Y4
     prev_rev = year_forecasts[1].revenue
-    for yf, (w_y2, w_tg) in zip(year_forecasts[2:], weights):
+    for i, yf in enumerate(year_forecasts[2:]):
         if _has_rev_override(overrides, yf.year):
             prev_rev = yf.revenue
             continue
+        w_y2, w_tg = _early_weights[i] if i < len(_early_weights) else (0.0, 1.0)
         g = w_y2 * g_y2 + w_tg * terminal_growth
         yf.revenue_growth = float(g)
         yf.revenue = float(prev_rev * (1 + g))

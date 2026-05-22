@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { DcfData, RunRequest, YearOverrideBody, YearRowState } from "@/lib/dcf-types";
-import { parsePct } from "@/lib/formatField";
+import { parseBn, parsePct } from "@/lib/formatField";
+import { API } from "@/lib/config";
 import DcfSummary from "./DcfSummary";
 import DcfFcffTable from "./DcfFcffTable";
 import DcfStatements from "./DcfStatements";
@@ -12,7 +13,30 @@ import DcfTerminalValue from "./DcfTerminalValue";
 import DcfQuarterly from "./DcfQuarterly";
 import EarningsEstimates from "./EarningsEstimates";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+function fmtBn(v: number | null | undefined): string {
+  if (v == null) return "";
+  return (Math.abs(v) / 1e9).toFixed(2) + "B";
+}
+
+function buildYearRows(
+  year_forecasts: DcfData["year_forecasts"],
+  proforma: DcfData["proforma"],
+): Record<number, YearRowState> {
+  const r: Record<number, YearRowState> = {};
+  for (let i = 0; i < year_forecasts.length; i++) {
+    const yf = year_forecasts[i];
+    const pf = proforma[i];
+    r[yf.year] = {
+      revenue:      fmtBn(pf?.revenue),
+      gross_profit: fmtBn(pf?.gross_profit),
+      sga:          fmtBn(pf?.selling_general_admin),
+      rd:           fmtBn(pf?.research_development),
+      da:           fmtBn(pf?.depreciation_amortization),
+      capex:        fmtBn(pf?.capital_expenditures),
+    };
+  }
+  return r;
+}
 
 type ModelDefaults = {
   yearRows: Record<number, YearRowState>;
@@ -59,24 +83,11 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
       const d = json as DcfData;
       setData(d);
 
-      const r: Record<number, YearRowState> = {};
-      for (const yf of d.year_forecasts) {
-        r[yf.year] = {
-          revenue_growth:    (yf.revenue_growth    * 100).toFixed(1),
-          cogs_pct:          (yf.cogs_pct           * 100).toFixed(1),
-          sga_pct:           (yf.sga_pct            * 100).toFixed(1),
-          rd_pct:            yf.rd_pct !== null ? (yf.rd_pct * 100).toFixed(1) : "",
-          interest_pct:      (yf.interest_pct       * 100).toFixed(1),
-          other_pct:         (yf.other_pct          * 100).toFixed(1),
-          capex_pct_revenue: (yf.capex_pct_revenue  * 100).toFixed(1),
-        };
-      }
+      const r = buildYearRows(d.year_forecasts, d.proforma);
 
-      // Initialize quarter revenues (non-actuals) as billions strings
+      // Start empty: only user-edited quarters are sent as overrides.
+      // DcfQuarterly falls back to y1_quarters API data for display.
       const qr: Record<number, string> = {};
-      (d.y1_quarters ?? []).forEach((q, i) => {
-        if (!q.is_actual && q.revenue != null) qr[i + 1] = (q.revenue / 1e9).toFixed(2);
-      });
 
       const defaults: ModelDefaults = {
         yearRows:      r,
@@ -118,8 +129,12 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
 
   function handleReset() {
     const d = modelDefaultsRef.current;
-    if (!d) return;
-    setYearRows(d.yearRows);
+    const initData = initialDataRef.current;
+    if (!d || !initData) return;
+    const initRows = buildYearRows(initData.year_forecasts, initData.proforma);
+    setYearRows(initRows);
+    // Reset baseline so next Update compares against original values
+    modelDefaultsRef.current = { ...d, yearRows: initRows };
     setQuarterRevenues(d.quarterRevenues);
     setTerminalGrowth(d.terminalGrowth);
     setRf(d.rf);
@@ -130,28 +145,66 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
     setDso(d.dso);
     setDpo(d.dpo);
     setDio(d.dio);
-    if (initialDataRef.current) setData(initialDataRef.current);
+    setData(initData);
   }
 
   async function handleUpdate() {
-    if (!ticker) return;
+    if (!ticker || !data) return;
     setLoading(true);
     setError(null);
     try {
       const years: Record<string, YearOverrideBody> = {};
-      for (const [year, row] of Object.entries(yearRows)) {
-        const defaultRow = modelDefaultsRef.current?.yearRows[parseInt(year)];
-        const revGrowthChanged = !defaultRow || row.revenue_growth !== defaultRow.revenue_growth;
-        years[year] = {
-          revenue_growth:    revGrowthChanged ? parsePct(row.revenue_growth) : undefined,
-          cogs_pct:          parsePct(row.cogs_pct),
-          sga_pct:           parsePct(row.sga_pct),
-          rd_pct:            row.rd_pct !== "" ? parsePct(row.rd_pct) : undefined,
-          interest_pct:      parsePct(row.interest_pct),
-          other_pct:         parsePct(row.other_pct),
-          capex_pct_revenue: parsePct(row.capex_pct_revenue),
-        };
+
+      // data.historical is sorted newest-to-oldest (DESC from API), so [0] is the most recent year.
+      // That is the correct base for the Y1 revenue growth calculation.
+      const histRevenue = data.historical[0]?.revenue ?? 0;
+
+      for (const [yearStr, row] of Object.entries(yearRows)) {
+        const yearNum = parseInt(yearStr);
+        const defaultRow = modelDefaultsRef.current?.yearRows[yearNum];
+
+        const revChanged   = row.revenue      !== defaultRow?.revenue;
+        const gpChanged    = row.gross_profit !== defaultRow?.gross_profit;
+        const sgaChanged   = row.sga          !== defaultRow?.sga;
+        const rdChanged    = row.rd           !== defaultRow?.rd;
+        const daChanged    = row.da           !== defaultRow?.da;
+        const capexChanged = row.capex        !== defaultRow?.capex;
+
+        if (!revChanged && !gpChanged && !sgaChanged && !rdChanged && !daChanged && !capexChanged) continue;
+
+        const thisRevenue = parseBn(row.revenue);
+        const thisGP      = parseBn(row.gross_profit);
+
+        // Previous year revenue: use Y(n-1) from current yearRows state (which was initialised
+        // from the model proforma and reflects any user edits to prior years).
+        const prevRevenue = yearNum === 1
+          ? histRevenue
+          : parseBn(yearRows[yearNum - 1]?.revenue ?? "0");
+
+        const override: YearOverrideBody = {};
+
+        // Only send revenue_growth when revenue itself changed (otherwise fade_growth_years
+        // would treat this as a user override and skip its blending logic).
+        if (revChanged && prevRevenue && isFinite(thisRevenue / prevRevenue)) {
+          override.revenue_growth = thisRevenue / prevRevenue - 1;
+        }
+        if (thisRevenue > 0) {
+          // Guard cogs_pct: when company doesn't report a COGS breakdown, gross_profit is null
+          // and gross_profit row state is "". Sending cogs_pct = 1.0 in that case would break EBIT.
+          if (row.gross_profit !== "") {
+            override.cogs_pct = (thisRevenue - thisGP) / thisRevenue;
+          }
+          override.sga_pct           = parseBn(row.sga) / thisRevenue;
+          override.capex_pct_revenue = parseBn(row.capex) / thisRevenue;
+          override.da_pct            = parseBn(row.da) / thisRevenue;
+          if (row.rd) {
+            override.rd_pct = parseBn(row.rd) / thisRevenue;
+          }
+        }
+
+        years[yearStr] = override;
       }
+
       const qRevRaw: Record<string, number> = {};
       for (const [k, v] of Object.entries(quarterRevenues)) {
         const n = parseFloat(v) * 1e9;
@@ -180,21 +233,8 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
       const d = json as DcfData;
       setData(d);
 
-      // Re-sync yearRows and modelDefaults from the response so that
-      // analyst-estimated growth rates (and any other model-computed fields)
-      // are reflected in the editable inputs, not just in the proforma revenues.
-      const updatedRows: Record<number, YearRowState> = {};
-      for (const yf of d.year_forecasts) {
-        updatedRows[yf.year] = {
-          revenue_growth:    (yf.revenue_growth    * 100).toFixed(1),
-          cogs_pct:          (yf.cogs_pct           * 100).toFixed(1),
-          sga_pct:           (yf.sga_pct            * 100).toFixed(1),
-          rd_pct:            yf.rd_pct !== null ? (yf.rd_pct * 100).toFixed(1) : "",
-          interest_pct:      (yf.interest_pct       * 100).toFixed(1),
-          other_pct:         (yf.other_pct          * 100).toFixed(1),
-          capex_pct_revenue: (yf.capex_pct_revenue  * 100).toFixed(1),
-        };
-      }
+      // Re-sync yearRows and modelDefaults from the response.
+      const updatedRows = buildYearRows(d.year_forecasts, d.proforma);
       setYearRows(updatedRows);
       if (modelDefaultsRef.current) {
         modelDefaultsRef.current = { ...modelDefaultsRef.current, yearRows: updatedRows };

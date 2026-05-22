@@ -36,6 +36,7 @@ export interface YearForecast {
   interest_pct: number;
   other_pct: number;
   capex_pct_revenue: number;
+  da_pct: number;
 }
 
 export interface FcffYear {
@@ -113,14 +114,14 @@ export interface DcfData {
   analyst_estimates: EarningsEstimate[];
 }
 
+// Absolute dollar amounts in billions (e.g. "450.23B"). Empty string when not applicable (e.g. no R&D).
 export interface YearRowState {
-  revenue_growth: string;
-  cogs_pct: string;
-  sga_pct: string;
-  rd_pct: string;        // empty string when company has no R&D
-  interest_pct: string;
-  other_pct: string;
-  capex_pct_revenue: string;
+  revenue: string;
+  gross_profit: string;
+  sga: string;
+  rd: string;
+  da: string;
+  capex: string;
 }
 
 export interface YearOverrideBody {
@@ -131,6 +132,7 @@ export interface YearOverrideBody {
   interest_pct?: number;
   other_pct?: number;
   capex_pct_revenue?: number;
+  da_pct?: number;
 }
 
 export interface RunRequest {

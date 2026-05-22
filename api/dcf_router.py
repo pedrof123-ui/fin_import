@@ -32,10 +32,11 @@ class YearOverrideBody(BaseModel):
     interest_pct: float | None = None
     other_pct: float | None = None
     capex_pct_revenue: float | None = None
+    da_pct: float | None = None
 
 
 class RunRequest(BaseModel):
-    years: dict[str, YearOverrideBody] = {}   # keys "1"–"5" (JSON strings)
+    years: dict[str, YearOverrideBody] = {}   # keys "1"–"10" (JSON strings)
     terminal_growth_rate: float | None = None
     risk_free_rate: float | None = None
     market_risk_premium: float | None = None
@@ -73,6 +74,7 @@ def _build_overrides(req: RunRequest) -> UserOverrides:
             interest_pct=v.interest_pct,
             other_pct=v.other_pct,
             capex_pct_revenue=v.capex_pct_revenue,
+            da_pct=v.da_pct,
         )
         for k, v in req.years.items()
     }

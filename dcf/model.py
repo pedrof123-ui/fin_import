@@ -517,7 +517,7 @@ def run_dcf(
     from dcf.assumptions import DcfResult
     from dcf.data import load_quarterly_financials, load_annual_financials, load_current_price, load_risk_free_rate
     from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
-    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, fade_y3_y5
+    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, fade_growth_years
 
     quarterly = load_quarterly_financials(db, ticker)
     annual = load_annual_financials(db, ticker)
@@ -667,8 +667,8 @@ def run_dcf(
                 yf.revenue = prev * (1 + yf.revenue_growth)
                 prev = yf.revenue
 
-    # Y3-Y5: fade from final Y2 growth toward terminal growth (applied after all Y1/Y2 are settled)
-    year_forecasts = fade_y3_y5(year_forecasts, terminal_growth, overrides)
+    # Y3-Y10: fade from final Y2 growth toward terminal growth (applied after all Y1/Y2 are settled)
+    year_forecasts = fade_growth_years(year_forecasts, terminal_growth, overrides)
 
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,
