@@ -11,6 +11,7 @@ import DcfSensitivity from "./DcfSensitivity";
 import DcfNwcCapex from "./DcfNwcCapex";
 import DcfTerminalValue from "./DcfTerminalValue";
 import DcfQuarterly from "./DcfQuarterly";
+import DcfIncomeChart from "./DcfIncomeChart";
 import EarningsEstimates from "./EarningsEstimates";
 
 function fmtBn(v: number | null | undefined): string {
@@ -27,12 +28,12 @@ function buildYearRows(
     const yf = year_forecasts[i];
     const pf = proforma[i];
     r[yf.year] = {
-      revenue:      fmtBn(pf?.revenue),
-      gross_profit: fmtBn(pf?.gross_profit),
-      sga:          fmtBn(pf?.selling_general_admin),
-      rd:           fmtBn(pf?.research_development),
-      da:           fmtBn(pf?.depreciation_amortization),
-      capex:        fmtBn(pf?.capital_expenditures),
+      revenue: fmtBn(pf?.revenue),
+      cogs:    fmtBn(pf?.cost_of_revenue),
+      sga:     fmtBn(pf?.selling_general_admin),
+      rd:      fmtBn(pf?.research_development),
+      da:      fmtBn(pf?.depreciation_amortization),
+      capex:   fmtBn(pf?.capital_expenditures),
     };
   }
   return r;
@@ -167,17 +168,17 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         const yearNum = parseInt(yearStr);
         const defaultRow = modelDefaultsRef.current?.yearRows[yearNum];
 
-        const revChanged   = row.revenue      !== defaultRow?.revenue;
-        const gpChanged    = row.gross_profit !== defaultRow?.gross_profit;
-        const sgaChanged   = row.sga          !== defaultRow?.sga;
-        const rdChanged    = row.rd           !== defaultRow?.rd;
-        const daChanged    = row.da           !== defaultRow?.da;
-        const capexChanged = row.capex        !== defaultRow?.capex;
+        const revChanged   = row.revenue !== defaultRow?.revenue;
+        const cogsChanged  = row.cogs    !== defaultRow?.cogs;
+        const sgaChanged   = row.sga    !== defaultRow?.sga;
+        const rdChanged    = row.rd     !== defaultRow?.rd;
+        const daChanged    = row.da     !== defaultRow?.da;
+        const capexChanged = row.capex  !== defaultRow?.capex;
 
-        if (!revChanged && !gpChanged && !sgaChanged && !rdChanged && !daChanged && !capexChanged) continue;
+        if (!revChanged && !cogsChanged && !sgaChanged && !rdChanged && !daChanged && !capexChanged) continue;
 
         const thisRevenue = parseBn(row.revenue);
-        const thisGP      = parseBn(row.gross_profit);
+        const thisCogs    = parseBn(row.cogs);
 
         const delta: YearOverrideBody = {};
 
@@ -185,8 +186,8 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
           delta.revenue = thisRevenue;
         }
         if (thisRevenue > 0) {
-          if (gpChanged && row.gross_profit !== "") {
-            delta.cogs_pct = (thisRevenue - thisGP) / thisRevenue;
+          if (cogsChanged && row.cogs !== "") {
+            delta.cogs_pct = thisCogs / thisRevenue;
           }
           if (sgaChanged)   delta.sga_pct           = parseBn(row.sga)   / thisRevenue;
           if (capexChanged) delta.capex_pct_revenue = parseBn(row.capex) / thisRevenue;
@@ -409,6 +410,8 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         }
         onCommit={triggerUpdate}
       />
+
+      <DcfIncomeChart historical={historical} proforma={data.proforma} />
 
       <EarningsEstimates
         estimates={data.analyst_estimates ?? []}

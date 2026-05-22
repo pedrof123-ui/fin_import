@@ -117,7 +117,7 @@ export interface DcfData {
 // Absolute dollar amounts in billions (e.g. "450.23B"). Empty string when not applicable (e.g. no R&D).
 export interface YearRowState {
   revenue: string;
-  gross_profit: string;
+  cogs: string;      // editable; gross_profit is derived server-side
   sga: string;
   rd: string;
   da: string;

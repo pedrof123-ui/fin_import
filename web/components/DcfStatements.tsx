@@ -8,7 +8,6 @@ import { blurFormat, focusStrip } from "@/lib/formatField";
 // Sub-row kinds — derived ones are read-only; "sga" and "rd" are editable dollar sub-rows.
 type SubRowKind =
   | "revGrowth"        // derived %
-  | "cogsMargin"       // derived %
   | "grossMargin"      // derived %
   | "sga"              // editable $ (SG&A absolute)
   | "rd"               // editable $ (R&D absolute)
@@ -28,14 +27,15 @@ interface RowDef {
 }
 
 const ROWS: RowDef[] = [
-  { key: "revenue",                   label: "Revenue",            isKey: true, editableProformaField: "revenue",      subRows: ["revGrowth"]                    },
-  { key: "gross_profit",              label: "Gross Profit",       isKey: true, editableProformaField: "gross_profit", subRows: ["cogsMargin", "grossMargin"]    },
-  { key: "operating_income",          label: "EBIT",               isKey: true,                                        subRows: ["sga", "rd", "opMargin"]       },
-  { key: "ebitda",                    label: "EBITDA",             isKey: true,                                        subRows: ["ebitdaMargin"]                },
-  { key: "income_tax_expense",        label: "Income Tax",                                                              subRows: ["effectiveTaxRate"]            },
-  { key: "net_income",                label: "Net Income",         isKey: true,                                        subRows: ["netIncomeMargin"]             },
-  { key: "depreciation_amortization", label: "D&A",                             editableProformaField: "da"                                                      },
-  { key: "capital_expenditures",      label: "CapEx",                           editableProformaField: "capex",        subRows: ["capexPct"]                   },
+  { key: "revenue",                   label: "Revenue",      isKey: true, editableProformaField: "revenue", subRows: ["revGrowth"]          },
+  { key: "cost_of_revenue",           label: "COGS",                      editableProformaField: "cogs"                                      },
+  { key: "gross_profit",              label: "Gross Profit", isKey: true,                                  subRows: ["grossMargin"]          },
+  { key: "operating_income",          label: "EBIT",         isKey: true,                                  subRows: ["sga", "rd", "opMargin"]},
+  { key: "ebitda",                    label: "EBITDA",       isKey: true,                                  subRows: ["ebitdaMargin"]         },
+  { key: "income_tax_expense",        label: "Income Tax",                                                  subRows: ["effectiveTaxRate"]    },
+  { key: "net_income",                label: "Net Income",   isKey: true,                                  subRows: ["netIncomeMargin"]      },
+  { key: "depreciation_amortization", label: "D&A",                       editableProformaField: "da"                                        },
+  { key: "capital_expenditures",      label: "CapEx",                     editableProformaField: "capex",   subRows: ["capexPct"]            },
   { key: "total_assets",              label: "Total Assets" },
   { key: "total_debt",                label: "Total Debt" },
   { key: "cash_and_equivalents",      label: "Cash & Equivalents" },
@@ -44,7 +44,6 @@ const ROWS: RowDef[] = [
 
 const SUB_LABEL: Record<SubRowKind, string> = {
   revGrowth:        "Rev Growth %",
-  cogsMargin:       "COGS %",
   grossMargin:      "Gross Margin %",
   sga:              "SG&A",
   rd:               "R&D",
@@ -60,17 +59,16 @@ const DOLLAR_SUB_ROWS = new Set<SubRowKind>(["sga", "rd"]);
 
 // Sub-rows that are always read-only derived ratios.
 const DERIVED_SUB_ROWS = new Set<SubRowKind>([
-  "revGrowth", "cogsMargin", "grossMargin", "opMargin",
+  "revGrowth", "grossMargin", "opMargin",
   "ebitdaMargin", "effectiveTaxRate", "netIncomeMargin", "capexPct",
 ]);
 
 // Grid rows for keyboard navigation:
-// 0 = Revenue main cell, 1 = Gross Profit main cell, 2 = SGA sub-row,
-// 3 = R&D sub-row, 4 = D&A main cell, 5 = CapEx main cell
+// 0 = Revenue, 1 = COGS, 2 = SG&A sub-row, 3 = R&D sub-row, 4 = D&A, 5 = CapEx
 const GRID_ROWS = 6;
 const MAIN_ROW_GRID: Partial<Record<keyof HistoricalRow, number>> = {
   revenue:                   0,
-  gross_profit:              1,
+  cost_of_revenue:           1,
   depreciation_amortization: 4,
   capital_expenditures:      5,
 };
@@ -85,10 +83,6 @@ function computeHistSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Histor
   switch (kind) {
     case "revGrowth":
       return prevCol?.revenue ? col.revenue! / prevCol.revenue! - 1 : null;
-    case "cogsMargin":
-      if (col.cost_of_revenue != null) return col.cost_of_revenue / rev;
-      if (col.gross_profit != null) return (rev - col.gross_profit) / rev;
-      return null;
     case "grossMargin":
       return col.gross_profit != null ? col.gross_profit / rev : null;
     case "opMargin":
@@ -103,7 +97,6 @@ function computeHistSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Histor
       return col.net_income != null ? col.net_income / rev : null;
     case "capexPct":
       return col.capital_expenditures != null ? Math.abs(col.capital_expenditures) / rev : null;
-    // dollar sub-rows — handled separately in render
     case "sga":
     case "rd":
       return null;
@@ -115,8 +108,6 @@ function computeProformaSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Hi
   if (!rev) return null;
   switch (kind) {
     case "revGrowth":        return prevCol?.revenue ? col.revenue! / prevCol.revenue! - 1 : null;
-    case "cogsMargin":       return col.cost_of_revenue != null ? col.cost_of_revenue / rev
-                               : col.gross_profit != null ? (rev - col.gross_profit) / rev : null;
     case "grossMargin":      return col.gross_profit != null ? col.gross_profit / rev : null;
     case "opMargin":         return col.operating_income != null ? col.operating_income / rev : null;
     case "ebitdaMargin":     return col.ebitda != null ? col.ebitda / rev : null;
@@ -256,6 +247,14 @@ export default function DcfStatements({
                     {/* Proforma columns — editable when editableProformaField is set */}
                     {proforma.map((col, pi) => {
                       if (editableProformaField) {
+                        // Suppress COGS input for service companies that don't report COGS
+                        if (editableProformaField === "cogs" && col.cost_of_revenue == null) {
+                          return (
+                            <td key={col.period_label} className="px-4 py-2 text-right tabular-nums text-[11px] text-zinc-700">
+                              —
+                            </td>
+                          );
+                        }
                         const fieldVal = yearRows[pi + 1]?.[editableProformaField] ?? "";
                         return (
                           <td key={col.period_label} className="px-3 py-0.5">
