@@ -281,14 +281,25 @@ def _build_y1_quarter_rows(
     prior_q_inc = inc_q[prior_mask.values].sort_values("period_end_date").reset_index(drop=True)
     prior_annual_rev = _val(last_annual_inc, "revenue") or 0.0
 
-    def _is_ytd(rows: pd.DataFrame) -> bool:
-        """True if revenues monotonically non-decrease — indicates YTD/cumulative filing."""
-        revs = [_val(rows.iloc[i], "revenue") or 0.0 for i in range(min(len(rows), 4))]
-        return len(revs) >= 2 and all(revs[i] >= revs[i - 1] * 0.95 for i in range(1, len(revs)))
+    def _is_ytd(rows: pd.DataFrame, annual_rev: float = 0) -> bool:
+        """True if revenues are YTD-cumulative, False if standalone quarterly.
 
-    # Use per-dataset YTD flags to avoid false positives from seasonal high-Q1 filers
-    ytd_prior = _is_ytd(prior_q_inc)
-    ytd_y1 = _is_ytd(y1_actuals_inc) if n_actuals > 1 else False
+        Uses sum-vs-annual ratio when annual_rev is known (most reliable):
+          standalone 3 qtrs ≈ 0.75 × annual; YTD 3 qtrs ≈ 1.5 × annual.
+        Falls back to requiring >30% step-wise increase when annual is unavailable.
+        """
+        revs = [_val(rows.iloc[i], "revenue") or 0.0 for i in range(min(len(rows), 4))]
+        if len(revs) < 2:
+            return False
+        if annual_rev > 0:
+            return sum(revs) / annual_rev > 1.1
+        return all(revs[i] >= revs[i - 1] * 1.3 for i in range(1, len(revs)))
+
+    annual_model_rev = float(year_forecast_y1.revenue)
+
+    # Use per-dataset YTD flags; pass annual_rev for reliable standalone vs YTD detection
+    ytd_prior = _is_ytd(prior_q_inc, prior_annual_rev)
+    ytd_y1 = _is_ytd(y1_actuals_inc, annual_model_rev) if n_actuals > 1 else False
 
     def _standalone_revs(rows: pd.DataFrame, annual_rev: float, is_ytd: bool) -> list:
         revs = [_val(rows.iloc[i], "revenue") or 0.0 for i in range(len(rows))]
@@ -315,7 +326,6 @@ def _build_y1_quarter_rows(
     seasonality = [r / total_prior for r in prior_standalone] if total_prior > 0 else [0.25] * 4
 
     # Base estimated quarterly revenues from seasonality applied to annual model forecast
-    annual_model_rev = float(year_forecast_y1.revenue)
     quarterly_revs = [annual_model_rev * s for s in seasonality]
 
     # Apply user quarterly revenue overrides (only for estimated quarters)
@@ -517,7 +527,7 @@ def run_dcf(
     from dcf.assumptions import DcfResult
     from dcf.data import load_quarterly_financials, load_annual_financials, load_current_price, load_risk_free_rate
     from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
-    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, fade_growth_years
+    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, extend_growth_years
 
     quarterly = load_quarterly_financials(db, ticker)
     annual = load_annual_financials(db, ticker)
@@ -667,8 +677,8 @@ def run_dcf(
                 yf.revenue = prev * (1 + yf.revenue_growth)
                 prev = yf.revenue
 
-    # Y3-Y10: fade from final Y2 growth toward terminal growth (applied after all Y1/Y2 are settled)
-    year_forecasts = fade_growth_years(year_forecasts, terminal_growth, overrides)
+    # Y3-Y10: carry forward Y2 growth (applied after all Y1/Y2 are settled)
+    year_forecasts = extend_growth_years(year_forecasts, overrides)
 
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,

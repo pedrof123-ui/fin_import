@@ -4,8 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import ImportForm from "@/components/ImportForm";
 import StatementViewer from "@/components/StatementViewer";
 import DcfViewer from "@/components/DcfViewer";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";

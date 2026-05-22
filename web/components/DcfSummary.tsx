@@ -34,6 +34,7 @@ interface Props {
   onBetaChange: (v: string) => void;
   onCodChange: (v: string) => void;
   onTaxRateChange: (v: string) => void;
+  onCommit?: () => void;
 }
 
 // WACC card editable fields in navigation order: rf, mrp, beta, cod, taxRate
@@ -43,6 +44,7 @@ export default function DcfSummary({
   data,
   terminalGrowth, rf, mrp, beta, cod, taxRate,
   onTerminalGrowthChange, onRfChange, onMrpChange, onBetaChange, onCodChange, onTaxRateChange,
+  onCommit,
 }: Props) {
   const { intrinsic_value_per_share: iv, current_price: price, upside_pct: upside, wacc_detail: w } = data;
   const isUnder = price !== null && iv < price;
@@ -108,7 +110,8 @@ export default function DcfSummary({
               value={terminalGrowth}
               onChange={(e) => onTerminalGrowthChange(e.target.value)}
               onFocus={(e) => onTerminalGrowthChange(focusStrip(e.target.value))}
-              onBlur={(e) => onTerminalGrowthChange(blurFormat(e.target.value, "pct"))}
+              onBlur={(e) => { onTerminalGrowthChange(blurFormat(e.target.value, "pct")); onCommit?.(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             />
           </div>
         </div>
@@ -134,8 +137,8 @@ export default function DcfSummary({
               ref={(el) => { waccRefs.current[0] = el; }}
               onChange={(e) => onRfChange(e.target.value)}
               onFocus={(e) => onRfChange(focusStrip(e.target.value))}
-              onBlur={(e) => onRfChange(blurFormat(e.target.value, "pct"))}
-              onKeyDown={(e) => waccKeyDown(0, e)}
+              onBlur={(e) => { onRfChange(blurFormat(e.target.value, "pct")); onCommit?.(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(0, e); }}
             />
           </div>
           <div className="text-zinc-500">Mkt Risk Premium %</div>
@@ -146,8 +149,8 @@ export default function DcfSummary({
               ref={(el) => { waccRefs.current[1] = el; }}
               onChange={(e) => onMrpChange(e.target.value)}
               onFocus={(e) => onMrpChange(focusStrip(e.target.value))}
-              onBlur={(e) => onMrpChange(blurFormat(e.target.value, "pct"))}
-              onKeyDown={(e) => waccKeyDown(1, e)}
+              onBlur={(e) => { onMrpChange(blurFormat(e.target.value, "pct")); onCommit?.(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(1, e); }}
             />
           </div>
           <div className="text-zinc-500">Beta (raw / re-levered)</div>
@@ -157,8 +160,8 @@ export default function DcfSummary({
               value={beta}
               ref={(el) => { waccRefs.current[2] = el; }}
               onChange={(e) => onBetaChange(e.target.value)}
-              onBlur={(e) => onBetaChange(blurFormat(e.target.value, "decimal"))}
-              onKeyDown={(e) => waccKeyDown(2, e)}
+              onBlur={(e) => { onBetaChange(blurFormat(e.target.value, "decimal")); onCommit?.(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(2, e); }}
             />
             <span className="text-zinc-600">/ {w.beta_relevered.toFixed(2)}</span>
           </div>
@@ -172,8 +175,8 @@ export default function DcfSummary({
               ref={(el) => { waccRefs.current[3] = el; }}
               onChange={(e) => onCodChange(e.target.value)}
               onFocus={(e) => onCodChange(focusStrip(e.target.value))}
-              onBlur={(e) => onCodChange(blurFormat(e.target.value, "pct"))}
-              onKeyDown={(e) => waccKeyDown(3, e)}
+              onBlur={(e) => { onCodChange(blurFormat(e.target.value, "pct")); onCommit?.(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(3, e); }}
             />
           </div>
           <div className="text-zinc-500">Tax Rate %</div>
@@ -184,8 +187,8 @@ export default function DcfSummary({
               ref={(el) => { waccRefs.current[4] = el; }}
               onChange={(e) => onTaxRateChange(e.target.value)}
               onFocus={(e) => onTaxRateChange(focusStrip(e.target.value))}
-              onBlur={(e) => onTaxRateChange(blurFormat(e.target.value, "pct"))}
-              onKeyDown={(e) => waccKeyDown(4, e)}
+              onBlur={(e) => { onTaxRateChange(blurFormat(e.target.value, "pct")); onCommit?.(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(4, e); }}
             />
           </div>
           <div className="text-zinc-500">Debt / Equity Weight</div>

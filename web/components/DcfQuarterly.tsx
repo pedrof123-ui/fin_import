@@ -119,6 +119,7 @@ interface Props {
   lastHistorical: HistoricalRow | null;
   quarterRevenues: Record<number, string>;
   onQuarterRevenueChange: (qNum: number, value: string) => void;
+  onCommit?: () => void;
 }
 
 export default function DcfQuarterly({
@@ -126,6 +127,7 @@ export default function DcfQuarterly({
   lastHistorical,
   quarterRevenues,
   onQuarterRevenueChange,
+  onCommit,
 }: Props) {
   if (!y1Quarters.length) return null;
 
@@ -263,7 +265,9 @@ export default function DcfQuarterly({
                                 onBlur={(e) => {
                                   const n = parseFloat(e.target.value.replace(/[^0-9.-]/g, ""));
                                   onQuarterRevenueChange(qNum, isNaN(n) ? strVal : n.toFixed(2) + "B");
+                                  onCommit?.();
                                 }}
+                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                               />
                             </td>
                           );

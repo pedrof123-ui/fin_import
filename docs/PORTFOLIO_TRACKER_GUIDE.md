@@ -75,7 +75,9 @@ Run on the last trading day of each month before 15:50 ET. Use `--tracker-db` to
 | 2. Preview rebalance | Midday | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb` |
 | 3. Submit MOC orders | Before 15:50 ET | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run` |
 | 4. Sync confirmed fills | After close (same TWS session) | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb` |
-| 5. Update forward returns | 30+ days after first rebalance | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --update-forward-returns` |
+| 5. Update forward returns | After step 4, every month | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --update-forward-returns` |
+
+Step 5 backfills the **prior month's** score snapshots with the 30-day returns that have since occurred. Run it after step 4 each month — it has no time pressure and does not require TWS to be open. It skips rows already filled, so running it more than once is harmless. It will find nothing to update the first month (no snapshot is yet 30 days old); from month 2 onward it fills in the previous month's IC data.
 
 ### Live trading — general pattern
 
@@ -88,7 +90,7 @@ Replace `vw_gr_top_n_25` with the live strategy name and `ib_tracker_paper.duckd
 | Step 1 (`score_live.py`) | `record_score_snapshot()` | Ticker ranks, scores, prices — IC reference |
 | Step 3 (`--no-dry-run`) | `record_fills_from_blotter()`, `record_nav()` | Estimated fills + post-rebalance NAV |
 | Step 4 (`sync_fills.py`) | `sync_ib_fills()`, `record_nav()` | Confirmed fills with real exec IDs + current NAV |
-| Step 5 (`--update-forward-returns`) | `update_forward_returns()` | 30-day forward returns for IC calculation |
+| Step 5 (`--update-forward-returns`) | `update_forward_returns()` | 30-day forward returns for prior month's score snapshots (IC calculation) |
 
 Step 3 fills are estimates (blotter qty × live IB price). Step 4 overwrites them with IB's actual execution records, enabling accurate slippage calculation.
 

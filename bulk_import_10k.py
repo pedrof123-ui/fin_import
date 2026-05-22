@@ -38,6 +38,7 @@ from extractors.cash_flow_extractor import extract_cash_flow
 from financial_statements_db import FinancialStatementsDB
 from edgar import Company
 from edgar.entity.entity_facts import clear_company_facts_cache
+from api.importer import _fye_month, _fiscal_quarter
 
 
 class BulkImportLogger:
@@ -276,6 +277,7 @@ async def process_ticker(
     try:
         company = await asyncio.to_thread(Company, ticker)
         logger.log('INFO', ticker, f"Retrieved company: {company.name}")
+        fye = _fye_month(company)
 
         filings = await asyncio.to_thread(lambda: company.get_filings(form=form))
 
@@ -291,8 +293,14 @@ async def process_ticker(
             try:
                 raw_period = getattr(filing, 'report_date', None) or filing.period_of_report
                 period_date = pd.to_datetime(raw_period)
-                year = period_date.year
-                quarter = ((period_date.month - 1) // 3 + 1) if form == '10-Q' else None
+                quarter = _fiscal_quarter(period_date.month, fye, period_date.day) if form == '10-Q' else None
+                eff_month = period_date.month
+                if period_date.day <= 7:
+                    eff_month = eff_month - 1 if eff_month > 1 else 12
+                if form == '10-Q' and eff_month > fye:
+                    year = period_date.year + 1
+                else:
+                    year = period_date.year
             except Exception:
                 logger.log('WARNING', ticker, f"Could not parse period date: {raw_period}")
                 ticker_results['filings_skipped'] += 1

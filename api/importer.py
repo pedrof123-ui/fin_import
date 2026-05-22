@@ -28,8 +28,14 @@ def _fye_month(company) -> int:
     return 12
 
 
-def _fiscal_quarter(period_month: int, fye_month: int) -> int:
-    """Return fiscal quarter (1–3) for a 10-Q given the period end month and FYE month."""
+def _fiscal_quarter(period_month: int, fye_month: int, period_day: int = 15) -> int:
+    """Return fiscal quarter (1–3) for a 10-Q given the period end month and FYE month.
+
+    Some companies end quarters on the 1st of the following month (e.g. AAPL Q2 FY2023
+    ends 2023-04-01). Treat period_day <= 7 as belonging to the prior month.
+    """
+    if period_day <= 7:
+        period_month = 12 if period_month == 1 else period_month - 1
     return ((period_month - fye_month - 1) % 12) // 3 + 1
 
 
@@ -63,8 +69,17 @@ async def import_ticker(
     for filing in filings_list:
         try:
             period_date = pd.to_datetime(getattr(filing, 'report_date', None) or filing.period_of_report)
-            year = period_date.year
-            quarter = _fiscal_quarter(period_date.month, fye) if form == "10-Q" else None
+            quarter = _fiscal_quarter(period_date.month, fye, period_date.day) if form == "10-Q" else None
+            # Use effective month (day-adjusted) for fiscal year determination so that
+            # period-end dates landing on day 1 of a month (e.g. AAPL Apr 1 = Q2 end)
+            # don't cross the FYE boundary incorrectly.
+            eff_month = period_date.month
+            if period_date.day <= 7:
+                eff_month = eff_month - 1 if eff_month > 1 else 12
+            if form == "10-Q" and eff_month > fye:
+                year = period_date.year + 1
+            else:
+                year = period_date.year
             period_end = period_date.date()
         except Exception:
             failed += 1

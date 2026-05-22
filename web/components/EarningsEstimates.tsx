@@ -5,6 +5,7 @@ import type { EarningsEstimate } from "@/lib/dcf-types";
 
 interface Props {
   estimates: EarningsEstimate[];
+  fyEndMonth: number | null; // 1–12: calendar month when the fiscal year ends
 }
 
 function fmtRev(val: number | null): string {
@@ -25,17 +26,31 @@ function fmtCount(val: number | null): string {
   return String(Math.round(val));
 }
 
-function periodLabel(e: EarningsEstimate): string {
+function periodLabel(e: EarningsEstimate, fyEndMonth: number | null): string {
   const d = new Date(e.date + "T00:00:00");
   const yr = d.getFullYear();
   if (e.horizon === "fiscal year") return `FY${yr}`;
-  // Derive quarter label from month
-  const mo = d.getMonth() + 1; // 1-12
+
+  const mo = d.getMonth() + 1; // 1–12
+
+  // When fiscal year end is known and non-December, compute the fiscal Q and FY.
+  // fyStartMonth is the month after the fiscal year end.
+  // monthsInFY counts months elapsed since the fiscal year started.
+  // fyYear: dates after the fiscal year end month belong to a FY that ends the following year.
+  if (fyEndMonth && fyEndMonth !== 12) {
+    const fyStartMonth = (fyEndMonth % 12) + 1;
+    const monthsInFY = (mo - fyStartMonth + 12) % 12;
+    const q = Math.floor(monthsInFY / 3) + 1;
+    const fyYear = mo > fyEndMonth ? yr + 1 : yr;
+    return `Q${q} FY${fyYear}`;
+  }
+
+  // Fallback: calendar quarters
   const q = Math.ceil(mo / 3);
   return `Q${q} FY${yr}`;
 }
 
-export default function EarningsEstimates({ estimates }: Props) {
+export default function EarningsEstimates({ estimates, fyEndMonth }: Props) {
   if (!estimates || estimates.length === 0) return null;
 
   const quarterly = estimates
@@ -68,7 +83,7 @@ export default function EarningsEstimates({ estimates }: Props) {
                     key={e.date}
                     className="text-right px-4 py-2.5 font-medium min-w-[110px] whitespace-nowrap text-sky-400/80"
                   >
-                    {periodLabel(e)}
+                    {periodLabel(e, fyEndMonth)}
                     <div className="text-[9px] font-normal text-zinc-600 mt-0.5">{e.date}</div>
                   </th>
                 ))}

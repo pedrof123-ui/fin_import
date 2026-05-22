@@ -263,51 +263,26 @@ class XBRLMappingManager:
     def _sync_core_mappings(self):
         """Sync Python mapping files to database"""
         print("Syncing core mappings from Python files...")
-        
+
         count = 0
-        
-        # Sync Income Statement
-        if INCOME_STATEMENT_MAPPING:
-            for field_name, concepts in INCOME_STATEMENT_MAPPING.items():
+        for stmt_type, mapping, label in [
+            ('income',   INCOME_STATEMENT_MAPPING, 'income statement'),
+            ('balance',  BALANCE_SHEET_MAPPING,    'balance sheet'),
+            ('cashflow', CASH_FLOW_MAPPING,         'cash flow'),
+        ]:
+            if not mapping:
+                print(f"  {label.capitalize()} mapping not available yet")
+                continue
+            for field_name, concepts in mapping.items():
                 for priority, concept in enumerate(concepts, start=1):
                     self.conn.execute("""
                         INSERT INTO core_concept_mappings
                         (statement_type, field_name, concept, priority, source)
-                        VALUES ('income', ?, ?, ?, 'manual')
+                        VALUES (?, ?, ?, ?, 'manual')
                         ON CONFLICT (statement_type, field_name, concept) DO NOTHING
-                    """, [field_name, concept, priority])
+                    """, [stmt_type, field_name, concept, priority])
                     count += 1
-            print(f"  Synced income statement: {len(INCOME_STATEMENT_MAPPING)} fields")
-
-        # Sync Balance Sheet (if available)
-        if BALANCE_SHEET_MAPPING:
-            for field_name, concepts in BALANCE_SHEET_MAPPING.items():
-                for priority, concept in enumerate(concepts, start=1):
-                    self.conn.execute("""
-                        INSERT INTO core_concept_mappings
-                        (statement_type, field_name, concept, priority, source)
-                        VALUES ('balance', ?, ?, ?, 'manual')
-                        ON CONFLICT (statement_type, field_name, concept) DO NOTHING
-                    """, [field_name, concept, priority])
-                    count += 1
-            print(f"  Synced balance sheet: {len(BALANCE_SHEET_MAPPING)} fields")
-        else:
-            print("  Balance sheet mapping not available yet")
-
-        # Sync Cash Flow (if available)
-        if CASH_FLOW_MAPPING:
-            for field_name, concepts in CASH_FLOW_MAPPING.items():
-                for priority, concept in enumerate(concepts, start=1):
-                    self.conn.execute("""
-                        INSERT INTO core_concept_mappings
-                        (statement_type, field_name, concept, priority, source)
-                        VALUES ('cashflow', ?, ?, ?, 'manual')
-                        ON CONFLICT (statement_type, field_name, concept) DO NOTHING
-                    """, [field_name, concept, priority])
-                    count += 1
-            print(f"  Synced cash flow: {len(CASH_FLOW_MAPPING)} fields")
-        else:
-            print("  Cash flow mapping not available yet")
+            print(f"  Synced {label}: {len(mapping)} fields")
         
         self.conn.commit()
         

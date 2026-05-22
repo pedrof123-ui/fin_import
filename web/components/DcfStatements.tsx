@@ -153,6 +153,7 @@ interface Props {
   proforma: HistoricalRow[];
   yearRows: Record<number, YearRowState>;
   onYearRowChange: (year: number, field: keyof YearRowState, value: string) => void;
+  onCommit?: () => void;
 }
 
 export default function DcfStatements({
@@ -160,6 +161,7 @@ export default function DcfStatements({
   proforma,
   yearRows,
   onYearRowChange,
+  onCommit,
 }: Props) {
   const inputCls =
     "w-full bg-transparent text-right tabular-nums text-[11px] text-violet-300 outline-none " +
@@ -265,9 +267,10 @@ export default function DcfStatements({
                               }}
                               onChange={(e) => onYearRowChange(pi + 1, editableProformaField, e.target.value)}
                               onFocus={(e) => onYearRowChange(pi + 1, editableProformaField, focusStrip(e.target.value))}
-                              onBlur={(e) => onYearRowChange(pi + 1, editableProformaField, blurFormat(e.target.value, "bn"))}
+                              onBlur={(e) => { onYearRowChange(pi + 1, editableProformaField, blurFormat(e.target.value, "bn")); onCommit?.(); }}
                               onKeyDown={(e) => {
-                                if (gridRowIdx !== undefined) gridKeyDown(gridRowIdx, pi, e);
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                else if (gridRowIdx !== undefined) gridKeyDown(gridRowIdx, pi, e);
                               }}
                             />
                           </td>
@@ -360,9 +363,10 @@ export default function DcfStatements({
                                   }}
                                   onChange={(e) => onYearRowChange(pi + 1, stateField, e.target.value)}
                                   onFocus={(e) => onYearRowChange(pi + 1, stateField, focusStrip(e.target.value))}
-                                  onBlur={(e) => onYearRowChange(pi + 1, stateField, blurFormat(e.target.value, "bn"))}
+                                  onBlur={(e) => { onYearRowChange(pi + 1, stateField, blurFormat(e.target.value, "bn")); onCommit?.(); }}
                                   onKeyDown={(e) => {
-                                    if (gridRow !== undefined) gridKeyDown(gridRow, pi, e);
+                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                    else if (gridRow !== undefined) gridKeyDown(gridRow, pi, e);
                                   }}
                                 />
                               </td>

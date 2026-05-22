@@ -72,6 +72,12 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
 
   const modelDefaultsRef = useRef<ModelDefaults | null>(null);
   const initialDataRef = useRef<DcfData | null>(null);
+  // Accumulates all user-edited year overrides across successive handleUpdate calls.
+  // The backend is stateless so every request must re-send ALL prior user edits,
+  // not just the fields that changed since the last response.
+  const accumulatedOverrides = useRef<Record<number, YearOverrideBody>>({});
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestHandleUpdate = useRef<() => void>(() => {});
 
   const fetchDcf = useCallback(async () => {
     setLoading(true);
@@ -105,6 +111,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
 
       initialDataRef.current = d;
       modelDefaultsRef.current = defaults;
+      accumulatedOverrides.current = {};
       setYearRows(defaults.yearRows);
       setQuarterRevenues(defaults.quarterRevenues);
       setTerminalGrowth(defaults.terminalGrowth);
@@ -133,7 +140,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
     if (!d || !initData) return;
     const initRows = buildYearRows(initData.year_forecasts, initData.proforma);
     setYearRows(initRows);
-    // Reset baseline so next Update compares against original values
+    accumulatedOverrides.current = {};
     modelDefaultsRef.current = { ...d, yearRows: initRows };
     setQuarterRevenues(d.quarterRevenues);
     setTerminalGrowth(d.terminalGrowth);
@@ -153,12 +160,9 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
     setLoading(true);
     setError(null);
     try {
-      const years: Record<string, YearOverrideBody> = {};
-
-      // data.historical is sorted newest-to-oldest (DESC from API), so [0] is the most recent year.
-      // That is the correct base for the Y1 revenue growth calculation.
-      const histRevenue = data.historical[0]?.revenue ?? 0;
-
+      // Detect what changed since the last server response and merge into accumulated overrides.
+      // We send ALL accumulated overrides on every call because the backend is stateless —
+      // each run_dcf call starts fresh, so prior-session edits must be re-supplied.
       for (const [yearStr, row] of Object.entries(yearRows)) {
         const yearNum = parseInt(yearStr);
         const defaultRow = modelDefaultsRef.current?.yearRows[yearNum];
@@ -175,34 +179,27 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         const thisRevenue = parseBn(row.revenue);
         const thisGP      = parseBn(row.gross_profit);
 
-        // Previous year revenue: use Y(n-1) from current yearRows state (which was initialised
-        // from the model proforma and reflects any user edits to prior years).
-        const prevRevenue = yearNum === 1
-          ? histRevenue
-          : parseBn(yearRows[yearNum - 1]?.revenue ?? "0");
+        const delta: YearOverrideBody = {};
 
-        const override: YearOverrideBody = {};
-
-        // Only send revenue_growth when revenue itself changed (otherwise fade_growth_years
-        // would treat this as a user override and skip its blending logic).
-        if (revChanged && prevRevenue && isFinite(thisRevenue / prevRevenue)) {
-          override.revenue_growth = thisRevenue / prevRevenue - 1;
+        if (revChanged && thisRevenue > 0) {
+          delta.revenue = thisRevenue;
         }
         if (thisRevenue > 0) {
-          // Guard cogs_pct: when company doesn't report a COGS breakdown, gross_profit is null
-          // and gross_profit row state is "". Sending cogs_pct = 1.0 in that case would break EBIT.
-          if (row.gross_profit !== "") {
-            override.cogs_pct = (thisRevenue - thisGP) / thisRevenue;
+          if (gpChanged && row.gross_profit !== "") {
+            delta.cogs_pct = (thisRevenue - thisGP) / thisRevenue;
           }
-          override.sga_pct           = parseBn(row.sga) / thisRevenue;
-          override.capex_pct_revenue = parseBn(row.capex) / thisRevenue;
-          override.da_pct            = parseBn(row.da) / thisRevenue;
-          if (row.rd) {
-            override.rd_pct = parseBn(row.rd) / thisRevenue;
+          if (sgaChanged)   delta.sga_pct           = parseBn(row.sga)   / thisRevenue;
+          if (capexChanged) delta.capex_pct_revenue = parseBn(row.capex) / thisRevenue;
+          if (daChanged)    delta.da_pct            = parseBn(row.da)    / thisRevenue;
+          if (rdChanged && row.rd) {
+            delta.rd_pct = parseBn(row.rd) / thisRevenue;
           }
         }
 
-        years[yearStr] = override;
+        accumulatedOverrides.current[yearNum] = {
+          ...accumulatedOverrides.current[yearNum],
+          ...delta,
+        };
       }
 
       const qRevRaw: Record<string, number> = {};
@@ -211,7 +208,9 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         if (isFinite(n)) qRevRaw[k] = n;
       }
       const req: RunRequest = {
-        years,
+        years: Object.fromEntries(
+          Object.entries(accumulatedOverrides.current).map(([k, v]) => [String(k), v])
+        ),
         terminal_growth_rate: parsePct(terminalGrowth),
         risk_free_rate:       parsePct(rf),
         market_risk_premium:  parsePct(mrp),
@@ -245,6 +244,14 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
       setLoading(false);
     }
   }
+
+  useEffect(() => { latestHandleUpdate.current = handleUpdate; });
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  const triggerUpdate = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { latestHandleUpdate.current(); }, 400);
+  }, []);
 
   if (loading && !data) {
     return (
@@ -306,13 +313,6 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
           >
             Reset
           </button>
-          <button
-            onClick={handleUpdate}
-            disabled={loading}
-            className="font-mono text-xs px-3 py-1.5 rounded border border-violet-700/50 bg-violet-950/30 text-violet-300 hover:bg-violet-900/40 hover:text-violet-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Update
-          </button>
         </div>
       </div>
 
@@ -344,6 +344,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         onBetaChange={setBeta}
         onCodChange={setCod}
         onTaxRateChange={setTaxRate}
+        onCommit={triggerUpdate}
       />
 
       <DcfStatements
@@ -353,6 +354,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         onYearRowChange={(year, field, value) =>
           setYearRows((prev) => ({ ...prev, [year]: { ...prev[year], [field]: value } }))
         }
+        onCommit={triggerUpdate}
       />
 
       <DcfNwcCapex
@@ -365,6 +367,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         onDsoChange={setDso}
         onDpoChange={setDpo}
         onDioChange={setDio}
+        onCommit={triggerUpdate}
       />
 
       <DcfFcffTable
@@ -404,9 +407,17 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         onQuarterRevenueChange={(qNum, value) =>
           setQuarterRevenues((prev) => ({ ...prev, [qNum]: value }))
         }
+        onCommit={triggerUpdate}
       />
 
-      <EarningsEstimates estimates={data.analyst_estimates ?? []} />
+      <EarningsEstimates
+        estimates={data.analyst_estimates ?? []}
+        fyEndMonth={
+          data.historical[0]?.period_end_date
+            ? new Date(data.historical[0].period_end_date + "T00:00:00").getMonth() + 1
+            : null
+        }
+      />
     </div>
   );
 }

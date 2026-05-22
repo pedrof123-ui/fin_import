@@ -125,7 +125,8 @@ export interface YearRowState {
 }
 
 export interface YearOverrideBody {
-  revenue_growth?: number;
+  revenue?: number;        // absolute dollars
+  revenue_growth?: number; // kept for back-compat but revenue takes priority
   cogs_pct?: number;
   sga_pct?: number;
   rd_pct?: number;

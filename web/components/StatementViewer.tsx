@@ -26,6 +26,7 @@ const SKIP_COLS = new Set([
   "ticker",
   "period_end_date",
   "fiscal_year",
+  "fiscal_quarter",
   "period_type",
 ]);
 
@@ -61,8 +62,7 @@ const SECTION_STARTS = new Set([
 
 function formatPeriod(record: Record<string, unknown>): string {
   if (record.period_type === "Annual") return `FY ${record.fiscal_year}`;
-  const d = new Date(record.period_end_date as string);
-  const q = Math.ceil((d.getUTCMonth() + 1) / 3);
+  const q = record.fiscal_quarter ?? Math.ceil((new Date(record.period_end_date as string).getUTCMonth() + 1) / 3);
   return `Q${q} ${record.fiscal_year}`;
 }
 

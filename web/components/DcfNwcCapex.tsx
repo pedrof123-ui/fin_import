@@ -24,6 +24,7 @@ interface Props {
   onDsoChange: (v: string) => void;
   onDpoChange: (v: string) => void;
   onDioChange: (v: string) => void;
+  onCommit?: () => void;
 }
 
 export default function DcfNwcCapex({
@@ -31,6 +32,7 @@ export default function DcfNwcCapex({
   yearForecasts,
   dso, dpo, dio,
   onDsoChange, onDpoChange, onDioChange,
+  onCommit,
 }: Props) {
   const years = fcffSeries.map((f) => f.year);
 
@@ -51,15 +53,15 @@ export default function DcfNwcCapex({
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs font-mono">
             <div className="text-zinc-500">DSO (days)</div>
             <div className="text-right">
-              <input className={inputCls} value={dso} onChange={(e) => onDsoChange(e.target.value)} />
+              <input className={inputCls} value={dso} onChange={(e) => onDsoChange(e.target.value)} onBlur={() => onCommit?.()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
             </div>
             <div className="text-zinc-500">DPO (days)</div>
             <div className="text-right">
-              <input className={inputCls} value={dpo} onChange={(e) => onDpoChange(e.target.value)} />
+              <input className={inputCls} value={dpo} onChange={(e) => onDpoChange(e.target.value)} onBlur={() => onCommit?.()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
             </div>
             <div className="text-zinc-500">DIO (days)</div>
             <div className="text-right">
-              <input className={inputCls} value={dio} onChange={(e) => onDioChange(e.target.value)} />
+              <input className={inputCls} value={dio} onChange={(e) => onDioChange(e.target.value)} onBlur={() => onCommit?.()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
             </div>
           </div>
           <p className="font-mono text-[10px] text-zinc-700 mt-4">

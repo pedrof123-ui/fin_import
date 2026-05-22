@@ -25,6 +25,7 @@ def set_db(db) -> None:
 # ---------------------------------------------------------------------------
 
 class YearOverrideBody(BaseModel):
+    revenue: float | None = None          # absolute dollars
     revenue_growth: float | None = None
     cogs_pct: float | None = None
     sga_pct: float | None = None
@@ -67,6 +68,7 @@ def _sanitize(obj: Any) -> Any:
 def _build_overrides(req: RunRequest) -> UserOverrides:
     year_map = {
         int(k): YearOverride(
+            revenue=v.revenue,
             revenue_growth=v.revenue_growth,
             cogs_pct=v.cogs_pct,
             sga_pct=v.sga_pct,

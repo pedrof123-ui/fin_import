@@ -284,10 +284,17 @@ class FinancialStatementsDB:
                 -- Supplemental
                 cash_paid_for_interest DOUBLE,
                 cash_paid_for_taxes DOUBLE,
-                
+
+                -- True when 10-Q Q2/Q3 filing only provides YTD (cumulative) cash flows
+                ytd_cashflow BOOLEAN DEFAULT FALSE,
+
                 -- Primary Key Constraint
                 PRIMARY KEY (ticker, filing_date, period_end_date)
             )
+        """)
+        self.conn.execute("""
+            ALTER TABLE cash_flow_statements
+            ADD COLUMN IF NOT EXISTS ytd_cashflow BOOLEAN DEFAULT FALSE
         """)
         
         # ====================================================================
@@ -469,6 +476,7 @@ class FinancialStatementsDB:
         fiscal_year = int(df.iloc[0]['Fiscal_Year']) if pd.notna(df.iloc[0]['Fiscal_Year']) else None
         fiscal_quarter = int(df.iloc[0]['Quarter']) if pd.notna(df.iloc[0]['Quarter']) else None
         period_type = df.iloc[0]['Period_Type']
+        ytd_cashflow = bool(df.iloc[0]['YTD']) if 'YTD' in df.columns else False
 
         fields_extracted = int(df['Value'].notna().sum())
         total_fields = len(df)
@@ -488,8 +496,9 @@ class FinancialStatementsDB:
                 net_cash_investing_activities, debt_issuance, debt_repayment,
                 common_stock_issuance, stock_repurchase, dividends_paid, other_financing_activities,
                 net_cash_financing_activities, effect_of_exchange_rate, net_change_in_cash,
-                cash_beginning_of_period, cash_end_of_period, cash_paid_for_interest, cash_paid_for_taxes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cash_beginning_of_period, cash_end_of_period, cash_paid_for_interest,
+                cash_paid_for_taxes, ytd_cashflow
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             ticker, filing_date, period_end_date, filing_type, fiscal_year, fiscal_quarter,
             period_type, fields_extracted, total_fields, coverage_pct,
@@ -507,7 +516,8 @@ class FinancialStatementsDB:
             data_dict.get('other_financing_activities'), data_dict.get('net_cash_financing_activities'),
             data_dict.get('effect_of_exchange_rate'), data_dict.get('net_change_in_cash'),
             data_dict.get('cash_beginning_of_period'), data_dict.get('cash_end_of_period'),
-            data_dict.get('cash_paid_for_interest'), data_dict.get('cash_paid_for_taxes')
+            data_dict.get('cash_paid_for_interest'), data_dict.get('cash_paid_for_taxes'),
+            ytd_cashflow,
         ])
 
         self._update_company(ticker, filing_date)

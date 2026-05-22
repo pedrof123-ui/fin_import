@@ -1,9 +1,13 @@
+import os
 import duckdb
 import pandas as pd
 from pathlib import Path
 
-PRICES_DB = Path("/home/pedro/projects/trade_systems/data/prices.duckdb")
-FRED_DB = Path("/home/pedro/projects/trade_systems/data/fred.duckdb")
+_DEFAULT_PRICES_DB = Path(__file__).parent.parent / "data" / "prices.duckdb"
+_DEFAULT_FRED_DB = Path(__file__).parent.parent / "data" / "fred.duckdb"
+
+PRICES_DB = Path(os.environ.get("PRICES_DB_PATH", str(_DEFAULT_PRICES_DB)))
+FRED_DB = Path(os.environ.get("FRED_DB_PATH", str(_DEFAULT_FRED_DB)))
 
 MIN_QUARTERLY_PERIODS = 8
 

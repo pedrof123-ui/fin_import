@@ -247,6 +247,10 @@ async def extract_statement(
         except Exception as e:
             print(f"  Pass 2 failed: {e}")
 
+    # True only for quarterly cash flow filings where edgartools only provides YTD
+    # (cumulative) figures — detected by the '(YTD)' suffix in the period column name.
+    is_ytd = not is_annual and '(YTD)' in most_recent_period
+
     result_df = pd.DataFrame(results)
     result_df.insert(0, 'Ticker', ticker)
     result_df.insert(1, 'Fiscal_Year', year)
@@ -255,6 +259,7 @@ async def extract_statement(
     result_df.insert(4, 'Filing_Type', form_type)
     result_df.insert(5, 'Period_Type', period_type)
     result_df.insert(6, 'Quarter', quarter if not is_annual else None)
+    result_df.insert(7, 'YTD', is_ytd)
 
     data_quality = found_count / len(mapping)
     print(f"\nExtraction complete!")

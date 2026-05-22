@@ -10,9 +10,9 @@ Forecast methodology:
   Revenue Y1-Y2: blended signal —
              50%/25% quarterly momentum (EWM of last-4-quarter YoY rates + linear trend)
              50%/75% annual EWM growth (exponentially weighted, half-life ~1.4 yrs).
-  Revenue Y3-Y10: fade from actual Y2 growth rate toward terminal growth rate, applied
-             after analyst estimates are resolved (see fade_growth_years).
-             Y3 = 2/3 Y2 + 1/3 terminal, Y4 = 1/3 Y2 + 2/3 terminal, Y5-Y10 = terminal.
+  Revenue Y3-Y10: carry forward Y2's growth rate flat across all remaining years. When a
+             user pins a year's revenue, subsequent years carry forward that year's implied
+             growth rate. Terminal growth is used only for the terminal value calculation.
   P&L ratios (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean
              applied flat across all 10 forecast years. Mean-reversion is the standard DCF
              assumption — ratios are bounded by competitive dynamics over a 10-year horizon.
@@ -303,7 +303,7 @@ def forecast_assumptions(
     int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
     other_opex_flat = _mean_ratio(hist_other_opex, 0.0, 0.0, 0.8) if has_other_opex else 0.0
 
-    # Revenue Y3-Y10: placeholder using flat g_lr; overwritten by fade_growth_years() in model.py
+    # Revenue Y3-Y10: placeholder using flat g_lr; overwritten by extend_growth_years() in model.py
     # after analyst estimates and user overrides are fully resolved.
     rev_y3_10 = []
     prev = rev_y2
@@ -345,22 +345,21 @@ def forecast_assumptions(
     return forecasts
 
 
-def fade_growth_years(year_forecasts: list, terminal_growth: float, overrides) -> list:
+def extend_growth_years(year_forecasts: list, overrides) -> list:
     """
-    Fade Y3+ revenue growth from the final Y2 growth rate toward terminal_growth.
-    Y3 = 2/3 Y2 + 1/3 terminal, Y4 = 1/3 Y2 + 2/3 terminal, Y5+ = terminal.
+    Y3-Y10 carry forward Y2's revenue growth rate (no fade to terminal growth).
+    When a user overrides a year's revenue, subsequent non-overridden years carry
+    forward that year's implied growth rate instead.
     Called after analyst estimates and user overrides are fully applied.
-    Skips any year the user has explicitly overridden.
     """
-    g_y2 = year_forecasts[1].revenue_growth
-    _early_weights = [(2/3, 1/3), (1/3, 2/3)]  # Y3, Y4
+    g = year_forecasts[1].revenue_growth
     prev_rev = year_forecasts[1].revenue
-    for i, yf in enumerate(year_forecasts[2:]):
+    for yf in year_forecasts[2:]:
         if _has_rev_override(overrides, yf.year):
+            if prev_rev > 0:
+                g = yf.revenue / prev_rev - 1
             prev_rev = yf.revenue
             continue
-        w_y2, w_tg = _early_weights[i] if i < len(_early_weights) else (0.0, 1.0)
-        g = w_y2 * g_y2 + w_tg * terminal_growth
         yf.revenue_growth = float(g)
         yf.revenue = float(prev_rev * (1 + g))
         prev_rev = yf.revenue
@@ -371,7 +370,7 @@ def _has_rev_override(overrides, year: int) -> bool:
     if overrides is None:
         return False
     yo = overrides.years.get(year)
-    return yo is not None and yo.revenue_growth is not None
+    return yo is not None and (yo.revenue is not None or yo.revenue_growth is not None)
 
 
 def merge_overrides(base: list, overrides) -> list:
@@ -404,10 +403,18 @@ def merge_overrides(base: list, overrides) -> list:
             )
         )
 
-    # Recompute revenue levels from (possibly overridden) growth rates
+    # Recompute revenue levels. When yo.revenue is set, use it as the absolute anchor;
+    # otherwise chain from growth rates. Update revenue_growth to stay internally consistent
+    # so that extend_growth_years (which reads year_forecasts[1].revenue_growth) is correct.
     last_rev = base[0].revenue / (1 + base[0].revenue_growth) if (1 + base[0].revenue_growth) != 0 else base[0].revenue
     for yf in result:
-        yf.revenue = last_rev * (1 + yf.revenue_growth)
+        yo = overrides.years.get(yf.year)
+        if yo is not None and yo.revenue is not None:
+            yf.revenue = yo.revenue
+        else:
+            yf.revenue = last_rev * (1 + yf.revenue_growth)
+        if last_rev > 0:
+            yf.revenue_growth = yf.revenue / last_rev - 1
         last_rev = yf.revenue
 
     return result

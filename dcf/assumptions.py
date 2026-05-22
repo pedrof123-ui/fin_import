@@ -18,6 +18,7 @@ class EarningsEstimate:
 
 @dataclass
 class YearOverride:
+    revenue: float | None = None          # absolute dollars; takes priority over revenue_growth
     revenue_growth: float | None = None
     cogs_pct: float | None = None
     sga_pct: float | None = None
