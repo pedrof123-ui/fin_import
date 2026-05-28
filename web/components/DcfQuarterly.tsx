@@ -42,6 +42,51 @@ const QUARTERLY_EST_HIDDEN: Set<keyof HistoricalRow> = new Set([
   "total_assets", "total_debt", "cash_and_equivalents",
 ]);
 
+// Balance sheet fields are point-in-time; omit from full-year sum.
+const FULLYR_OMIT: Set<keyof HistoricalRow> = QUARTERLY_EST_HIDDEN;
+
+function computeFullYear(quarters: HistoricalRow[]): HistoricalRow {
+  const sum = (key: keyof HistoricalRow): number | null => {
+    if (FULLYR_OMIT.has(key)) return null;
+    const vals = quarters
+      .map((q) => q[key] as number | null)
+      .filter((v): v is number => v != null);
+    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null;
+  };
+
+  const lastQ = quarters[quarters.length - 1];
+  const yearMatch = lastQ?.period_label?.match(/(\d{4})/);
+  const label = yearMatch ? `FY ${yearMatch[1]}` : "Full Year";
+
+  const fy_gp = sum("gross_profit") ??
+    (sum("revenue") != null && sum("cost_of_revenue") != null
+      ? sum("revenue")! - sum("cost_of_revenue")!
+      : null);
+
+  return {
+    period_label:               label,
+    period_end_date:             lastQ?.period_end_date ?? null,
+    is_actual:                   quarters.every((q) => q.is_actual),
+    revenue:                     sum("revenue"),
+    gross_profit:                fy_gp,
+    operating_income:            sum("operating_income"),
+    net_income:                  sum("net_income"),
+    depreciation_amortization:   sum("depreciation_amortization"),
+    capital_expenditures:        sum("capital_expenditures"),
+    total_assets:                null,
+    total_debt:                  null,
+    cash_and_equivalents:        null,
+    diluted_eps:                 sum("diluted_eps"),
+    cost_of_revenue:             sum("cost_of_revenue"),
+    selling_general_admin:       sum("selling_general_admin"),
+    research_development:        sum("research_development"),
+    interest_expense:            sum("interest_expense"),
+    ebitda:                      sum("ebitda"),
+    income_tax_expense:          sum("income_tax_expense"),
+    pretax_income:               sum("pretax_income"),
+  };
+}
+
 const SUB_LABEL: Record<SubRowKind, string> = {
   revGrowth:        "Rev Growth %",
   cogsMargin:       "COGS %",
@@ -137,6 +182,8 @@ export default function DcfQuarterly({
 
   const nActuals = y1Quarters.filter((q) => q.is_actual).length;
   const hasEstimates = nActuals < y1Quarters.length;
+  const fullYearRow = computeFullYear(y1Quarters);
+  const fyAllActual = !hasEstimates;
 
   return (
     <div className="mb-6">
@@ -177,6 +224,19 @@ export default function DcfQuarterly({
                   </th>
                 </Fragment>
               ))}
+              {/* Full Year summary column */}
+              <th className="w-px bg-white/[0.06]" />
+              <th className={`text-right px-4 py-2.5 font-medium min-w-[110px] whitespace-nowrap ${
+                fyAllActual ? "text-zinc-300" : "text-amber-400/80"
+              }`}>
+                <div className="flex items-center justify-end gap-1">
+                  {fullYearRow.period_label}
+                  {!fyAllActual && <span className="text-[8px] text-amber-600/70 font-normal">E</span>}
+                </div>
+                <div className={`text-[9px] font-normal mt-0.5 ${fyAllActual ? "text-zinc-500" : "text-amber-800/60"}`}>
+                  Full Year
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -222,6 +282,26 @@ export default function DcfQuarterly({
                         </Fragment>
                       );
                     })}
+                    {/* Full Year cell */}
+                    {(() => {
+                      const fyVal = FULLYR_OMIT.has(key) ? null : (fullYearRow[key] as number | null);
+                      const { text: fyText, negative: fyNeg } = fmtNum(fyVal);
+                      return (
+                        <>
+                          <td className="w-px bg-white/[0.06] p-0" />
+                          <td className={`px-4 py-2 text-right tabular-nums ${
+                            fyText === "—" ? "text-zinc-700"
+                            : fyNeg
+                              ? isKey ? "text-rose-300" : "text-rose-400/80"
+                              : fyAllActual
+                                ? isKey ? "text-zinc-100" : "text-zinc-300"
+                                : isKey ? "text-amber-300" : "text-amber-400/70"
+                          }`}>
+                            {fyText}
+                          </td>
+                        </>
+                      );
+                    })()}
                   </tr>
 
                   {subRows?.map((kind) => (
@@ -295,6 +375,24 @@ export default function DcfQuarterly({
                           </Fragment>
                         );
                       })}
+                      {/* Full Year sub-row cell */}
+                      {(() => {
+                        const { text: fyText, negative: fyNeg } = fmtRatio(
+                          computeActualSubRow(kind, fullYearRow, lastHistorical)
+                        );
+                        return (
+                          <>
+                            <td className="w-px bg-white/[0.06] p-0" />
+                            <td className={`px-4 py-1 text-right tabular-nums text-[10px] ${
+                              fyText === "—" ? "text-zinc-700"
+                              : fyNeg ? "text-rose-400/50"
+                              : fyAllActual ? "text-zinc-500" : "text-amber-500/50"
+                            }`}>
+                              {fyText}
+                            </td>
+                          </>
+                        );
+                      })()}
                     </tr>
                   ))}
                 </Fragment>

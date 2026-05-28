@@ -19,6 +19,11 @@ function fmtBn(v: number | null | undefined): string {
   return (Math.abs(v) / 1e9).toFixed(2) + "B";
 }
 
+function fmtPct(v: number | null | undefined): string {
+  if (v == null) return "";
+  return (v * 100).toFixed(1) + "%";
+}
+
 function buildYearRows(
   year_forecasts: DcfData["year_forecasts"],
   proforma: DcfData["proforma"],
@@ -28,12 +33,12 @@ function buildYearRows(
     const yf = year_forecasts[i];
     const pf = proforma[i];
     r[yf.year] = {
-      revenue: fmtBn(pf?.revenue),
-      cogs:    fmtBn(pf?.cost_of_revenue),
-      sga:     fmtBn(pf?.selling_general_admin),
-      rd:      fmtBn(pf?.research_development),
-      da:      fmtBn(pf?.depreciation_amortization),
-      capex:   fmtBn(pf?.capital_expenditures),
+      rev_growth:   fmtPct(yf.revenue_growth),
+      gross_margin: fmtPct(yf.cogs_pct != null ? 1 - yf.cogs_pct : null),
+      sga:          fmtBn(pf?.selling_general_admin),
+      rd:           fmtBn(pf?.research_development),
+      da:           fmtBn(pf?.depreciation_amortization),
+      capex_pct:    fmtPct(yf.capex_pct_revenue),
     };
   }
   return r;
@@ -168,33 +173,33 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         const yearNum = parseInt(yearStr);
         const defaultRow = modelDefaultsRef.current?.yearRows[yearNum];
 
-        const revChanged   = row.revenue !== defaultRow?.revenue;
-        const cogsChanged  = row.cogs    !== defaultRow?.cogs;
-        const sgaChanged   = row.sga    !== defaultRow?.sga;
-        const rdChanged    = row.rd     !== defaultRow?.rd;
-        const daChanged    = row.da     !== defaultRow?.da;
-        const capexChanged = row.capex  !== defaultRow?.capex;
+        const revGrowthChanged   = row.rev_growth   !== defaultRow?.rev_growth;
+        const grossMarginChanged = row.gross_margin !== defaultRow?.gross_margin;
+        const sgaChanged         = row.sga          !== defaultRow?.sga;
+        const rdChanged          = row.rd           !== defaultRow?.rd;
+        const daChanged          = row.da           !== defaultRow?.da;
+        const capexPctChanged    = row.capex_pct    !== defaultRow?.capex_pct;
 
-        if (!revChanged && !cogsChanged && !sgaChanged && !rdChanged && !daChanged && !capexChanged) continue;
-
-        const thisRevenue = parseBn(row.revenue);
-        const thisCogs    = parseBn(row.cogs);
+        if (!revGrowthChanged && !grossMarginChanged && !sgaChanged && !rdChanged && !daChanged && !capexPctChanged) continue;
 
         const delta: YearOverrideBody = {};
 
-        if (revChanged && thisRevenue > 0) {
-          delta.revenue = thisRevenue;
-        }
-        if (thisRevenue > 0) {
-          if (cogsChanged && row.cogs !== "") {
-            delta.cogs_pct = thisCogs / thisRevenue;
-          }
-          if (sgaChanged)   delta.sga_pct           = parseBn(row.sga)   / thisRevenue;
-          if (capexChanged) delta.capex_pct_revenue = parseBn(row.capex) / thisRevenue;
-          if (daChanged)    delta.da_pct            = parseBn(row.da)    / thisRevenue;
-          if (rdChanged && row.rd) {
-            delta.rd_pct = parseBn(row.rd) / thisRevenue;
-          }
+        if (revGrowthChanged && row.rev_growth !== "")
+          delta.revenue_growth = parsePct(row.rev_growth);
+
+        if (grossMarginChanged && row.gross_margin !== "")
+          delta.cogs_pct = 1 - parsePct(row.gross_margin);
+
+        if (capexPctChanged && row.capex_pct !== "")
+          delta.capex_pct_revenue = parsePct(row.capex_pct);
+
+        // SGA, D&A, R&D remain as dollar inputs — divide by last known server revenue
+        // to convert to the percentage the backend expects.
+        const serverRevenue = data.proforma[yearNum - 1]?.revenue ?? 0;
+        if (serverRevenue > 0) {
+          if (sgaChanged)              delta.sga_pct = parseBn(row.sga) / serverRevenue;
+          if (daChanged)               delta.da_pct  = parseBn(row.da)  / serverRevenue;
+          if (rdChanged && row.rd)     delta.rd_pct  = parseBn(row.rd)  / serverRevenue;
         }
 
         accumulatedOverrides.current[yearNum] = {

@@ -114,14 +114,16 @@ export interface DcfData {
   analyst_estimates: EarningsEstimate[];
 }
 
-// Absolute dollar amounts in billions (e.g. "450.23B"). Empty string when not applicable (e.g. no R&D).
+// Editable per-year override state.
+// rev_growth, gross_margin, capex_pct are percentages (e.g. "15.0%").
+// sga, rd, da are absolute dollar amounts in billions (e.g. "12.34B").
 export interface YearRowState {
-  revenue: string;
-  cogs: string;      // editable; gross_profit is derived server-side
-  sga: string;
-  rd: string;
-  da: string;
-  capex: string;
+  rev_growth:   string;  // revenue growth % (e.g. "15.0%")
+  gross_margin: string;  // gross margin % — sets cogs_pct = 1 - gross_margin (e.g. "60.0%")
+  sga: string;           // SG&A in $B
+  rd: string;            // R&D in $B
+  da: string;            // D&A in $B
+  capex_pct: string;     // capex as % of revenue (e.g. "3.5%")
 }
 
 export interface YearOverrideBody {

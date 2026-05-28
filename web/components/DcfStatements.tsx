@@ -5,17 +5,17 @@ import type { HistoricalRow, YearRowState } from "@/lib/dcf-types";
 import { useGridArrowNav } from "@/lib/useArrowNav";
 import { blurFormat, focusStrip } from "@/lib/formatField";
 
-// Sub-row kinds — derived ones are read-only; "sga" and "rd" are editable dollar sub-rows.
+// Sub-row kinds — derived ones are read-only; "sga"/"rd" are editable $; "revGrowth"/"grossMargin"/"capexPct" are editable %.
 type SubRowKind =
-  | "revGrowth"        // derived %
-  | "grossMargin"      // derived %
+  | "revGrowth"        // editable % (revenue growth)
+  | "grossMargin"      // editable % (gross margin → sets cogs_pct)
   | "sga"              // editable $ (SG&A absolute)
   | "rd"               // editable $ (R&D absolute)
   | "opMargin"         // derived %
   | "ebitdaMargin"     // derived %
   | "effectiveTaxRate" // derived %
   | "netIncomeMargin"  // derived %
-  | "capexPct";        // derived %
+  | "capexPct";        // editable % (capex % of revenue)
 
 interface RowDef {
   key: keyof HistoricalRow;
@@ -27,15 +27,15 @@ interface RowDef {
 }
 
 const ROWS: RowDef[] = [
-  { key: "revenue",                   label: "Revenue",      isKey: true, editableProformaField: "revenue", subRows: ["revGrowth"]          },
-  { key: "cost_of_revenue",           label: "COGS",                      editableProformaField: "cogs"                                      },
-  { key: "gross_profit",              label: "Gross Profit", isKey: true,                                  subRows: ["grossMargin"]          },
-  { key: "operating_income",          label: "EBIT",         isKey: true,                                  subRows: ["sga", "rd", "opMargin"]},
-  { key: "ebitda",                    label: "EBITDA",       isKey: true,                                  subRows: ["ebitdaMargin"]         },
-  { key: "income_tax_expense",        label: "Income Tax",                                                  subRows: ["effectiveTaxRate"]    },
-  { key: "net_income",                label: "Net Income",   isKey: true,                                  subRows: ["netIncomeMargin"]      },
-  { key: "depreciation_amortization", label: "D&A",                       editableProformaField: "da"                                        },
-  { key: "capital_expenditures",      label: "CapEx",                     editableProformaField: "capex",   subRows: ["capexPct"]            },
+  { key: "revenue",                   label: "Revenue",      isKey: true,                        subRows: ["revGrowth"]          },
+  { key: "cost_of_revenue",           label: "COGS",                                             subRows: ["grossMargin"]        },
+  { key: "gross_profit",              label: "Gross Profit", isKey: true                                                         },
+  { key: "operating_income",          label: "EBIT",         isKey: true,                        subRows: ["sga", "rd", "opMargin"]},
+  { key: "ebitda",                    label: "EBITDA",       isKey: true,                        subRows: ["ebitdaMargin"]       },
+  { key: "income_tax_expense",        label: "Income Tax",                                        subRows: ["effectiveTaxRate"]  },
+  { key: "net_income",                label: "Net Income",   isKey: true,                        subRows: ["netIncomeMargin"]    },
+  { key: "depreciation_amortization", label: "D&A",                       editableProformaField: "da"                            },
+  { key: "capital_expenditures",      label: "CapEx",                                            subRows: ["capexPct"]          },
   { key: "total_assets",              label: "Total Assets" },
   { key: "total_debt",                label: "Total Debt" },
   { key: "cash_and_equivalents",      label: "Cash & Equivalents" },
@@ -57,24 +57,27 @@ const SUB_LABEL: Record<SubRowKind, string> = {
 // Sub-rows that show editable dollar inputs in the proforma columns.
 const DOLLAR_SUB_ROWS = new Set<SubRowKind>(["sga", "rd"]);
 
+// Sub-rows that show editable % inputs in the proforma columns (read-only in historical).
+const PCT_SUB_ROWS = new Set<SubRowKind>(["revGrowth", "grossMargin", "capexPct"]);
+
 // Sub-rows that are always read-only derived ratios.
 const DERIVED_SUB_ROWS = new Set<SubRowKind>([
-  "revGrowth", "grossMargin", "opMargin",
-  "ebitdaMargin", "effectiveTaxRate", "netIncomeMargin", "capexPct",
+  "opMargin", "ebitdaMargin", "effectiveTaxRate", "netIncomeMargin",
 ]);
 
 // Grid rows for keyboard navigation:
-// 0 = Revenue, 1 = COGS, 2 = SG&A sub-row, 3 = R&D sub-row, 4 = D&A, 5 = CapEx
+// 0 = Rev Growth % sub-row, 1 = Gross Margin % sub-row, 2 = SG&A sub-row,
+// 3 = R&D sub-row, 4 = D&A, 5 = CapEx % Rev sub-row
 const GRID_ROWS = 6;
 const MAIN_ROW_GRID: Partial<Record<keyof HistoricalRow, number>> = {
-  revenue:                   0,
-  cost_of_revenue:           1,
   depreciation_amortization: 4,
-  capital_expenditures:      5,
 };
 const SUB_ROW_GRID: Partial<Record<SubRowKind, number>> = {
-  sga: 2,
-  rd:  3,
+  revGrowth:   0,
+  grossMargin: 1,
+  sga:         2,
+  rd:          3,
+  capexPct:    5,
 };
 
 function computeHistSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: HistoricalRow | null): number | null {
@@ -173,6 +176,12 @@ export default function DcfStatements({
     sga: "sga",
     rd:  "rd",
   };
+  // Pct sub-row YearRowState field
+  const pctStateField: Partial<Record<SubRowKind, keyof YearRowState>> = {
+    revGrowth:   "rev_growth",
+    grossMargin: "gross_margin",
+    capexPct:    "capex_pct",
+  };
 
   return (
     <div className="mb-6">
@@ -244,17 +253,9 @@ export default function DcfStatements({
 
                     <td className="w-px bg-violet-900/20 p-0" />
 
-                    {/* Proforma columns — editable when editableProformaField is set */}
+                    {/* Proforma columns — editable when editableProformaField is set (D&A only now) */}
                     {proforma.map((col, pi) => {
                       if (editableProformaField) {
-                        // Suppress COGS input for service companies that don't report COGS
-                        if (editableProformaField === "cogs" && col.cost_of_revenue == null) {
-                          return (
-                            <td key={col.period_label} className="px-4 py-2 text-right tabular-nums text-[11px] text-zinc-700">
-                              —
-                            </td>
-                          );
-                        }
                         const fieldVal = yearRows[pi + 1]?.[editableProformaField] ?? "";
                         return (
                           <td key={col.period_label} className="px-3 py-0.5">
@@ -291,11 +292,13 @@ export default function DcfStatements({
                   </tr>
 
                   {subRows?.map((kind) => {
-                    const isDerived = DERIVED_SUB_ROWS.has(kind);
-                    const isDollar  = DOLLAR_SUB_ROWS.has(kind);
-                    const gridRow   = SUB_ROW_GRID[kind];
-                    const stateField = dollarStateField[kind];
-                    const histField  = histDollarField[kind];
+                    const isDerived   = DERIVED_SUB_ROWS.has(kind);
+                    const isDollar    = DOLLAR_SUB_ROWS.has(kind);
+                    const isPct       = PCT_SUB_ROWS.has(kind);
+                    const gridRow     = SUB_ROW_GRID[kind];
+                    const stateField  = dollarStateField[kind];
+                    const pctField    = pctStateField[kind];
+                    const histField   = histDollarField[kind];
 
                     return (
                       <tr key={kind} className="border-b border-white/[0.03]" style={{ background: subBg }}>
@@ -306,7 +309,7 @@ export default function DcfStatements({
                           {SUB_LABEL[kind]}
                         </td>
 
-                        {/* Historical sub-row cells */}
+                        {/* Historical sub-row cells — always read-only */}
                         {historical.map((col, ci) => {
                           if (isDollar && histField) {
                             const { text, negative } = fmtNum(col[histField] as number | null);
@@ -339,6 +342,43 @@ export default function DcfStatements({
                         {/* Proforma sub-row cells */}
                         {proforma.map((col, pi) => {
                           const prevProforma = pi === 0 ? lastHistorical : proforma[pi - 1];
+
+                          // Editable % sub-row (Rev Growth, Gross Margin, CapEx %)
+                          if (isPct && pctField) {
+                            // Suppress Gross Margin input for service companies with no COGS
+                            if (kind === "grossMargin" && col.cost_of_revenue == null) {
+                              return (
+                                <td key={col.period_label} className="px-4 py-1 text-right tabular-nums text-[10px] text-zinc-700">
+                                  —
+                                </td>
+                              );
+                            }
+                            const fieldVal = yearRows[pi + 1]?.[pctField] ?? "";
+                            return (
+                              <td key={col.period_label} className="px-3 py-0.5">
+                                <input
+                                  className={inputCls}
+                                  value={fieldVal}
+                                  ref={(el) => {
+                                    if (gridRow !== undefined) gridRefs.current[gridRow][pi] = el;
+                                  }}
+                                  onChange={(e) => onYearRowChange(pi + 1, pctField, e.target.value)}
+                                  onFocus={(e) => onYearRowChange(pi + 1, pctField, focusStrip(e.target.value))}
+                                  onBlur={(e) => {
+                                    const formatted = blurFormat(e.target.value, "pct");
+                                    for (let y = pi + 1; y <= proforma.length; y++) {
+                                      onYearRowChange(y, pctField, formatted);
+                                    }
+                                    onCommit?.();
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                    else if (gridRow !== undefined) gridKeyDown(gridRow, pi, e);
+                                  }}
+                                />
+                              </td>
+                            );
+                          }
 
                           // Editable dollar sub-row (SGA, R&D)
                           if (isDollar && stateField) {

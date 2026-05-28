@@ -168,13 +168,39 @@ export default function StatementViewer({
 }: Props) {
   if (!data.length) return null;
 
-  const metricKeys = Object.keys(data[0]).filter(
+  // For income statements: derive gross_profit = revenue - cost_of_revenue when not reported.
+  // Some companies (e.g. WMT) omit the gross profit subtotal from their XBRL filing.
+  const enrichedData: Record<string, unknown>[] = stmtType === "income"
+    ? data.map((row) => {
+        if (row.gross_profit != null) return row;
+        const rev = row.revenue as number | null;
+        const cogs = row.cost_of_revenue as number | null;
+        if (rev != null && cogs != null) return { ...row, gross_profit: rev - cogs };
+        return row;
+      })
+    : data;
+
+  const metricKeys = Object.keys(enrichedData[0]).filter(
     (k) =>
       !SKIP_COLS.has(k) &&
-      data.some((r) => r[k] !== null && r[k] !== undefined)
+      enrichedData.some((r) => r[k] !== null && r[k] !== undefined)
   );
 
-  const periodLabels = data.map(formatPeriod);
+  // Ensure gross_profit appears immediately after cost_of_revenue in the key order.
+  if (
+    stmtType === "income" &&
+    metricKeys.includes("gross_profit") &&
+    metricKeys.includes("cost_of_revenue")
+  ) {
+    const cogsIdx = metricKeys.indexOf("cost_of_revenue");
+    const gpIdx   = metricKeys.indexOf("gross_profit");
+    if (gpIdx !== cogsIdx + 1) {
+      metricKeys.splice(gpIdx, 1);
+      metricKeys.splice(cogsIdx + 1, 0, "gross_profit");
+    }
+  }
+
+  const periodLabels = enrichedData.map(formatPeriod);
 
   return (
     <div
@@ -239,7 +265,7 @@ export default function StatementViewer({
               >
                 Metric
               </th>
-              {data.map((record, i) => {
+              {enrichedData.map((record, i) => {
                 const ped = typeof record.period_end_date === "string" ? record.period_end_date.slice(0, 10) : null;
                 return (
                   <th
@@ -289,7 +315,7 @@ export default function StatementViewer({
                     </td>
 
                     {/* Values per period */}
-                    {data.map((record, colIdx) => {
+                    {enrichedData.map((record, colIdx) => {
                       const val = record[key];
                       const isNull = val === null || val === undefined;
                       const { text, negative } = formatNumber(val, key);
@@ -323,8 +349,8 @@ export default function StatementViewer({
                       >
                         {sub.label}
                       </td>
-                      {data.map((record, colIdx) => {
-                        const val = sub.compute(record, data[colIdx + 1] ?? null);
+                      {enrichedData.map((record, colIdx) => {
+                        const val = sub.compute(record, enrichedData[colIdx + 1] ?? null);
                         const { text, negative } = fmtRatio(val);
                         return (
                           <td

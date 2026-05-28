@@ -34,6 +34,53 @@ This runbook describes how to operate the fundamentals-alpha stock-selection pip
 
 ---
 
+## Monthly Workflow — Quick Reference
+
+Run once per month on the last trading day of the month.
+
+### Part 1 — Refresh data (morning, any day after earnings season)
+
+```bash
+# Refresh raw AV data: statements, shares, dividends, company overview (~115 min)
+uv run scripts/av_update.py
+
+# Recompute derived metrics + analyst estimates + sector stats (~20 min)
+uv run scripts/hf_update.py
+```
+
+### Part 2 — Score and rebalance (last trading day of the month, before 15:50 ET)
+
+```bash
+# Step 1 — Generate ranked scores and write docs/live_scores_YYYYMMDD_vw_gr_top_n_25.csv
+uv run scripts/score_live.py --top 25
+
+# Step 2 — Preview rebalance (dry run, no orders submitted)
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
+
+# Step 3 — Submit MOC orders (before 15:50 ET)
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run
+
+# Step 4 — Sync confirmed fills (after close, same TWS session)
+uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
+```
+
+### Summary table
+
+| Step | Script | When | Time |
+|------|--------|------|------|
+| Refresh raw AV data | `av_update.py` | Early month | ~115 min |
+| Recompute metrics | `hf_update.py` | After av_update | ~20 min |
+| Score universe | `score_live.py --top 25` | Rebalance morning | seconds |
+| Review CSV + regime signal | — | Before orders | manual |
+| Preview orders | `rebalance.py` (dry run) | Midday | seconds |
+| Submit MOC orders | `rebalance.py --no-dry-run` | Before 15:50 ET | seconds |
+| Sync confirmed fills | `sync_fills.py` | After close | seconds |
+
+**Recommended portfolio:** `vw_gr_top_n_25` — vol-weighted, guardrails on, top 25.
+Backtest (211 months, 2005–2025): 24.5% CAGR, 1.35 Sharpe, -21.6% MaxDD, 71.1% win rate.
+
+---
+
 ## Data Pipeline
 
 ### Adding new tickers

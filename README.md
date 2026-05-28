@@ -177,6 +177,81 @@ uv run scripts/hf_query.py --view sector-history --name TECHNOLOGY  # monthly se
 
 The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker costs 6 AV calls for raw data (3 statements + shares + dividends + overview); bulk throughput is ~12 tickers/minute.
 
+## Fundamentals Alpha — Operational Flow
+
+Monthly rebalance workflow for the `vw_gr_top_n_25` strategy (vol-weighted composite score, top 25 holdings).
+Backtest: 24.5% CAGR, 1.35 Sharpe, -21.6% MaxDD, 71.1% win rate (211 months).
+
+### Step 1 — Refresh fundamentals data (once per month, after earnings season)
+
+```bash
+# Refresh raw AV data: statements, shares, dividends, company overview (~115 min, 6 calls/ticker)
+uv run scripts/av_update.py
+
+# Recompute derived metrics + analyst estimates + sector stats (~20 min, 1 call/ticker)
+uv run scripts/hf_update.py
+```
+
+Fundamentals update quarterly, so monthly is sufficient. Skip-flags are available when needed:
+
+```bash
+uv run scripts/av_update.py --skip-overview     # omit OVERVIEW calls (~95 min)
+uv run scripts/hf_update.py --skip-estimates    # PE/yield recompute only, no AV calls
+```
+
+### Step 2 — Score the universe and get the rebalance list
+
+```bash
+uv run scripts/score_live.py --top 25
+```
+
+Outputs ranked table to stdout and writes `docs/live_scores_{YYYYMMDD}_vw_gr_top_n_25.csv`.
+
+What the script produces:
+- Top 25 tickers ranked by composite score (value + quality + momentum), sector-capped at 25%
+- **Inverse-vol weights** (`weight_pct`): sized by 1/trailing-12m-vol, capped at 10% per position
+- **Regime signal**: if SPY 12m return > +25% or < -20%, `alloc_pct` is reduced to 50% of `weight_pct` (remainder goes to cash)
+- **Guardrails** (on by default): excludes value traps and stocks with >2 missing factors
+- `feature_available_date` column confirms each row is point-in-time safe
+
+Useful flags:
+
+```bash
+uv run scripts/score_live.py --top 25 --no-guardrails    # include value traps / partial data
+uv run scripts/score_live.py --top 25 --verbose          # show debug output
+```
+
+### Step 3 — Review the CSV
+
+Open `docs/live_scores_{YYYYMMDD}_vw_gr_top_n_25.csv` and check:
+- Regime label (FULL 100% vs REDUCED 50%)
+- Any `value_trap=True` or `data_quality=poor` entries near the top
+- `top_factor` column for the primary driver per stock
+
+### Step 4 — Execute the rebalance via IB
+
+```bash
+# Dry run first — previews orders without submitting (default)
+uv run scripts/rebalance.py
+
+# When satisfied, submit MOC orders to IB
+uv run scripts/rebalance.py --no-dry-run
+```
+
+`rebalance.py` auto-finds the latest `docs/live_scores_*.csv`. Only rows with a non-empty `alloc_pct` are treated as portfolio positions.
+
+### Summary
+
+| Step | Script | Frequency | Time |
+|------|--------|-----------|------|
+| 1a. Refresh raw data | `av_update.py` | Monthly | ~115 min |
+| 1b. Recompute metrics | `hf_update.py` | Monthly | ~20 min |
+| 2. Score universe | `score_live.py` | Monthly on rebalance day | seconds |
+| 3. Review CSV | — | — | manual |
+| 4. Execute trades | `rebalance.py --no-dry-run` | Monthly | seconds |
+
+---
+
 ## IB Trader
 
 Execution layer for Interactive Brokers TWS. Requires TWS or IB Gateway running locally with API enabled.
