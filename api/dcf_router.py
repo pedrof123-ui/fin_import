@@ -34,6 +34,7 @@ class YearOverrideBody(BaseModel):
     other_pct: float | None = None
     capex_pct_revenue: float | None = None
     da_pct: float | None = None
+    ebit_margin_pct: float | None = None
 
 
 class RunRequest(BaseModel):
@@ -77,6 +78,7 @@ def _build_overrides(req: RunRequest) -> UserOverrides:
             other_pct=v.other_pct,
             capex_pct_revenue=v.capex_pct_revenue,
             da_pct=v.da_pct,
+            ebit_margin_pct=v.ebit_margin_pct,
         )
         for k, v in req.years.items()
     }

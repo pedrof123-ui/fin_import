@@ -519,18 +519,73 @@ def _sum_debt(bs_row) -> float | None:
     return total if any(p is not None for p in parts) else None
 
 
+def _median_revenue_growth(income_df: pd.DataFrame) -> float:
+    """Median YoY revenue growth from historical annual data. Clamped [0%, 15%]."""
+    rev = income_df["revenue"].dropna()
+    if len(rev) < 2:
+        return 0.03
+    # income_df is newest→oldest; rates[i] = growth from period i+1 to period i
+    rates = rev.values[:-1] / rev.values[1:] - 1
+    return float(np.clip(np.nanmedian(rates), 0.0, 0.15))
+
+
+def _median_ebit_margin(income_df: pd.DataFrame) -> float:
+    """Median EBIT margin from all available annual data. Clamped [1%, 50%]."""
+    rev = income_df["revenue"].replace(0, np.nan)
+    ebit = income_df["operating_income"] if "operating_income" in income_df.columns else pd.Series(dtype=float)
+    margins = (ebit / rev).dropna()
+    margins = margins[np.isfinite(margins)]
+    if margins.empty:
+        return 0.10
+    return float(np.clip(np.median(margins), 0.01, 0.50))
+
+
 def run_dcf(
     ticker: str,
     db,
     overrides: "UserOverrides | None" = None,
 ) -> "DcfResult":
-    from dcf.assumptions import DcfResult
-    from dcf.data import load_quarterly_financials, load_annual_financials, load_current_price, load_risk_free_rate
-    from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
-    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, extend_growth_years
-
+    from dcf.data import load_quarterly_financials, load_annual_financials
     quarterly = load_quarterly_financials(db, ticker)
     annual = load_annual_financials(db, ticker)
+    return _run_dcf_core(ticker, annual, quarterly, overrides, estimates_conn=db.conn)
+
+
+def run_dcf_av(
+    ticker: str,
+    overrides: "UserOverrides | None" = None,
+) -> "DcfResult":
+    import dataclasses
+    from dcf.av_data import load_av_annual_financials, load_av_quarterly_financials
+    quarterly = load_av_quarterly_financials(ticker)
+    annual = load_av_annual_financials(ticker)
+    if overrides is None or overrides.terminal_growth_rate is None:
+        median_g = _median_revenue_growth(annual["income"])
+        if overrides is None:
+            from dcf.assumptions import UserOverrides
+            overrides = UserOverrides(terminal_growth_rate=median_g)
+        else:
+            overrides = dataclasses.replace(overrides, terminal_growth_rate=median_g)
+
+    if overrides.default_ebit_margin_pct is None:
+        overrides = dataclasses.replace(
+            overrides,
+            default_ebit_margin_pct=_median_ebit_margin(annual["income"]),
+        )
+    return _run_dcf_core(ticker, annual, quarterly, overrides, estimates_conn=None)
+
+
+def _run_dcf_core(
+    ticker: str,
+    annual: dict,
+    quarterly: dict,
+    overrides: "UserOverrides | None" = None,
+    estimates_conn=None,
+) -> "DcfResult":
+    from dcf.assumptions import DcfResult
+    from dcf.data import load_current_price, load_risk_free_rate
+    from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
+    from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, extend_growth_years
 
     price = load_current_price(ticker)
     rf = load_risk_free_rate()
@@ -563,7 +618,7 @@ def run_dcf(
         market_risk_premium=mrp,
         beta_override=beta_override,
         cost_of_debt_override=overrides.cost_of_debt_override if overrides else None,
-        tax_rate_override=overrides.tax_rate_override if overrides else annual_tax_rate,
+        tax_rate_override=overrides.tax_rate_override if (overrides and overrides.tax_rate_override is not None) else annual_tax_rate,
         annual_income_df=annual["income"],
     )
 
@@ -591,7 +646,7 @@ def run_dcf(
     _last_rev_est = float(_inc_a["revenue"].dropna().iloc[0]) if not _inc_a.empty and _inc_a["revenue"].notna().any() else 0.0
     _last_year_est = int(_last_a.get("fiscal_year", 0)) if pd.notna(_last_a.get("fiscal_year", None)) else 0
     _last_date_est = str(_last_a.get("period_end_date", ""))[:10]
-    raw_estimates = fetch_and_cache(ticker, db.conn)
+    raw_estimates = fetch_and_cache(ticker, estimates_conn) if estimates_conn is not None else []
     year_forecasts, _analyst_q_revs, _analyst_years = apply_to_forecasts(
         raw_estimates, year_forecasts, _last_rev_est, _last_year_est, _last_date_est, overrides
     )
@@ -679,6 +734,21 @@ def run_dcf(
 
     # Y3-Y10: carry forward Y2 growth (applied after all Y1/Y2 are settled)
     year_forecasts = extend_growth_years(year_forecasts, overrides)
+
+    # AV DCF: apply EBIT margin control (overrides other_opex_pct so that
+    # EBIT = revenue × ebit_margin exactly). Per-year user value wins over default.
+    _default_ebit_m = overrides.default_ebit_margin_pct if overrides else None
+    if _default_ebit_m is not None or (
+        overrides and any(yo.ebit_margin_pct is not None for yo in overrides.years.values())
+    ):
+        for yf in year_forecasts:
+            yo = overrides.years.get(yf.year) if overrides else None
+            ebit_m = yo.ebit_margin_pct if (yo and yo.ebit_margin_pct is not None) else _default_ebit_m
+            if ebit_m is not None:
+                yf.other_opex_pct = max(
+                    0.0,
+                    1.0 - yf.cogs_pct - yf.sga_pct - (yf.rd_pct or 0.0) - ebit_m,
+                )
 
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,

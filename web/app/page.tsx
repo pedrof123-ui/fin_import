@@ -4,11 +4,13 @@ import { useState, useCallback, useEffect } from "react";
 import ImportForm from "@/components/ImportForm";
 import StatementViewer from "@/components/StatementViewer";
 import DcfViewer from "@/components/DcfViewer";
+import AvFinancialsViewer from "@/components/AvFinancialsViewer";
+import AvDcfViewer from "@/components/AvDcfViewer";
 import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "financials" | "dcf";
+type Tab = "financials" | "dcf" | "av_financials" | "av_dcf";
 
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
@@ -172,7 +174,7 @@ export default function Home() {
         {/* Tab bar — only shown when a ticker is loaded */}
         {loadedTicker && (
           <div className="flex items-center gap-1 mb-5">
-            {(["financials", "dcf"] as Tab[]).map((tab) => (
+            {(["financials", "dcf", "av_financials", "av_dcf"] as Tab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -182,7 +184,10 @@ export default function Home() {
                     : "border-white/[0.07] text-zinc-500 hover:text-zinc-300 hover:border-white/[0.12]"
                 }`}
               >
-                {tab === "financials" ? "Financials" : "DCF Valuation"}
+                {tab === "financials" ? "Financials"
+                  : tab === "dcf" ? "DCF Valuation"
+                  : tab === "av_financials" ? "AV Data"
+                  : "AV DCF"}
               </button>
             ))}
           </div>
@@ -213,6 +218,16 @@ export default function Home() {
         {/* DCF tab */}
         {activeTab === "dcf" && loadedTicker && (
           <DcfViewer ticker={loadedTicker} />
+        )}
+
+        {/* AV Data tab */}
+        {activeTab === "av_financials" && loadedTicker && (
+          <AvFinancialsViewer ticker={loadedTicker} />
+        )}
+
+        {/* AV DCF tab */}
+        {activeTab === "av_dcf" && loadedTicker && (
+          <AvDcfViewer ticker={loadedTicker} />
         )}
 
         {/* Empty state */}

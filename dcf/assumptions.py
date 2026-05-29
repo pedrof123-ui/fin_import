@@ -28,6 +28,7 @@ class YearOverride:
     other_opex_pct: float | None = None
     capex_pct_revenue: float | None = None
     da_pct: float | None = None
+    ebit_margin_pct: float | None = None  # AV DCF: overrides cogs/sga/rd via other_opex residual
 
 
 @dataclass
@@ -43,6 +44,7 @@ class UserOverrides:
     cost_of_debt_override: float | None = None
     tax_rate_override: float | None = None
     y1_quarter_revenues: dict[int, float] | None = None  # keys 1-4
+    default_ebit_margin_pct: float | None = None  # AV DCF: median historical margin, applied as flat default
 
 
 @dataclass

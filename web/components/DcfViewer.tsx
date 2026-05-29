@@ -32,6 +32,9 @@ function buildYearRows(
   for (let i = 0; i < year_forecasts.length; i++) {
     const yf = year_forecasts[i];
     const pf = proforma[i];
+    const ebitMarginRaw = pf?.revenue && pf.operating_income != null
+      ? pf.operating_income / pf.revenue
+      : null;
     r[yf.year] = {
       rev_growth:   fmtPct(yf.revenue_growth),
       gross_margin: fmtPct(yf.cogs_pct != null ? 1 - yf.cogs_pct : null),
@@ -39,6 +42,7 @@ function buildYearRows(
       rd:           fmtBn(pf?.research_development),
       da:           fmtBn(pf?.depreciation_amortization),
       capex_pct:    fmtPct(yf.capex_pct_revenue),
+      ebit_margin:  fmtPct(ebitMarginRaw),
     };
   }
   return r;
@@ -58,7 +62,7 @@ type ModelDefaults = {
   dio: string;
 };
 
-export default function DcfViewer({ ticker }: { ticker: string }) {
+export default function DcfViewer({ ticker, apiPath = "/dcf", variant }: { ticker: string; apiPath?: string; variant?: "av" }) {
   const [data, setData] = useState<DcfData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +93,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/dcf/${ticker}`);
+      const res = await fetch(`${API}${apiPath}/${ticker}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail ?? `HTTP ${res.status}`);
       const d = json as DcfData;
@@ -179,8 +183,9 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         const rdChanged          = row.rd           !== defaultRow?.rd;
         const daChanged          = row.da           !== defaultRow?.da;
         const capexPctChanged    = row.capex_pct    !== defaultRow?.capex_pct;
+        const ebitMarginChanged  = row.ebit_margin  !== defaultRow?.ebit_margin;
 
-        if (!revGrowthChanged && !grossMarginChanged && !sgaChanged && !rdChanged && !daChanged && !capexPctChanged) continue;
+        if (!revGrowthChanged && !grossMarginChanged && !sgaChanged && !rdChanged && !daChanged && !capexPctChanged && !ebitMarginChanged) continue;
 
         const delta: YearOverrideBody = {};
 
@@ -192,6 +197,9 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
 
         if (capexPctChanged && row.capex_pct !== "")
           delta.capex_pct_revenue = parsePct(row.capex_pct);
+
+        if (ebitMarginChanged && row.ebit_margin !== "")
+          delta.ebit_margin_pct = parsePct(row.ebit_margin);
 
         // SGA, D&A, R&D remain as dollar inputs — divide by last known server revenue
         // to convert to the percentage the backend expects.
@@ -228,7 +236,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
         dio:                  parseFloat(dio),
         ...(Object.keys(qRevRaw).length > 0 && { y1_quarter_revenues: qRevRaw }),
       };
-      const res = await fetch(`${API}/dcf/${ticker}/run`, {
+      const res = await fetch(`${API}${apiPath}/${ticker}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),
@@ -361,6 +369,7 @@ export default function DcfViewer({ ticker }: { ticker: string }) {
           setYearRows((prev) => ({ ...prev, [year]: { ...prev[year], [field]: value } }))
         }
         onCommit={triggerUpdate}
+        variant={variant}
       />
 
       <DcfNwcCapex

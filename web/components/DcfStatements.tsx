@@ -5,12 +5,13 @@ import type { HistoricalRow, YearRowState } from "@/lib/dcf-types";
 import { useGridArrowNav } from "@/lib/useArrowNav";
 import { blurFormat, focusStrip } from "@/lib/formatField";
 
-// Sub-row kinds — derived ones are read-only; "sga"/"rd" are editable $; "revGrowth"/"grossMargin"/"capexPct" are editable %.
+// Sub-row kinds — derived ones are read-only; "sga"/"rd" are editable $; "revGrowth"/"grossMargin"/"capexPct"/"ebitMargin" are editable %.
 type SubRowKind =
   | "revGrowth"        // editable % (revenue growth)
   | "grossMargin"      // editable % (gross margin → sets cogs_pct)
-  | "sga"              // editable $ (SG&A absolute)
-  | "rd"               // editable $ (R&D absolute)
+  | "sga"              // editable $ (SG&A absolute) — standard mode only
+  | "rd"               // editable $ (R&D absolute) — standard mode only
+  | "ebitMargin"       // editable % (EBIT margin direct) — AV mode only
   | "opMargin"         // derived %
   | "ebitdaMargin"     // derived %
   | "effectiveTaxRate" // derived %
@@ -26,16 +27,34 @@ interface RowDef {
   editableProformaField?: keyof YearRowState;
 }
 
-const ROWS: RowDef[] = [
-  { key: "revenue",                   label: "Revenue",      isKey: true,                        subRows: ["revGrowth"]          },
-  { key: "cost_of_revenue",           label: "COGS",                                             subRows: ["grossMargin"]        },
-  { key: "gross_profit",              label: "Gross Profit", isKey: true                                                         },
-  { key: "operating_income",          label: "EBIT",         isKey: true,                        subRows: ["sga", "rd", "opMargin"]},
-  { key: "ebitda",                    label: "EBITDA",       isKey: true,                        subRows: ["ebitdaMargin"]       },
-  { key: "income_tax_expense",        label: "Income Tax",                                        subRows: ["effectiveTaxRate"]  },
-  { key: "net_income",                label: "Net Income",   isKey: true,                        subRows: ["netIncomeMargin"]    },
-  { key: "depreciation_amortization", label: "D&A",                       editableProformaField: "da"                            },
-  { key: "capital_expenditures",      label: "CapEx",                                            subRows: ["capexPct"]          },
+// Standard mode rows (existing SEC DCF)
+const ROWS_STANDARD: RowDef[] = [
+  { key: "revenue",                   label: "Revenue",      isKey: true,  subRows: ["revGrowth"]              },
+  { key: "cost_of_revenue",           label: "COGS",                       subRows: ["grossMargin"]            },
+  { key: "gross_profit",              label: "Gross Profit", isKey: true                                       },
+  { key: "operating_income",          label: "EBIT",         isKey: true,  subRows: ["sga", "rd", "opMargin"]  },
+  { key: "ebitda",                    label: "EBITDA",       isKey: true,  subRows: ["ebitdaMargin"]           },
+  { key: "income_tax_expense",        label: "Income Tax",                 subRows: ["effectiveTaxRate"]       },
+  { key: "net_income",                label: "Net Income",   isKey: true,  subRows: ["netIncomeMargin"]        },
+  { key: "depreciation_amortization", label: "D&A",          editableProformaField: "da"                       },
+  { key: "capital_expenditures",      label: "CapEx",                      subRows: ["capexPct"]               },
+  { key: "total_assets",              label: "Total Assets" },
+  { key: "total_debt",                label: "Total Debt" },
+  { key: "cash_and_equivalents",      label: "Cash & Equivalents" },
+  { key: "diluted_eps",               label: "Diluted EPS" },
+];
+
+// AV mode rows — EBIT margin replaces SGA/R&D editable inputs
+const ROWS_AV: RowDef[] = [
+  { key: "revenue",                   label: "Revenue",      isKey: true,  subRows: ["revGrowth"]          },
+  { key: "cost_of_revenue",           label: "COGS",                       subRows: ["grossMargin"]        },
+  { key: "gross_profit",              label: "Gross Profit", isKey: true                                   },
+  { key: "operating_income",          label: "EBIT",         isKey: true,  subRows: ["ebitMargin"]         },
+  { key: "ebitda",                    label: "EBITDA",       isKey: true,  subRows: ["ebitdaMargin"]       },
+  { key: "income_tax_expense",        label: "Income Tax",                 subRows: ["effectiveTaxRate"]   },
+  { key: "net_income",                label: "Net Income",   isKey: true,  subRows: ["netIncomeMargin"]    },
+  { key: "depreciation_amortization", label: "D&A",          editableProformaField: "da"                   },
+  { key: "capital_expenditures",      label: "CapEx",                      subRows: ["capexPct"]           },
   { key: "total_assets",              label: "Total Assets" },
   { key: "total_debt",                label: "Total Debt" },
   { key: "cash_and_equivalents",      label: "Cash & Equivalents" },
@@ -47,6 +66,7 @@ const SUB_LABEL: Record<SubRowKind, string> = {
   grossMargin:      "Gross Margin %",
   sga:              "SG&A",
   rd:               "R&D",
+  ebitMargin:       "EBIT Margin %",
   opMargin:         "EBIT Margin %",
   ebitdaMargin:     "EBITDA Margin %",
   effectiveTaxRate: "Effective Tax Rate",
@@ -58,26 +78,38 @@ const SUB_LABEL: Record<SubRowKind, string> = {
 const DOLLAR_SUB_ROWS = new Set<SubRowKind>(["sga", "rd"]);
 
 // Sub-rows that show editable % inputs in the proforma columns (read-only in historical).
-const PCT_SUB_ROWS = new Set<SubRowKind>(["revGrowth", "grossMargin", "capexPct"]);
+const PCT_SUB_ROWS = new Set<SubRowKind>(["revGrowth", "grossMargin", "capexPct", "ebitMargin"]);
 
 // Sub-rows that are always read-only derived ratios.
 const DERIVED_SUB_ROWS = new Set<SubRowKind>([
   "opMargin", "ebitdaMargin", "effectiveTaxRate", "netIncomeMargin",
 ]);
 
-// Grid rows for keyboard navigation:
-// 0 = Rev Growth % sub-row, 1 = Gross Margin % sub-row, 2 = SG&A sub-row,
-// 3 = R&D sub-row, 4 = D&A, 5 = CapEx % Rev sub-row
-const GRID_ROWS = 6;
-const MAIN_ROW_GRID: Partial<Record<keyof HistoricalRow, number>> = {
+// Grid rows for keyboard navigation — standard mode:
+// 0=RevGrowth, 1=GrossMargin, 2=SGA, 3=RD, 4=DA, 5=CapEx
+const GRID_ROWS_STANDARD = 6;
+const MAIN_ROW_GRID_STANDARD: Partial<Record<keyof HistoricalRow, number>> = {
   depreciation_amortization: 4,
 };
-const SUB_ROW_GRID: Partial<Record<SubRowKind, number>> = {
+const SUB_ROW_GRID_STANDARD: Partial<Record<SubRowKind, number>> = {
   revGrowth:   0,
   grossMargin: 1,
   sga:         2,
   rd:          3,
   capexPct:    5,
+};
+
+// Grid rows — AV mode:
+// 0=RevGrowth, 1=GrossMargin, 2=EbitMargin, 3=DA, 4=CapEx
+const GRID_ROWS_AV = 5;
+const MAIN_ROW_GRID_AV: Partial<Record<keyof HistoricalRow, number>> = {
+  depreciation_amortization: 3,
+};
+const SUB_ROW_GRID_AV: Partial<Record<SubRowKind, number>> = {
+  revGrowth:   0,
+  grossMargin: 1,
+  ebitMargin:  2,
+  capexPct:    4,
 };
 
 function computeHistSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: HistoricalRow | null): number | null {
@@ -100,6 +132,8 @@ function computeHistSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Histor
       return col.net_income != null ? col.net_income / rev : null;
     case "capexPct":
       return col.capital_expenditures != null ? Math.abs(col.capital_expenditures) / rev : null;
+    case "ebitMargin":
+      return col.operating_income != null ? col.operating_income / rev : null;
     case "sga":
     case "rd":
       return null;
@@ -119,6 +153,7 @@ function computeProformaSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Hi
                                : null;
     case "netIncomeMargin":  return col.net_income != null ? col.net_income / rev : null;
     case "capexPct":         return col.capital_expenditures != null ? Math.abs(col.capital_expenditures) / rev : null;
+    case "ebitMargin":       return col.operating_income != null ? col.operating_income / rev : null;
     case "sga":
     case "rd":               return null;
   }
@@ -148,6 +183,7 @@ interface Props {
   yearRows: Record<number, YearRowState>;
   onYearRowChange: (year: number, field: keyof YearRowState, value: string) => void;
   onCommit?: () => void;
+  variant?: "av"; // AV DCF mode: EBIT Margin % replaces SGA/R&D inputs
 }
 
 export default function DcfStatements({
@@ -156,13 +192,21 @@ export default function DcfStatements({
   yearRows,
   onYearRowChange,
   onCommit,
+  variant,
 }: Props) {
+  const isAv = variant === "av";
+
   const inputCls =
     "w-full bg-transparent text-right tabular-nums text-[11px] text-violet-300 outline-none " +
     "border-b border-transparent focus:border-violet-500/50 transition-colors px-1";
 
   const lastHistorical = historical[historical.length - 1] ?? null;
   const GRID_COLS = proforma.length;
+
+  const ROWS        = isAv ? ROWS_AV          : ROWS_STANDARD;
+  const GRID_ROWS   = isAv ? GRID_ROWS_AV     : GRID_ROWS_STANDARD;
+  const MAIN_ROW_GRID = isAv ? MAIN_ROW_GRID_AV : MAIN_ROW_GRID_STANDARD;
+  const SUB_ROW_GRID  = isAv ? SUB_ROW_GRID_AV  : SUB_ROW_GRID_STANDARD;
 
   const { refs: gridRefs, handleKeyDown: gridKeyDown } = useGridArrowNav(GRID_ROWS, GRID_COLS);
 
@@ -181,6 +225,7 @@ export default function DcfStatements({
     revGrowth:   "rev_growth",
     grossMargin: "gross_margin",
     capexPct:    "capex_pct",
+    ebitMargin:  "ebit_margin",
   };
 
   return (

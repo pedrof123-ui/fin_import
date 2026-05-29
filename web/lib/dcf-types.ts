@@ -120,10 +120,11 @@ export interface DcfData {
 export interface YearRowState {
   rev_growth:   string;  // revenue growth % (e.g. "15.0%")
   gross_margin: string;  // gross margin % — sets cogs_pct = 1 - gross_margin (e.g. "60.0%")
-  sga: string;           // SG&A in $B
-  rd: string;            // R&D in $B
+  sga: string;           // SG&A in $B (standard mode)
+  rd: string;            // R&D in $B (standard mode)
   da: string;            // D&A in $B
   capex_pct: string;     // capex as % of revenue (e.g. "3.5%")
+  ebit_margin: string;   // EBIT margin % — AV DCF mode (e.g. "12.5%")
 }
 
 export interface YearOverrideBody {
@@ -136,6 +137,7 @@ export interface YearOverrideBody {
   other_pct?: number;
   capex_pct_revenue?: number;
   da_pct?: number;
+  ebit_margin_pct?: number; // AV DCF: direct EBIT margin control
 }
 
 export interface RunRequest {

@@ -259,9 +259,17 @@ def forecast_assumptions(
     hist_rd = _safe_ratio(rd_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
     has_rd = len(hist_rd) > 0 and not np.all(hist_rd == 0)
 
-    # Interest expense % of revenue (below-the-line; display only)
-    int_ser = inc_a["interest_expense"] if "interest_expense" in inc_a.columns else pd.Series(dtype=float)
-    hist_int = _safe_ratio(int_ser.abs().reindex(inc_a.index), inc_a["revenue"]).dropna().values
+    # Net interest cost = gross interest expense − interest income, floored at 0.
+    # For cash-rich companies (e.g. AAPL, MSFT) interest income substantially offsets
+    # borrowing costs; using net avoids overstating the below-the-line financing drag.
+    # Falls back to gross interest expense when interest_income is absent or all-NaN.
+    int_gross = inc_a["interest_expense"] if "interest_expense" in inc_a.columns else pd.Series(dtype=float)
+    int_income = inc_a["interest_income"] if "interest_income" in inc_a.columns else pd.Series(dtype=float)
+    int_ser = (
+        int_gross.abs().reindex(inc_a.index)
+        - int_income.abs().reindex(inc_a.index).fillna(0)
+    ).clip(lower=0)
+    hist_int = _safe_ratio(int_ser, inc_a["revenue"]).dropna().values
 
     # Other operating expense % — residual that absorbs costs not captured by COGS/SGA/R&D.
     # Anchor depends on what the company reports:
@@ -271,8 +279,12 @@ def forecast_assumptions(
     # Skipped when SGA fallback already absorbed the full gross-to-operating residual.
     op_inc_ser = inc_a["operating_income"] if "operating_income" in inc_a.columns else pd.Series(dtype=float)
     if not _sga_fallback_used and not op_inc_ser.isna().all():
-        sga_raw = sga_ser.abs().reindex(inc_a.index).fillna(0)
-        rd_raw = rd_ser.abs().reindex(inc_a.index).fillna(0)
+        # ffill propagates the last known SGA/R&D amount into periods where the
+        # provider hasn't yet published the line item (common in AV for the most
+        # recent fiscal year). Without this, the NaN would be treated as zero and
+        # the entire SGA amount would fall through into other_opex, spiking it.
+        sga_raw = sga_ser.abs().reindex(inc_a.index).ffill().fillna(0)
+        rd_raw = rd_ser.abs().reindex(inc_a.index).ffill().fillna(0)
         if reports_cogs and not gp_ser.isna().all():
             other_opex_ser = (gp_ser - op_inc_ser - sga_raw - rd_raw).clip(lower=0)
         elif not reports_cogs:
@@ -283,6 +295,19 @@ def forecast_assumptions(
     else:
         hist_other_opex = np.array([])
     has_other_opex = len(hist_other_opex) >= 2 and np.any(hist_other_opex > 0.005)
+
+    # Other non-operating income/loss % of revenue.
+    # = (pretax_income − operating_income + |interest_expense|) / revenue
+    # Captures recurring below-the-line items: investment income, equity method earnings,
+    # pension credits, net FX, etc.  Clipped to ±5% of revenue to limit the effect of
+    # one-time events (large write-offs, asset-sale gains) on the 10-year forecast.
+    pretax_ser = inc_a["pretax_income"] if "pretax_income" in inc_a.columns else pd.Series(dtype=float)
+    if not pretax_ser.isna().all() and not op_inc_ser.isna().all():
+        int_abs = int_ser.reindex(inc_a.index).fillna(0)   # int_ser is already net & ≥0
+        other_income_ser = pretax_ser.reindex(inc_a.index) - op_inc_ser + int_abs
+        hist_other_pct = _safe_ratio(other_income_ser, inc_a["revenue"]).dropna().values
+    else:
+        hist_other_pct = np.array([])
 
     # CapEx % of revenue — normalized 5-year mean from CF statement.
     cx_denom = inc_a["revenue"].reindex(cf_a.index).values
@@ -302,6 +327,7 @@ def forecast_assumptions(
     rd_flat   = _mean_ratio(hist_rd,   0.0, 0.0, 0.5) if has_rd else None
     int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
     other_opex_flat = _mean_ratio(hist_other_opex, 0.0, 0.0, 0.8) if has_other_opex else 0.0
+    other_flat = _mean_ratio(hist_other_pct, 0.0, -0.05, 0.05) if len(hist_other_pct) >= 2 else 0.0
 
     # Revenue Y3-Y10: placeholder using flat g_lr; overwritten by extend_growth_years() in model.py
     # after analyst estimates and user overrides are fully resolved.
@@ -317,6 +343,7 @@ def forecast_assumptions(
     sga_all  = [sga_flat]  * 10
     rd_all   = [rd_flat]   * 10 if has_rd else [None] * 10
     int_all  = [int_flat]  * 10
+    other_all = [other_flat] * 10
     other_opex_all = [other_opex_flat] * 10
 
     prev_rev = [last_rev] + list(rev_all)
@@ -334,7 +361,7 @@ def forecast_assumptions(
                 sga_pct=float(sga_all[i]),
                 rd_pct=float(rd_all[i]) if rd_all[i] is not None else None,
                 interest_pct=float(int_all[i]),
-                other_pct=0.0,
+                other_pct=float(other_all[i]),
                 other_opex_pct=float(other_opex_all[i]),
                 capex_pct_revenue=cx_pct_norm,
                 da_pct=da_pct_norm,
