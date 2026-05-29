@@ -173,6 +173,9 @@ def _join_overview(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
         log.warning("Could not load company_overview from AV_DB_PATH: %s", exc)
         return df
 
+    # Deduplicate: company_overview may have multiple rows per ticker (historical snapshots)
+    overview = overview.drop_duplicates(subset=["ticker"], keep="last")
+
     # Rename name -> company_name for clarity
     if "name" in overview.columns:
         overview = overview.rename(columns={"name": "company_name"})
@@ -180,24 +183,16 @@ def _join_overview(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
     ov_cols = [c for c in ["ticker", "company_name", "sector", "industry", "market_cap"]
                if c in overview.columns]
 
-    # Bring in sector if missing; market_cap from overview as fallback
-    if "sector" not in df.columns or df["sector"].isna().all():
-        merge_cols = [c for c in ["ticker", "company_name", "sector"] if c in overview.columns]
-        df = df.merge(overview[merge_cols], on="ticker", how="left")
-    else:
-        df = df.merge(
-            overview[ov_cols],
-            on="ticker", how="left", suffixes=("", "_ov"),
-        )
-        if "sector_ov" in df.columns:
-            df["sector"] = df["sector"].fillna(df["sector_ov"])
-            df.drop(columns=["sector_ov"], inplace=True)
-        if "market_cap_ov" in df.columns and "market_cap" in df.columns:
-            df["market_cap"] = df["market_cap"].fillna(df["market_cap_ov"])
-            df.drop(columns=["market_cap_ov"], inplace=True)
-
-    if "industry" not in df.columns and "industry" in overview.columns:
-        df = df.merge(overview[["ticker", "industry"]], on="ticker", how="left")
+    # Single merge bringing in all overview columns at once
+    df = df.merge(overview[ov_cols], on="ticker", how="left", suffixes=("", "_ov"))
+    for col in ["sector", "market_cap"]:
+        ov_col = f"{col}_ov"
+        if ov_col in df.columns:
+            if col in df.columns:
+                df[col] = df[col].fillna(df[ov_col])
+            else:
+                df[col] = df[ov_col]
+            df.drop(columns=[ov_col], inplace=True)
 
     log.info("After overview join: %d tickers with sector", df["sector"].notna().sum())
     return df
@@ -825,9 +820,9 @@ def main() -> None:
         docs_dir.mkdir(exist_ok=True)
         csv_path = docs_dir / f"live_scores_{out_date}_{port_label}.csv"
 
-    _format_display(out_df).to_csv(csv_path, index=False)
-    log.info("Wrote %d rows to %s", len(out_df), csv_path)
-    print(f"\nWrote {len(out_df)} rows to {csv_path}")
+    _format_display(top_display).to_csv(csv_path, index=False)
+    log.info("Wrote %d rows to %s", len(top_display), csv_path)
+    print(f"\nWrote {len(top_display)} rows to {csv_path}")
 
     # Record score snapshot to tracker DB if configured
     tracker_db = os.getenv("IB_TRACKER_DB")

@@ -18,10 +18,15 @@ from datetime import date, datetime
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+load_dotenv(ROOT / ".env")
 
 from ib_trader.client import IBClient
-from ib_trader.tracker import init_tracker_db, record_nav, sync_ib_fills, update_forward_returns
+from ib_trader.tracker import (
+    init_tracker_db, record_nav, sync_ib_fills, update_forward_returns,
+    get_strategy_positions, compute_strategy_nav,
+)
 
 
 def main() -> None:
@@ -72,7 +77,8 @@ def main() -> None:
             fills = client.ib.reqExecutions()
             new_fills = []
             for fill in fills:
-                fill_time = datetime.strptime(fill.execution.time, "%Y%m%d %H:%M:%S")
+                raw_time = fill.execution.time
+                fill_time = raw_time if isinstance(raw_time, datetime) else datetime.strptime(raw_time, "%Y%m%d %H:%M:%S")
                 if fill_time.date() < since_date:
                     continue
                 exec_id = fill.execution.execId
@@ -103,11 +109,16 @@ def main() -> None:
     with IBClient() as client:
         count = sync_ib_fills(client, conn, args.strategy, since_date=since_date)
         try:
-            nav = client.get_nav()
-            record_nav(conn, args.strategy, nav)
-            print(f"Recorded NAV ${nav:,.0f} to tracker DB.")
+            positions = get_strategy_positions(conn, args.strategy)
+            if positions:
+                price_map = client.get_live_prices(list(positions.keys()))
+                nav = compute_strategy_nav(conn, args.strategy, price_map)
+                record_nav(conn, args.strategy, nav)
+                print(f"Recorded strategy NAV ${nav:,.0f} to tracker DB ({len(positions)} positions).")
+            else:
+                print("No open positions — strategy NAV not recorded.")
         except Exception as exc:
-            print(f"Warning: could not record NAV: {exc}")
+            print(f"Warning: could not record strategy NAV: {exc}")
 
     if count > 0:
         print(f"Inserted {count} new fill(s) for strategy '{args.strategy}'.")

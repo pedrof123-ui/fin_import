@@ -40,6 +40,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -332,11 +333,24 @@ def main() -> int:
     load_dotenv(ROOT / ".env", override=True)
     args = parse_args()
 
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    log_fmt = "%(asctime)s %(levelname)s %(message)s"
+    log_datefmt = "%H:%M:%S"
+
+    log_dir = ROOT / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_path = log_dir / f"hf_update_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
+        level=log_level,
+        format=log_fmt,
+        datefmt=log_datefmt,
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path),
+        ],
     )
+    log.info("Log file: %s", log_path)
 
     api_key = None
     if not args.skip_estimates:

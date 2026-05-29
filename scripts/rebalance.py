@@ -48,6 +48,9 @@ def main() -> None:
                         help="Order type (default: MOC)")
     parser.add_argument("--strategy", default="fundamentals_alpha",
                         help="Strategy tag written to IB orderRef (default: fundamentals_alpha)")
+    parser.add_argument("--nav-override", type=float, default=None, metavar="DOLLARS",
+                        help="Use this value as NAV for position sizing (e.g. 100000 for $100K). "
+                             "Use when multiple strategies share one account.")
     parser.add_argument("--tracker-db", default=None,
                         help="Path to tracker DuckDB (overrides IB_TRACKER_DB env var)")
     parser.add_argument("--cancel-all", action="store_true",
@@ -92,21 +95,36 @@ def main() -> None:
             sys.exit(1)
 
         log.info("Loaded %d portfolio positions from %s", len(ranked_df), scores_path)
-        run_rebalance(ranked_df, client, order_type=args.order_type,
-                      dry_run=args.dry_run, strategy=args.strategy)
 
-        # Record end-of-rebalance NAV to tracker (live runs only)
+        # Open tracker DB for strategy position scoping (needed even on dry runs)
         tracker_db = args.tracker_db or os.getenv("IB_TRACKER_DB")
-        if not args.dry_run and tracker_db:
+        tracker_conn = None
+        if tracker_db:
             try:
-                from ib_trader.tracker import init_tracker_db, record_nav
-                nav = client.get_nav()
+                from ib_trader.tracker import init_tracker_db
                 tracker_conn = init_tracker_db(tracker_db)
-                record_nav(tracker_conn, args.strategy, nav)
-                tracker_conn.close()
-                log.info("Recorded NAV $%,.0f to tracker DB.", nav)
             except Exception as exc:
-                log.warning("Could not record NAV to tracker: %s", exc)
+                log.warning("Could not open tracker DB — sells will not be scoped to strategy: %s", exc)
+
+        run_rebalance(ranked_df, client, order_type=args.order_type,
+                      dry_run=args.dry_run, strategy=args.strategy,
+                      tracker_conn=tracker_conn, nav_override=args.nav_override)
+
+        # Record end-of-rebalance strategy NAV to tracker (live runs only)
+        if not args.dry_run and tracker_conn:
+            try:
+                from ib_trader.tracker import record_nav, get_strategy_positions, compute_strategy_nav
+                positions = get_strategy_positions(tracker_conn, args.strategy)
+                if positions:
+                    price_map = client.get_live_prices(list(positions.keys()))
+                    nav = compute_strategy_nav(tracker_conn, args.strategy, price_map)
+                    record_nav(tracker_conn, args.strategy, nav)
+                    log.info("Recorded strategy NAV $%,.0f to tracker DB.", nav)
+            except Exception as exc:
+                log.warning("Could not record strategy NAV to tracker: %s", exc)
+
+        if tracker_conn:
+            tracker_conn.close()
 
 
 if __name__ == "__main__":

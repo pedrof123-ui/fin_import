@@ -212,7 +212,8 @@ def sync_ib_fills(
         action = "BUY" if fill.execution.side == "BOT" else "SELL"
         qty = float(fill.execution.shares)
         fill_price = float(fill.execution.price)
-        fill_time = datetime.strptime(fill.execution.time, "%Y%m%d %H:%M:%S")
+        raw_time = fill.execution.time
+        fill_time = raw_time if isinstance(raw_time, datetime) else datetime.strptime(raw_time, "%Y%m%d %H:%M:%S")
         commission = float(getattr(fill.commissionReport, "commission", 0.0) or 0.0)
 
         if since_date and fill_time.date() < since_date:
@@ -380,6 +381,34 @@ def record_fills_from_blotter(
         count += 1
 
     return count
+
+
+def get_strategy_positions(
+    conn: duckdb.DuckDBPyConnection,
+    strategy: str,
+) -> dict[str, float]:
+    """Return {ticker: qty_remaining} for all open lots of this strategy."""
+    rows = conn.execute(
+        "SELECT ticker, SUM(qty_remaining) FROM tax_lots "
+        "WHERE strategy = ? AND qty_remaining > 0 "
+        "GROUP BY ticker",
+        [strategy],
+    ).fetchall()
+    return {row[0]: float(row[1]) for row in rows}
+
+
+def compute_strategy_nav(
+    conn: duckdb.DuckDBPyConnection,
+    strategy: str,
+    price_map: dict[str, float],
+) -> float:
+    """Compute strategy NAV as sum of open position market values.
+
+    Uses tracker tax lots (strategy-owned positions only), not the full account NAV.
+    Tickers missing from price_map are excluded from the sum.
+    """
+    positions = get_strategy_positions(conn, strategy)
+    return sum(qty * price_map[t] for t, qty in positions.items() if t in price_map)
 
 
 def load_backtest_benchmarks(

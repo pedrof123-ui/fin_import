@@ -1,0 +1,26 @@
+rank,percentile,ticker,company_name,score,sector,market_cap,price,liquidity,pe_ratio,fcf_yield,earnings_yield,ttm_gross_margin,ttm_operating_margin,debt_to_ebitda,roa,top_factor,value_trap,missing_factor_count,data_quality,feature_available_date,weight_pct,alloc_pct
+1,100.0%,WINA,Winmark Corporation,3.0,CONSUMER CYCLICAL,1B,380.5,16M,33.9,3.2%,3.0%,96.4%,63.4%,0.0,167.4%,low_ps,False,0,good,2026-03-31,3.9%,2.0%
+2,99.9%,LVS,Las Vegas Sands Corp,2.3,CONSUMER CYCLICAL,34B,54.3,252M,22.4,5.1%,4.5%,49.8%,23.7%,0.5,7.4%,low_ps,False,0,good,2026-03-31,4.0%,2.0%
+3,99.8%,TGTX,TG Therapeutics Inc,2.1,HEALTHCARE,6B,33.8,84M,12.1,-0.5%,8.3%,83.6%,20.0%,0.0,42.1%,high_earnings_yield,False,1,partial,2026-03-31,4.1%,2.0%
+4,99.7%,ZTO,ZTO Express (Cayman) Inc,1.9,INDUSTRIALS,17B,25.6,47M,2.2,79.3%,44.5%,25.0%,20.9%,1.9,9.9%,high_fcf_yield,False,0,good,2026-03-31,5.8%,2.9%
+5,99.6%,FTNT,Fortinet Inc,1.5,TECHNOLOGY,94B,84.3,704M,33.8,3.6%,3.0%,80.8%,30.6%,0.4,17.8%,low_ps,False,1,partial,2026-03-31,2.5%,1.3%
+6,99.5%,CCL,Carnival Corporation,1.4,CONSUMER CYCLICAL,39B,27.9,813M,12.6,7.7%,8.0%,37.5%,16.9%,0.4,6.0%,high_earnings_yield,False,0,good,2026-04-29,3.9%,2.0%
+7,99.3%,LOW,Lowe's Companies Inc,1.3,CONSUMER CYCLICAL,122B,217.9,672M,18.3,6.3%,5.5%,33.5%,11.8%,0.5,12.3%,low_ps,False,0,good,2026-05-01,6.0%,3.0%
+8,99.2%,KSS,Kohl's Corporation,1.1,CONSUMER CYCLICAL,1B,15.6,70M,6.6,52.5%,15.1%,40.6%,3.3%,0.1,2.0%,high_fcf_yield,False,0,good,2026-05-01,2.0%,1.0%
+9,99.1%,DXC,DXC Technology Co,0.9,TECHNOLOGY,2B,11.3,55M,4.8,50.5%,20.9%,21.9%,5.3%,0.6,3.2%,high_fcf_yield,False,0,good,2026-03-01,5.2%,2.6%
+10,99.0%,MAR,Marriott International Inc,0.9,CONSUMER CYCLICAL,102B,361.7,497M,37.5,2.7%,2.7%,21.3%,15.8%,0.5,9.4%,high_div_yield,False,0,good,2026-03-31,7.0%,3.5%
+11,98.9%,GFI,Gold Fields Ltd ADR,0.9,BASIC MATERIALS,35B,40.2,126M,7.5,10.7%,13.4%,52.5%,48.3%,0.1,31.7%,high_earnings_yield,False,0,good,2026-03-31,2.7%,1.4%
+12,98.8%,DAVE,Dave Inc,0.8,TECHNOLOGY,4B,272.0,126M,20.0,7.3%,5.0%,86.7%,33.7%,0.8,40.2%,high_fcf_yield,False,1,partial,2026-03-31,1.9%,1.0%
+14,98.6%,CALM,Cal-Maine Foods Inc,0.8,CONSUMER DEFENSIVE,4B,76.5,50M,5.2,19.9%,19.2%,33.8%,25.1%,0.0,22.1%,high_fcf_yield,False,0,good,2026-04-29,5.4%,2.7%
+15,98.4%,ORLA,Orla Mining Ltd,0.8,BASIC MATERIALS,4B,13.1,40M,45.8,-2.4%,2.2%,51.9%,43.2%,0.0,5.2%,high_fcf_yield,False,0,good,2026-03-31,2.1%,1.1%
+16,98.3%,VRSN,VeriSign Inc,0.7,TECHNOLOGY,27B,268.7,219M,29.9,4.3%,3.3%,88.2%,67.7%,0.0,62.3%,low_ps,False,0,good,2026-03-31,5.9%,3.0%
+17,98.2%,RNG,Ringcentral Inc,0.7,TECHNOLOGY,3B,40.2,83M,80.6,15.9%,1.2%,71.2%,5.0%,3.2,2.9%,high_fcf_yield,False,0,good,2026-03-31,3.1%,1.5%
+18,98.1%,YELP,Yelp Inc,0.7,COMMUNICATION SERVICES,1B,27.6,30M,11.3,19.7%,8.9%,90.3%,12.6%,0.0,15.2%,high_fcf_yield,False,1,partial,2026-03-31,4.3%,2.1%
+19,98.0%,IT,Gartner Inc,0.7,TECHNOLOGY,11B,148.5,244M,14.2,11.3%,7.0%,67.7%,15.8%,0.1,9.0%,high_fcf_yield,False,1,partial,2026-03-31,3.7%,1.9%
+20,97.9%,PARR,Par Pacific Holdings Inc,0.6,ENERGY,3B,65.7,82M,8.8,9.9%,11.3%,18.1%,7.2%,0.4,9.1%,high_earnings_yield,False,1,partial,2026-03-31,2.5%,1.3%
+21,97.8%,BHP,BHP Group Limited,0.6,BASIC MATERIALS,223B,87.8,186M,10.3,9.3%,9.7%,82.7%,41.0%,0.1,18.7%,high_earnings_yield,False,0,good,2026-03-01,5.5%,2.8%
+22,97.7%,APA,APA Corporation,0.6,ENERGY,13B,40.7,267M,10.1,12.3%,9.9%,38.1%,30.9%,0.1,7.5%,high_fcf_yield,False,0,good,2026-03-31,3.3%,1.6%
+23,97.6%,PRG,PROG Holdings Inc,0.5,INDUSTRIALS,2B,35.8,19M,10.0,22.2%,10.0%,84.9%,8.8%,-0.0,9.1%,high_fcf_yield,False,0,good,2026-03-31,3.9%,1.9%
+24,97.5%,AU,AngloGold Ashanti plc,0.5,BASIC MATERIALS,48B,93.7,231M,18.1,6.6%,5.5%,48.3%,43.3%,0.0,17.5%,high_fcf_yield,False,0,good,2026-03-31,2.6%,1.3%
+25,97.4%,AGX,Argan Inc,0.5,INDUSTRIALS,9B,677.5,187M,69.7,4.3%,1.4%,20.5%,14.3%,0.0,11.6%,low_ps,False,0,good,2026-05-01,3.0%,1.5%
+28,97.1%,CMCSA,Comcast Corp,0.5,COMMUNICATION SERVICES,90B,27.0,784M,4.9,22.4%,20.4%,71.7%,16.7%,0.3,7.3%,high_fcf_yield,False,0,good,2026-03-31,5.6%,2.8%

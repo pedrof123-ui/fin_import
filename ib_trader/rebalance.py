@@ -14,17 +14,36 @@ def run_rebalance(
     order_type: str = "MOC",
     dry_run: bool = True,
     strategy: str = "fundamentals_alpha",
+    tracker_conn=None,
+    nav_override: float | None = None,
 ) -> pd.DataFrame:
     """Execute a full portfolio rebalance.
 
     ranked_df: output of load_scores_csv() — portfolio rows only, numeric alloc_pct.
     client: connected IBClient.
     dry_run: print blotter but submit no orders.
+    tracker_conn: open tracker DB connection — used to scope sells to strategy-owned positions only.
+    nav_override: if set, use this value as NAV for position sizing instead of the account NAV.
+                  Use when multiple strategies share one account and each has a fixed capital allocation.
     Returns blotter DataFrame.
     """
     # 1. Account state
-    nav = client.get_nav()
-    current = client.get_positions()
+    nav = nav_override if nav_override else client.get_nav()
+    ib_positions = client.get_positions()
+
+    # Scope current positions to only what this strategy owns, so we never
+    # sell positions belonging to other strategies running on the same account.
+    if tracker_conn is not None:
+        from .tracker import get_strategy_positions
+        strategy_qty = get_strategy_positions(tracker_conn, strategy)
+        # Use IB qty capped at tracker qty (tracker is authoritative for strategy ownership)
+        current = {
+            t: min(ib_positions.get(t, qty), qty)
+            for t, qty in strategy_qty.items()
+            if qty > 0
+        }
+    else:
+        current = ib_positions
 
     # 2. Live prices for all relevant tickers (portfolio + current holdings)
     all_tickers = sorted(set(ranked_df["ticker"].tolist()) | set(current.keys()))
@@ -55,7 +74,8 @@ def run_rebalance(
     buys = [s for s in specs if s.action == "BUY"]
     sells = [s for s in specs if s.action == "SELL"]
     account_type = "LIVE" if client.is_live() else "PAPER"
-    print(f"\nAccount: {client.account} [{account_type}]  NAV: ${nav:,.0f}")
+    nav_label = f"${nav:,.0f} (override)" if nav_override else f"${nav:,.0f}"
+    print(f"\nAccount: {client.account} [{account_type}]  NAV: {nav_label}")
     print(f"Current positions: {len(current)} tickers")
     print(f"Target positions:  {len(target)} tickers")
     print(f"Orders: {len(buys)} buys, {len(sells)} sells")
