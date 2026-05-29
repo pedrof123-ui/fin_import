@@ -16,7 +16,8 @@ type SubRowKind =
   | "ebitdaMargin"     // derived %
   | "effectiveTaxRate" // derived %
   | "netIncomeMargin"  // derived %
-  | "capexPct";        // editable % (capex % of revenue)
+  | "capexPct"         // editable % (capex % of revenue)
+  | "daRev";           // derived % (D&A % of revenue)
 
 interface RowDef {
   key: keyof HistoricalRow;
@@ -36,7 +37,7 @@ const ROWS_STANDARD: RowDef[] = [
   { key: "ebitda",                    label: "EBITDA",       isKey: true,  subRows: ["ebitdaMargin"]           },
   { key: "income_tax_expense",        label: "Income Tax",                 subRows: ["effectiveTaxRate"]       },
   { key: "net_income",                label: "Net Income",   isKey: true,  subRows: ["netIncomeMargin"]        },
-  { key: "depreciation_amortization", label: "D&A",          editableProformaField: "da"                       },
+  { key: "depreciation_amortization", label: "D&A",          editableProformaField: "da", subRows: ["daRev"]  },
   { key: "capital_expenditures",      label: "CapEx",                      subRows: ["capexPct"]               },
   { key: "total_assets",              label: "Total Assets" },
   { key: "total_debt",                label: "Total Debt" },
@@ -53,7 +54,7 @@ const ROWS_AV: RowDef[] = [
   { key: "ebitda",                    label: "EBITDA",       isKey: true,  subRows: ["ebitdaMargin"]       },
   { key: "income_tax_expense",        label: "Income Tax",                 subRows: ["effectiveTaxRate"]   },
   { key: "net_income",                label: "Net Income",   isKey: true,  subRows: ["netIncomeMargin"]    },
-  { key: "depreciation_amortization", label: "D&A",          editableProformaField: "da"                   },
+  { key: "depreciation_amortization", label: "D&A",          editableProformaField: "da", subRows: ["daRev"] },
   { key: "capital_expenditures",      label: "CapEx",                      subRows: ["capexPct"]           },
   { key: "total_assets",              label: "Total Assets" },
   { key: "total_debt",                label: "Total Debt" },
@@ -72,6 +73,7 @@ const SUB_LABEL: Record<SubRowKind, string> = {
   effectiveTaxRate: "Effective Tax Rate",
   netIncomeMargin:  "Net Income Margin %",
   capexPct:         "CapEx % Rev",
+  daRev:            "D&A % Rev",
 };
 
 // Sub-rows that show editable dollar inputs in the proforma columns.
@@ -82,7 +84,7 @@ const PCT_SUB_ROWS = new Set<SubRowKind>(["revGrowth", "grossMargin", "capexPct"
 
 // Sub-rows that are always read-only derived ratios.
 const DERIVED_SUB_ROWS = new Set<SubRowKind>([
-  "opMargin", "ebitdaMargin", "effectiveTaxRate", "netIncomeMargin",
+  "opMargin", "ebitdaMargin", "effectiveTaxRate", "netIncomeMargin", "daRev",
 ]);
 
 // Grid rows for keyboard navigation — standard mode:
@@ -134,6 +136,8 @@ function computeHistSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Histor
       return col.capital_expenditures != null ? Math.abs(col.capital_expenditures) / rev : null;
     case "ebitMargin":
       return col.operating_income != null ? col.operating_income / rev : null;
+    case "daRev":
+      return col.depreciation_amortization != null ? col.depreciation_amortization / rev : null;
     case "sga":
     case "rd":
       return null;
@@ -154,6 +158,7 @@ function computeProformaSubRow(kind: SubRowKind, col: HistoricalRow, prevCol: Hi
     case "netIncomeMargin":  return col.net_income != null ? col.net_income / rev : null;
     case "capexPct":         return col.capital_expenditures != null ? Math.abs(col.capital_expenditures) / rev : null;
     case "ebitMargin":       return col.operating_income != null ? col.operating_income / rev : null;
+    case "daRev":            return col.depreciation_amortization != null ? col.depreciation_amortization / rev : null;
     case "sga":
     case "rd":               return null;
   }
