@@ -9,6 +9,21 @@ Usage:
     uv run scripts/rebalance.py --cancel-all                         # cancel all open orders and exit
     uv run scripts/rebalance.py --tracker-db data/ib_tracker_paper.duckdb  # override tracker DB
 
+NAV / position sizing (multi-strategy shared account):
+    uv run scripts/rebalance.py --nav-override 100000                # fixed $100K allocation (first run)
+    uv run scripts/rebalance.py --use-strategy-nav                   # compound: use last recorded strategy NAV
+
+Monthly workflow:
+    # 1. Update data
+    uv run scripts/av_update.py
+    uv run scripts/hf_update.py
+    # 2. Score
+    uv run scripts/score_live.py --top 25
+    # 3. Rebalance (before 15:50 ET on last trading day of month)
+    uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --use-strategy-nav --no-dry-run
+    # 4. Sync fills (after close)
+    uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
+
 Environment variables (in .env):
     IB_HOST, IB_PORT, IB_CLIENT_ID, IB_ACCOUNT, IB_TRACKER_DB
 """
@@ -51,6 +66,10 @@ def main() -> None:
     parser.add_argument("--nav-override", type=float, default=None, metavar="DOLLARS",
                         help="Use this value as NAV for position sizing (e.g. 100000 for $100K). "
                              "Use when multiple strategies share one account.")
+    parser.add_argument("--use-strategy-nav", action="store_true",
+                        help="Use the last recorded strategy NAV from the tracker for position sizing. "
+                             "Enables compounding. Requires --tracker-db. "
+                             "Takes precedence over --nav-override.")
     parser.add_argument("--tracker-db", default=None,
                         help="Path to tracker DuckDB (overrides IB_TRACKER_DB env var)")
     parser.add_argument("--cancel-all", action="store_true",
@@ -106,9 +125,26 @@ def main() -> None:
             except Exception as exc:
                 log.warning("Could not open tracker DB — sells will not be scoped to strategy: %s", exc)
 
+        # Resolve NAV for position sizing
+        nav_override = args.nav_override
+        if args.use_strategy_nav:
+            if not tracker_conn:
+                log.error("--use-strategy-nav requires --tracker-db")
+                sys.exit(1)
+            from ib_trader.tracker import get_latest_strategy_nav
+            nav_override = get_latest_strategy_nav(tracker_conn, args.strategy)
+            if nav_override is None:
+                log.error(
+                    "No strategy NAV recorded for '%s'. "
+                    "Run sync_fills.py first, or use --nav-override for the initial run.",
+                    args.strategy,
+                )
+                sys.exit(1)
+            log.info("Using strategy NAV from tracker: $%s", f"{nav_override:,.0f}")
+
         run_rebalance(ranked_df, client, order_type=args.order_type,
                       dry_run=args.dry_run, strategy=args.strategy,
-                      tracker_conn=tracker_conn, nav_override=args.nav_override)
+                      tracker_conn=tracker_conn, nav_override=nav_override)
 
         # Record end-of-rebalance strategy NAV to tracker (live runs only)
         if not args.dry_run and tracker_conn:

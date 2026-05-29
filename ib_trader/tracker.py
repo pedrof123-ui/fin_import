@@ -397,6 +397,18 @@ def get_strategy_positions(
     return {row[0]: float(row[1]) for row in rows}
 
 
+def get_latest_strategy_nav(
+    conn: duckdb.DuckDBPyConnection,
+    strategy: str,
+) -> float | None:
+    """Return the most recently recorded NAV for this strategy, or None if not yet recorded."""
+    row = conn.execute(
+        "SELECT nav, date FROM daily_nav WHERE strategy = ? ORDER BY date DESC LIMIT 1",
+        [strategy],
+    ).fetchone()
+    return float(row[0]) if row else None
+
+
 def compute_strategy_nav(
     conn: duckdb.DuckDBPyConnection,
     strategy: str,
