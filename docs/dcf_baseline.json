@@ -1,0 +1,178 @@
+{
+  "generated": "2026-05-31T18:19:33.092671",
+  "source": "api",
+  "api_url": "http://localhost:8000",
+  "tickers": {
+    "AAPL": {
+      "intrinsic_value_per_share": 155.35226709837255,
+      "current_price": 312.05999755859375,
+      "upside_pct": -0.5021717992893244,
+      "wacc": 0.102453,
+      "net_debt": 39139000000.0,
+      "diluted_shares": 14725873000.0,
+      "enterprise_value": 2326836755552.713,
+      "terminal_value": 3437398242069.4014,
+      "tv_pct_ev": 0.557,
+      "warnings": []
+    },
+    "AMZN": {
+      "intrinsic_value_per_share": 30.141453761894173,
+      "current_price": 270.6400146484375,
+      "upside_pct": -0.8886289826689225,
+      "wacc": 0.122409,
+      "net_debt": 17258000000.0,
+      "diluted_shares": 10874000000.0,
+      "enterprise_value": 345016168206.8372,
+      "terminal_value": 574714177841.6306,
+      "tv_pct_ev": 0.5249,
+      "warnings": []
+    },
+    "CALM": {
+      "intrinsic_value_per_share": 146.6011198229418,
+      "current_price": 74.72000122070312,
+      "upside_pct": 0.9620063895598832,
+      "wacc": 0.059575,
+      "net_debt": -392159000.0,
+      "diluted_shares": 47414000.0,
+      "enterprise_value": 6558786495.284962,
+      "terminal_value": 7441517850.852643,
+      "tv_pct_ev": 0.6361,
+      "warnings": []
+    },
+    "CERS": {
+      "error": "HTTP Error 422: Unprocessable Entity"
+    },
+    "CSCO": {
+      "intrinsic_value_per_share": 74.49827939736178,
+      "current_price": 120.41999816894531,
+      "upside_pct": -0.3813462835895153,
+      "wacc": 0.091168,
+      "net_debt": 24220000000.0,
+      "diluted_shares": 3982000000.0,
+      "enterprise_value": 320872148560.2946,
+      "terminal_value": 480039523044.36505,
+      "tv_pct_ev": 0.6252,
+      "warnings": []
+    },
+    "CVX": {
+      "intrinsic_value_per_share": 383.46821197258555,
+      "current_price": 182.4600067138672,
+      "upside_pct": 1.1016562417096605,
+      "wacc": 0.066022,
+      "net_debt": 40105000000.0,
+      "diluted_shares": 1985900000.0,
+      "enterprise_value": 801634522156.3577,
+      "terminal_value": 860336263934.9285,
+      "tv_pct_ev": 0.5663,
+      "warnings": []
+    },
+    "JNJ": {
+      "intrinsic_value_per_share": 490.5488497079765,
+      "current_price": 225.3300018310547,
+      "upside_pct": 1.1770241233822671,
+      "wacc": 0.055612,
+      "net_debt": 33299000000.0,
+      "diluted_shares": 2445200000.0,
+      "enterprise_value": 1232789047305.944,
+      "terminal_value": 1706696861803.6975,
+      "tv_pct_ev": 0.8058,
+      "warnings": []
+    },
+    "KMB": {
+      "intrinsic_value_per_share": 147.1339984301043,
+      "current_price": 97.5999984741211,
+      "upside_pct": 0.507520499286865,
+      "wacc": 0.058183,
+      "net_debt": 6542000000.0,
+      "diluted_shares": 337500000.0,
+      "enterprise_value": 56199724470.1602,
+      "terminal_value": 75727832495.40683,
+      "tv_pct_ev": 0.7654,
+      "warnings": []
+    },
+    "MSFT": {
+      "intrinsic_value_per_share": 380.72668802852417,
+      "current_price": 450.239990234375,
+      "upside_pct": -0.15439166603052137,
+      "wacc": 0.104364,
+      "net_debt": 8157000000.0,
+      "diluted_shares": 7445000000.0,
+      "enterprise_value": 2842667192372.3623,
+      "terminal_value": 4861408349175.455,
+      "tv_pct_ev": 0.6337,
+      "warnings": []
+    },
+    "NVDA": {
+      "intrinsic_value_per_share": 243.22657987577114,
+      "current_price": 211.13999938964844,
+      "upside_pct": 0.15196827024190948,
+      "wacc": 0.168171,
+      "net_debt": -4767000000.0,
+      "diluted_shares": 24391000000.0,
+      "enterprise_value": 5927772509749.934,
+      "terminal_value": 15715710934436.426,
+      "tv_pct_ev": 0.5602,
+      "warnings": []
+    },
+    "PFE": {
+      "intrinsic_value_per_share": 66.68339718142511,
+      "current_price": 26.18000030517578,
+      "upside_pct": 1.5471121621126114,
+      "wacc": 0.056146,
+      "net_debt": 60369000000.0,
+      "diluted_shares": 5714000000.0,
+      "enterprise_value": 441397931494.663,
+      "terminal_value": 545221459111.0009,
+      "tv_pct_ev": 0.7153,
+      "warnings": []
+    },
+    "PLTR": {
+      "intrinsic_value_per_share": 25.38037028145925,
+      "current_price": 156.5399932861328,
+      "upside_pct": -0.8378665429283139,
+      "wacc": 0.128655,
+      "net_debt": -2291631000.0,
+      "diluted_shares": 2570924000.0,
+      "enterprise_value": 62959372085.49034,
+      "terminal_value": 149185159737.1165,
+      "tv_pct_ev": 0.7064,
+      "warnings": []
+    },
+    "QCOM": {
+      "intrinsic_value_per_share": 69.52907446608201,
+      "current_price": 251.02000427246094,
+      "upside_pct": -0.7230138105223912,
+      "wacc": 0.122375,
+      "net_debt": 9835000000.0,
+      "diluted_shares": 1072000000.0,
+      "enterprise_value": 84370167827.63991,
+      "terminal_value": 103287152169.68198,
+      "tv_pct_ev": 0.3859,
+      "warnings": []
+    },
+    "UPS": {
+      "intrinsic_value_per_share": 99.295820983655,
+      "current_price": 106.69000244140625,
+      "upside_pct": -0.06930528904816645,
+      "wacc": 0.085807,
+      "net_debt": 18584000000.0,
+      "diluted_shares": 847058823.5294118,
+      "enterprise_value": 102693401303.8019,
+      "terminal_value": 145736872221.6178,
+      "tv_pct_ev": 0.623,
+      "warnings": []
+    },
+    "WMT": {
+      "intrinsic_value_per_share": 34.49627838579471,
+      "current_price": 115.75,
+      "upside_pct": -0.7019759966670004,
+      "wacc": 0.077709,
+      "net_debt": 35787000000.0,
+      "diluted_shares": 8011000000.0,
+      "enterprise_value": 312136686148.60144,
+      "terminal_value": 430836236483.425,
+      "tv_pct_ev": 0.6531,
+      "warnings": []
+    }
+  }
+}
