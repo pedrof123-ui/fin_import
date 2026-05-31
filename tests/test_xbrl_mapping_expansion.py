@@ -262,13 +262,15 @@ class TestExpandedMappings:
         """
         from xbrl_mappings import INCOME_STATEMENT_MAPPING, BALANCE_SHEET_MAPPING, CASH_FLOW_MAPPING
 
-        # Basic sanity: total concept count must not be less than Phase 0 baseline
+        # Basic sanity: total concept count must not be less than post-Phase-2.0 baseline.
+        # Phase 0 had 258 concepts; Phase 2.0 removed 5 duplicates → 253 is the clean baseline.
+        # After Phase 2.1 expansion this number should only grow.
         total = sum(
             len(v)
             for mapping in [INCOME_STATEMENT_MAPPING, BALANCE_SHEET_MAPPING, CASH_FLOW_MAPPING]
             for v in mapping.values()
         )
-        assert total >= 258, f"Total concept count {total} < Phase 0 baseline of 258"
+        assert total >= 253, f"Total concept count {total} < post-cleanup baseline of 253"
 
     def test_no_concept_from_wrong_statement(self):
         """
