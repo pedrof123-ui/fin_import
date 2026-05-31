@@ -42,9 +42,10 @@ BASELINE_FACTORS: dict[str, tuple[str, bool]] = {
 _VALUE_COLS = ["ps_ratio", "fcf_yield", "ev_ebitda", "earnings_yield"]
 _VALUE_SIGN = {"ps_ratio": True, "fcf_yield": False, "ev_ebitda": True, "earnings_yield": False}
 
-_QUALITY_COLS = ["roic", "roa", "operating_margin_slope_5y", "earnings_quality"]
-# lower_is_better=False for quality factors: higher roic/roa/margin slope/earnings_quality = better
-_QUALITY_SIGN = {"roic": False, "roa": False, "operating_margin_slope_5y": False, "earnings_quality": False}
+_QUALITY_COLS = ["roic", "roa", "operating_margin_slope_5y", "earnings_quality", "asset_growth"]
+# lower_is_better False = higher is better (roic/roa/margins/earnings_quality)
+# lower_is_better True  = lower is better (asset_growth: overinvestment predicts underperformance)
+_QUALITY_SIGN = {"roic": False, "roa": False, "operating_margin_slope_5y": False, "earnings_quality": False, "asset_growth": True}
 
 _MOMENTUM_COL = "momentum_12_1"
 
