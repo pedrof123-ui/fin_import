@@ -256,6 +256,12 @@ comprehensive income sub-items). They are intentionally excluded.
 
 **Exit criteria:** `bridge_mapping.json` committed, test passes, >= 80 standard_tags mapped.
 
+**Results (2026-05-31):** `bridge_mapping.json` maps 131/204 standard_tags (73 unmapped —
+industry-specific or no fin_import2 equivalent). Auto-match script got 38/204; 93 resolved
+manually. All 6 Phase 1 tests pass. 3 Phase 2 gating tests fail on the pre-existing
+duplicates — expected, and the gate for Phase 2.0 cleanup.
+Commit: `bf8cd0e`.
+
 ---
 
 ## Phase 2 — Expand static mapping files
