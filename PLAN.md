@@ -1,12 +1,33 @@
 # PLAN: Integrate edgartools gaap_mappings as Expanded Static Concept Layer
 
+## Overall status (2026-05-31)
+
+| Phase | Status | Commit |
+|-------|--------|--------|
+| 0 — Baseline measurement | ✓ COMPLETE | `58ae1e7` |
+| 1 — Bridge mapping | ✓ COMPLETE | `bf8cd0e` |
+| 2 — Expand static mapping files | ✓ COMPLETE | `d86ca7e` |
+| 3 — Industry override infrastructure | ✓ COMPLETE | `4751975` |
+| 4 — DCF hardening | pending | — |
+| 5 — Integration test and cleanup | pending | — |
+
+**Remaining work:** Phase 4 (DCF NULL guard + debt field expansion + regression tests)
+and Phase 5 (full re-import benchmark + full test suite green). A re-import of all tickers
+is needed to observe coverage gains in missed_concepts (Phase 2/3 changes only apply at
+import time; historical DB data unchanged).
+
+---
+
 **Goal:** Replace AI-fallback concept resolution with expanded static mappings derived from
-edgartools' `gaap_mappings.json` (2,924 concepts), add industry-override support using the
+edgartools' `gaap_mappials.json` (2,924 concepts), add industry-override support using the
 Fama-French 48 SIC classification already in edgartools, and harden the DCF against NULL
 fields caused by coverage gaps.
 
 **Constraint:** No schema changes to DuckDB tables. No changes to the DCF model logic.
 All changes are in the ingestion layer (extractors + xbrl_mappings).
+
+**Test suite:** 39 tests, all passing (12 Phase 1-2 mapping tests + 21 Phase 3 industry
+override tests + 6 pre-existing tests). Run with: `uv run pytest tests/test_xbrl_mapping_expansion.py tests/test_industry_overrides.py -v`
 
 ---
 
