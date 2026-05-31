@@ -471,7 +471,7 @@ _EDGAR_PATH = Path(__file__).parent.parent / "edgartools"
 if str(_EDGAR_PATH) not in sys.path:
     sys.path.insert(0, str(_EDGAR_PATH))
 
-from edgar.xbrl.standardization.sic_industry import sic_to_ff48
+from edgar.xbrl.standardization.sic_industry import sic_to_fama_french  # actual function name
 
 
 def get_ff48(sic: int | str | None) -> str | None:
@@ -479,7 +479,7 @@ def get_ff48(sic: int | str | None) -> str | None:
     if sic is None:
         return None
     try:
-        return sic_to_ff48(int(sic))
+        return sic_to_fama_french(int(sic))
     except Exception:
         return None
 ```

@@ -49,6 +49,7 @@ async def extract_income_statement(
     year: Optional[int] = None,
     quarter: Optional[int] = None,
     use_ai_fallback: bool = True,
+    ff48_code: str | None = None,
 ) -> pd.DataFrame:
     return await extract_statement(
         filing=filing,
@@ -64,6 +65,7 @@ async def extract_income_statement(
         year=year,
         quarter=quarter,
         use_ai_fallback=use_ai_fallback,
+        ff48_code=ff48_code,
     )
 
 

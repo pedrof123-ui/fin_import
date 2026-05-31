@@ -17,9 +17,28 @@ def _extract_value(
     mapping: dict,
     aggregation_fields: set,
     max_fields: set = frozenset(),
+    ff48_code: str | None = None,
+    statement_type: str | None = None,
 ) -> tuple[Optional[float], Optional[str]]:
-    concepts = mapping.get(field_name)
-    if concepts is None:
+    generic = list(mapping.get(field_name) or [])
+    if generic is None:
+        return None, None
+
+    # Prepend industry-specific concepts before the generic list.
+    # Industry concepts are tried first; generic list acts as fallback.
+    if ff48_code and statement_type:
+        from xbrl_mappings.industry_overrides import get_industry_concepts
+        industry = get_industry_concepts(statement_type, ff48_code, field_name)
+        if industry:
+            generic_bare = {c.split('_', 1)[1] if '_' in c else c for c in generic}
+            new = [c for c in industry if c not in generic_bare]
+            concepts = new + generic
+        else:
+            concepts = generic
+    else:
+        concepts = generic
+
+    if not concepts:
         return None, None
 
     main_items = statement_df[
@@ -110,6 +129,7 @@ async def extract_statement(
     use_ai_fallback: bool = True,
     max_fields: set = frozenset(),
     prior_period_fields: frozenset = frozenset(),
+    ff48_code: str | None = None,
 ) -> pd.DataFrame:
     print(f"\n{'='*80}\nEXTRACTING {label}\n{'='*80}")
 
@@ -207,7 +227,10 @@ async def extract_statement(
 
     for field_name in mapping:
         col = prior_period if (field_name in prior_period_fields and prior_period) else most_recent_period
-        value, concept_used = _extract_value(stmt_df, field_name, col, mapping, aggregation_fields, max_fields)
+        value, concept_used = _extract_value(
+            stmt_df, field_name, col, mapping, aggregation_fields, max_fields,
+            ff48_code=ff48_code, statement_type=statement_type,
+        )
         if value is not None:
             found_count += 1
             results.append({'Status': 'found', 'Field': field_name, 'Value': value, 'Concept': concept_used})

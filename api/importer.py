@@ -49,6 +49,8 @@ async def import_ticker(
     form = "10-K" if period_type == "FY" else "10-Q"
 
     company = await asyncio.to_thread(lambda: Company(ticker))
+    from xbrl_mappings.sic_lookup import get_ff48
+    ff48_code = get_ff48(getattr(company, 'sic', None))
 
     if periods == 1:
         latest = await asyncio.to_thread(lambda: company.latest(form))
@@ -89,7 +91,7 @@ async def import_ticker(
             continue
 
         t0 = time.monotonic()
-        n_ok, errs = await _extract_and_insert(filing, ticker, year, form, db, quarter=quarter)
+        n_ok, errs = await _extract_and_insert(filing, ticker, year, form, db, quarter=quarter, ff48_code=ff48_code)
         elapsed = time.monotonic() - t0
         errors.extend(errs)
 
@@ -126,6 +128,7 @@ async def _extract_and_insert(
     form: str,
     db: FinancialStatementsDB,
     quarter: int | None = None,
+    ff48_code: str | None = None,
 ) -> tuple[int, list[str]]:
     n_ok = 0
     errors: list[str] = []
@@ -136,7 +139,7 @@ async def _extract_and_insert(
         ("cashflow", extract_cash_flow, db.insert_cash_flow),
     ]:
         try:
-            df = await extractor(filing, ticker, form, year, quarter=quarter, use_ai_fallback=True)
+            df = await extractor(filing, ticker, form, year, quarter=quarter, use_ai_fallback=True, ff48_code=ff48_code)
             inserter(df)
             n_ok += 1
         except Exception as e:
