@@ -264,7 +264,7 @@ Commit: `bf8cd0e`.
 
 ---
 
-## Phase 2 — Expand static mapping files
+## Phase 2 — Expand static mapping files ✓ COMPLETE
 
 **Purpose:** Use `bridge_mapping.json` + `gaap_mappings.json` to expand the three
 existing `xbrl_mappings/*.py` files in-place, appending new concepts directly to each
@@ -412,6 +412,13 @@ uv run scripts/measure_coverage.py --tickers AAPL,MSFT,JPM,BAC,UNH,GS,WMT,XOM,PF
 - No new cross-field duplicates introduced (verified by `test_no_duplicate_concepts_across_fields_same_statement`)
 
 **Exit criteria:** Tests pass, coverage delta documented, diff reviewed and approved.
+
+**Results (2026-05-31):** Phase 2.0 cleaned 5 duplicates (253 clean concepts).
+Phase 2.1 expansion script applied: 253 → 1,236 concepts (+983). Breakdown:
+income 125→415, balance 71→692, cashflow 62→129. All 12 tests pass; idempotency
+confirmed. 20% of AI discovery queue (71/348) now covered statically.
+Re-import needed to reflect improvement in missed_concepts table.
+Commit: `d86ca7e`.
 
 ---
 
