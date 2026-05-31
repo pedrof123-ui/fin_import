@@ -95,7 +95,7 @@ fin_import2/
 
 ---
 
-## Phase 0 — Baseline measurement
+## Phase 0 — Baseline measurement ✓ COMPLETE
 
 **Purpose:** Establish quantitative before-state so each subsequent phase has a measurable
 pass/fail criterion. No production code changes.
@@ -140,9 +140,14 @@ Re-import 3 tickers (one standard: AAPL, one bank: JPM, one insurance: UNH) with
 **Exit criteria:** `docs/coverage_baseline.json`, `docs/dcf_baseline.json`, and
 `docs/ai_baseline.json` all written. No code changes merged yet.
 
+**Results (2026-05-31):** Baseline captured for 12 tickers. Income hit rate 47–63%,
+balance 53–82%, cash flow 56–97%. DCF-critical misses: `depreciation_amortization` (IS,
+9 tickers), `current_portion_long_term_debt` (BS, 9 tickers), `gross_profit` (IS, 5),
+`operating_income` (IS, 3). DCF baseline written via API for 14/15 tickers.
+
 ---
 
-## Phase 1 — Bridge mapping: standard_tags → field_names
+## Phase 1 — Bridge mapping: standard_tags → field_names ✓ COMPLETE
 
 **Purpose:** Create a durable, human-reviewed mapping between edgartools' 235 `standard_tags`
 and fin_import2's 100 `field_names`. This is a one-time artifact, not generated code.
