@@ -422,7 +422,7 @@ Commit: `d86ca7e`.
 
 ---
 
-## Phase 3 — Industry override infrastructure
+## Phase 3 — Industry override infrastructure ✓ COMPLETE
 
 **Purpose:** Pass SIC code through the extraction chain and apply
 `gaap_mappings.json::industry_overrides` before the generic concept list. This is the
@@ -601,6 +601,12 @@ uv run scripts/measure_coverage.py --tickers JPM,UNH,BAC,GS \
 
 **Exit criteria:** All tests pass. Financial sector coverage delta documented. No regressions
 on non-financial tickers verified by re-running `measure_coverage.py` on full corpus.
+
+**Results (2026-05-31):** `industry_overrides.py` generated with 8,140 concepts across all
+48 FF48 codes × 3 statements (income 2,381 / balance 3,430 / cashflow 2,329). `sic_lookup.py`
+delegates to `sic_to_fama_french` from edgartools. `ff48_code` threaded through all four
+extractor layers. 39/39 tests pass. Industry concepts prepend generic list with deduplication
+guard preventing double-counting on aggregation fields. Commit: `4751975`.
 
 ---
 
