@@ -538,6 +538,10 @@ BALANCE_SHEET_MAPPING = {
     
     "current_portion_long_term_debt": [
         "LongTermDebtCurrent",
+        # --- edgartools lower-confidence ---
+        # Excluded from auto-expansion because it has industry_overrides; added manually.
+        # Used by 366 companies (conf=0.50); standard_tag=CurrentPortionOfLongTermDebt.
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",  # edgartools-expanded (conf=0.50)
     ],
     
     "accrued_expenses": [

@@ -14,7 +14,7 @@ Both tables live in `data/xbrl_mappings_multi.duckdb`.
 ## How AI discoveries flow
 
 When `extract_statement()` runs with AI fallback enabled and encounters an XBRL concept
-not in the static mapping:
+not in the static mapping or industry overrides:
 
 1. **Phase A** — checks `ai_discovery_queue` for a prior AI classification (free, no API call)
 2. **Phase B** — sends remaining unmapped concepts to Claude Haiku via OpenRouter in batches of 20
@@ -24,8 +24,13 @@ not in the static mapping:
    Pass 1 — so it resolves statically at zero API cost going forward
 
 The static `.py` mapping files (`xbrl_mappings/`) are **not modified at runtime**. All
-runtime persistence is DB-only. To permanently promote a discovery into the static files,
-use `write_concept_to_mapping()` manually after review.
+runtime persistence is DB-only.
+
+**Impact of the Phase 2/3 mapping expansion:** The 1,237-concept static mapping (up from 258)
+and 8,140 industry-specific concepts cover ~20% of what was previously AI-discovered,
+eliminating those API calls on re-import. For financial-sector tickers (banks, insurers),
+revenue and debt fields that previously required AI resolution are now covered by
+`industry_overrides.py`.
 
 ---
 
@@ -48,19 +53,18 @@ CREATE TABLE ai_discovery_queue (
 ### Query examples
 
 ```python
-from xbrl_mapping_manager_multi_statement import XBRLMappingManager
-
-mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
+import duckdb
+conn = duckdb.connect('data/xbrl_mappings_multi.duckdb', read_only=True)
 
 # All discoveries, most recent first
-mapper.conn.execute("""
+conn.execute("""
     SELECT ticker, statement_type, field_name, concept, discovered_date
     FROM ai_discovery_queue
     ORDER BY discovered_date DESC
 """).fetchdf()
 
-# Concepts validated across multiple companies (ready to promote)
-mapper.conn.execute("""
+# Concepts validated across multiple companies (ready to promote to static mapping)
+conn.execute("""
     SELECT field_name, concept, COUNT(DISTINCT ticker) as companies
     FROM ai_discovery_queue
     WHERE statement_type = 'income'
@@ -69,8 +73,8 @@ mapper.conn.execute("""
     ORDER BY companies DESC
 """).fetchdf()
 
-# What already enriches Pass 1 (seen >= 2 times)
-mapper.conn.execute("""
+# What already enriches Pass 1 (seen >= 2 times — auto-enriched at extraction time)
+conn.execute("""
     SELECT field_name, concept, COUNT(*) as times_seen
     FROM ai_discovery_queue
     WHERE statement_type = 'balance'
@@ -79,7 +83,7 @@ mapper.conn.execute("""
     ORDER BY times_seen DESC
 """).fetchdf()
 
-mapper.close()
+conn.close()
 ```
 
 ---
@@ -113,8 +117,11 @@ CREATE TABLE missed_concepts (
 ### Query examples
 
 ```python
+import duckdb
+conn = duckdb.connect('data/xbrl_mappings_multi.duckdb', read_only=True)
+
 # Which fields are consistently missing across companies?
-mapper.conn.execute("""
+conn.execute("""
     SELECT field_name, statement_type, COUNT(DISTINCT ticker) as companies, reason
     FROM missed_concepts
     GROUP BY field_name, statement_type, reason
@@ -122,7 +129,7 @@ mapper.conn.execute("""
 """).fetchdf()
 
 # Concepts AI couldn't classify (candidates for manual mapping)
-mapper.conn.execute("""
+conn.execute("""
     SELECT concept, COUNT(*) as times_seen, COUNT(DISTINCT ticker) as companies
     FROM missed_concepts
     WHERE reason = 'no_match' AND concept IS NOT NULL
@@ -131,46 +138,35 @@ mapper.conn.execute("""
 """).fetchdf()
 
 # API failures (may indicate key or connectivity issues)
-mapper.conn.execute("""
+conn.execute("""
     SELECT DATE(logged_date) as day, COUNT(*) as failures
     FROM missed_concepts
     WHERE reason = 'api_failure'
     GROUP BY day
     ORDER BY day DESC
 """).fetchdf()
+
+conn.close()
 ```
 
 ---
 
 ## Promotion workflow
 
-After reviewing discoveries, permanently add high-confidence concepts to the static mapping:
+After reviewing discoveries, permanently add high-confidence concepts to the static mapping
+files by editing `xbrl_mappings/income_statement_xbrl_mapping.py`, `balance_sheet_xbrl_mapping.py`,
+or `cash_flow_xbrl_mapping.py` directly. Add the concept to the appropriate field list with
+a comment indicating provenance:
 
 ```python
-from xbrl_concept_mapper import write_concept_to_mapping
-
-# Manually promote a concept to the static .py file
-write_concept_to_mapping(
-    concept='MarketableSecuritiesNoncurrent',
-    field_name='long_term_investments',
-    statement_type='balance',
-    ticker='AAPL',  # used in the comment tag
-)
+# In balance_sheet_xbrl_mapping.py, field "long_term_investments":
+"MarketableSecuritiesNoncurrent",  # promoted from ai_discovery_queue (seen 5× across AAPL, MSFT, ...)
 ```
 
-Or use the `XBRLMappingManager` DB promotion (promotes to `core_concept_mappings`):
+Run the mapping tests after any manual edit to confirm no cross-field duplicates were introduced:
 
-```python
-import asyncio
-from xbrl_mapping_manager_multi_statement import XBRLMappingManager
-
-mapper = XBRLMappingManager('data/xbrl_mappings_multi.duckdb')
-asyncio.run(mapper.promote_ai_to_core(
-    statement_type='balance',
-    field_name='long_term_investments',
-    concept='MarketableSecuritiesNoncurrent',
-))
-mapper.close()
+```bash
+uv run pytest tests/test_xbrl_mapping_expansion.py -v
 ```
 
 ---
@@ -184,3 +180,5 @@ mapper.close()
 **Periodically (e.g. monthly):**
 - Promote concepts seen across 3+ companies from `ai_discovery_queue` to the static `.py` files
 - Review `missed_concepts` with `no_match` — identify XBRL tags worth adding manually to the mapping
+- Re-run `scripts/generate_expanded_mappings.py --dry-run` after any edgartools update to check
+  for newly available concepts to absorb

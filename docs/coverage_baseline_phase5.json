@@ -1,0 +1,651 @@
+{
+  "generated": "2026-06-01T06:20:52.561119",
+  "mapping_db": "/home/pedro/projects/fin_import2/data/xbrl_mappings_multi.duckdb",
+  "tickers": {
+    "AAPL": {
+      "income": {
+        "latest_period": "2026-03-28",
+        "total_fields": 30,
+        "fields_found": 15,
+        "fields_missed": 15,
+        "hit_rate": 0.5,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "depreciation_amortization",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "interest_expense",
+          "interest_income",
+          "investment_gains_losses",
+          "net_income_attributable_to_nci",
+          "net_income_attributable_to_parent",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "other_operating_expenses",
+          "restructuring_charges"
+        ]
+      },
+      "balance": {
+        "latest_period": "2026-03-28",
+        "total_fields": 38,
+        "fields_found": 27,
+        "fields_missed": 11,
+        "hit_rate": 0.7105,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "accrued_expenses",
+          "accumulated_depreciation",
+          "additional_paid_in_capital",
+          "deferred_revenue_noncurrent",
+          "deferred_tax_assets",
+          "deferred_tax_liabilities",
+          "goodwill",
+          "noncontrolling_interest",
+          "ppe_gross",
+          "prepaid_expenses",
+          "treasury_stock"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2026-03-28",
+        "total_fields": 32,
+        "fields_found": 21,
+        "fields_missed": 11,
+        "hit_rate": 0.6562,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "acquisitions",
+          "cash_beginning_of_period",
+          "cash_paid_for_interest",
+          "change_accrued_expenses",
+          "change_deferred_revenue",
+          "common_stock_issuance",
+          "debt_issuance",
+          "deferred_taxes",
+          "effect_of_exchange_rate",
+          "non_cash_stock_based_comp"
+        ]
+      }
+    },
+    "BAC": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 17,
+        "fields_missed": 13,
+        "hit_rate": 0.5667,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "depreciation_amortization",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "gross_profit",
+          "net_income_attributable_to_nci",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "research_development",
+          "restructuring_charges",
+          "total_operating_expenses"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 22,
+        "fields_missed": 10,
+        "hit_rate": 0.6875,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 1,
+        "dcf_critical_found": 2,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "acquisitions",
+          "capital_expenditures",
+          "cash_beginning_of_period",
+          "cash_paid_for_taxes",
+          "change_accounts_payable",
+          "change_accounts_receivable",
+          "change_deferred_revenue",
+          "change_inventory",
+          "non_cash_stock_based_comp"
+        ]
+      }
+    },
+    "BRK-B": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 16,
+        "fields_missed": 14,
+        "hit_rate": 0.5333,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 5,
+        "dcf_critical_found": 5,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "depreciation_amortization",
+          "diluted_eps",
+          "diluted_shares",
+          "discontinued_operations",
+          "dividends_per_share",
+          "gross_profit",
+          "net_income_attributable_to_parent",
+          "net_income_continuing_ops",
+          "operating_income",
+          "other_comprehensive_income",
+          "research_development",
+          "restructuring_charges"
+        ]
+      },
+      "balance": {
+        "latest_period": "2025-12-31",
+        "total_fields": 38,
+        "fields_found": 26,
+        "fields_missed": 12,
+        "hit_rate": 0.6842,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 6,
+        "missed_field_names": [
+          "accrued_expenses",
+          "accumulated_depreciation",
+          "current_portion_long_term_debt",
+          "deferred_revenue_current",
+          "deferred_tax_assets",
+          "ppe_gross",
+          "prepaid_expenses",
+          "short_term_debt",
+          "total_current_assets",
+          "total_current_liabilities",
+          "total_noncurrent_assets",
+          "total_noncurrent_liabilities"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 19,
+        "fields_missed": 13,
+        "hit_rate": 0.5938,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "cash_beginning_of_period",
+          "cash_paid_for_interest",
+          "cash_paid_for_taxes",
+          "change_accounts_payable",
+          "change_deferred_revenue",
+          "change_inventory",
+          "common_stock_issuance",
+          "deferred_taxes",
+          "dividends_paid",
+          "non_cash_stock_based_comp",
+          "stock_based_compensation",
+          "stock_repurchase"
+        ]
+      }
+    },
+    "GS": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 17,
+        "fields_missed": 13,
+        "hit_rate": 0.5667,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 1,
+        "dcf_critical_found": 9,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "gross_profit",
+          "investment_gains_losses",
+          "net_income_attributable_to_nci",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "research_development",
+          "restructuring_charges",
+          "total_operating_expenses"
+        ]
+      },
+      "balance": {
+        "latest_period": "2022-12-31",
+        "total_fields": 38,
+        "fields_found": 20,
+        "fields_missed": 18,
+        "hit_rate": 0.5263,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 6,
+        "missed_field_names": [
+          "accrued_expenses",
+          "accumulated_depreciation",
+          "current_portion_long_term_debt",
+          "deferred_revenue_current",
+          "deferred_revenue_noncurrent",
+          "deferred_tax_assets",
+          "deferred_tax_liabilities",
+          "goodwill",
+          "intangible_assets",
+          "inventory",
+          "noncontrolling_interest",
+          "ppe_gross",
+          "ppe_net",
+          "prepaid_expenses",
+          "total_current_assets",
+          "total_current_liabilities",
+          "total_noncurrent_assets",
+          "total_noncurrent_liabilities"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 23,
+        "fields_missed": 9,
+        "hit_rate": 0.7188,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "acquisitions",
+          "cash_beginning_of_period",
+          "change_accounts_payable",
+          "change_accounts_receivable",
+          "change_accrued_expenses",
+          "change_deferred_revenue",
+          "change_inventory",
+          "non_cash_stock_based_comp"
+        ]
+      }
+    },
+    "JPM": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 17,
+        "fields_missed": 13,
+        "hit_rate": 0.5667,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "depreciation_amortization",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "gross_profit",
+          "net_income_attributable_to_nci",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "research_development",
+          "restructuring_charges",
+          "total_operating_expenses"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 24,
+        "fields_missed": 8,
+        "hit_rate": 0.75,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 1,
+        "dcf_critical_found": 2,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "capital_expenditures",
+          "cash_beginning_of_period",
+          "change_accrued_expenses",
+          "change_deferred_revenue",
+          "change_inventory",
+          "non_cash_stock_based_comp",
+          "stock_based_compensation"
+        ]
+      }
+    },
+    "MSFT": {
+      "income": {
+        "latest_period": "2026-03-31",
+        "total_fields": 30,
+        "fields_found": 14,
+        "fields_missed": 16,
+        "hit_rate": 0.4667,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "depreciation_amortization",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "interest_expense",
+          "interest_income",
+          "investment_gains_losses",
+          "net_income_attributable_to_nci",
+          "net_income_attributable_to_parent",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "other_operating_expenses",
+          "restructuring_charges",
+          "total_operating_expenses"
+        ]
+      },
+      "balance": {
+        "latest_period": "2026-03-31",
+        "total_fields": 38,
+        "fields_found": 28,
+        "fields_missed": 10,
+        "hit_rate": 0.7368,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 1,
+        "dcf_critical_found": 7,
+        "missed_field_names": [
+          "accumulated_depreciation",
+          "additional_paid_in_capital",
+          "deferred_tax_assets",
+          "noncontrolling_interest",
+          "ppe_gross",
+          "prepaid_expenses",
+          "short_term_debt",
+          "total_noncurrent_assets",
+          "total_noncurrent_liabilities",
+          "treasury_stock"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2026-03-31",
+        "total_fields": 32,
+        "fields_found": 27,
+        "fields_missed": 5,
+        "hit_rate": 0.8438,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "cash_paid_for_interest",
+          "cash_paid_for_taxes",
+          "change_accrued_expenses",
+          "debt_issuance"
+        ]
+      }
+    },
+    "PFE": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 17,
+        "fields_missed": 13,
+        "hit_rate": 0.5667,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 3,
+        "dcf_critical_found": 7,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "dividends_per_share",
+          "equity_method_investments",
+          "gross_profit",
+          "interest_expense",
+          "interest_income",
+          "investment_gains_losses",
+          "net_income_attributable_to_parent",
+          "operating_income",
+          "other_comprehensive_income",
+          "other_operating_expenses",
+          "total_operating_expenses"
+        ]
+      },
+      "balance": {
+        "latest_period": "2025-12-31",
+        "total_fields": 38,
+        "fields_found": 31,
+        "fields_missed": 7,
+        "hit_rate": 0.8158,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 1,
+        "dcf_critical_found": 7,
+        "missed_field_names": [
+          "accumulated_depreciation",
+          "current_portion_long_term_debt",
+          "deferred_revenue_noncurrent",
+          "ppe_gross",
+          "prepaid_expenses",
+          "total_noncurrent_assets",
+          "total_noncurrent_liabilities"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 26,
+        "fields_missed": 6,
+        "hit_rate": 0.8125,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "cash_beginning_of_period",
+          "change_deferred_revenue",
+          "common_stock_issuance",
+          "non_cash_stock_based_comp",
+          "stock_repurchase"
+        ]
+      }
+    },
+    "UNH": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 18,
+        "fields_missed": 12,
+        "hit_rate": 0.6,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 1,
+        "dcf_critical_found": 9,
+        "missed_field_names": [
+          "comprehensive_income",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "gross_profit",
+          "investment_gains_losses",
+          "net_income_attributable_to_parent",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "other_operating_expenses",
+          "research_development",
+          "restructuring_charges"
+        ]
+      },
+      "balance": {
+        "latest_period": "2019-12-31",
+        "total_fields": 38,
+        "fields_found": 28,
+        "fields_missed": 10,
+        "hit_rate": 0.7368,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 6,
+        "missed_field_names": [
+          "accrued_expenses",
+          "accumulated_depreciation",
+          "deferred_revenue_noncurrent",
+          "deferred_tax_assets",
+          "inventory",
+          "ppe_gross",
+          "short_term_debt",
+          "total_noncurrent_assets",
+          "total_noncurrent_liabilities",
+          "treasury_stock"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 27,
+        "fields_missed": 5,
+        "hit_rate": 0.8438,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "cash_beginning_of_period",
+          "change_accrued_expenses",
+          "change_inventory",
+          "non_cash_stock_based_comp"
+        ]
+      }
+    },
+    "WMT": {
+      "income": {
+        "latest_period": "2026-01-31",
+        "total_fields": 30,
+        "fields_found": 16,
+        "fields_missed": 14,
+        "hit_rate": 0.5333,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 2,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "comprehensive_income",
+          "depreciation_amortization",
+          "discontinued_operations",
+          "equity_method_investments",
+          "gross_profit",
+          "investment_gains_losses",
+          "net_income_attributable_to_parent",
+          "net_income_continuing_ops",
+          "other_comprehensive_income",
+          "other_operating_expenses",
+          "research_development",
+          "restructuring_charges",
+          "total_operating_expenses"
+        ]
+      },
+      "balance": {
+        "latest_period": "2016-01-31",
+        "total_fields": 38,
+        "fields_found": 25,
+        "fields_missed": 13,
+        "hit_rate": 0.6579,
+        "dcf_critical_total": 8,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 8,
+        "missed_field_names": [
+          "deferred_revenue_current",
+          "deferred_revenue_noncurrent",
+          "deferred_tax_assets",
+          "deferred_tax_liabilities",
+          "intangible_assets",
+          "long_term_investments",
+          "other_current_assets",
+          "other_current_liabilities",
+          "short_term_investments",
+          "total_liabilities",
+          "total_noncurrent_assets",
+          "total_noncurrent_liabilities",
+          "treasury_stock"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2026-01-31",
+        "total_fields": 32,
+        "fields_found": 26,
+        "fields_missed": 6,
+        "hit_rate": 0.8125,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "cash_beginning_of_period",
+          "change_deferred_revenue",
+          "non_cash_stock_based_comp",
+          "purchase_investments",
+          "stock_based_compensation"
+        ]
+      }
+    },
+    "XOM": {
+      "income": {
+        "latest_period": "2025-12-31",
+        "total_fields": 30,
+        "fields_found": 15,
+        "fields_missed": 15,
+        "hit_rate": 0.5,
+        "dcf_critical_total": 10,
+        "dcf_critical_missed": 3,
+        "dcf_critical_found": 7,
+        "missed_field_names": [
+          "antidilutive_securities",
+          "basic_shares",
+          "comprehensive_income",
+          "diluted_shares",
+          "discontinued_operations",
+          "dividends_per_share",
+          "equity_method_investments",
+          "gross_profit",
+          "interest_income",
+          "investment_gains_losses",
+          "net_income_attributable_to_parent",
+          "net_income_continuing_ops",
+          "operating_income",
+          "other_comprehensive_income",
+          "restructuring_charges"
+        ]
+      },
+      "cashflow": {
+        "latest_period": "2025-12-31",
+        "total_fields": 32,
+        "fields_found": 23,
+        "fields_missed": 9,
+        "hit_rate": 0.7188,
+        "dcf_critical_total": 3,
+        "dcf_critical_missed": 0,
+        "dcf_critical_found": 3,
+        "missed_field_names": [
+          "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+          "cash_beginning_of_period",
+          "cash_paid_for_interest",
+          "cash_paid_for_taxes",
+          "change_accrued_expenses",
+          "change_deferred_revenue",
+          "common_stock_issuance",
+          "non_cash_stock_based_comp",
+          "stock_based_compensation"
+        ]
+      }
+    }
+  }
+}

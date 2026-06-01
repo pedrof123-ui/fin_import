@@ -4,6 +4,10 @@
 
 The pipeline fetches SEC EDGAR filings for a list of companies, parses XBRL data, maps concepts to standardized financial line items, and stores results in DuckDB.
 
+### XBRL concept mapping architecture
+
+XBRL concepts are resolved to standardized field names in three layers, tried in order. First, **industry-specific overrides** (`xbrl_mappings/industry_overrides.py`) prepend concepts tuned for the company's Fama-French 48 industry (derived from its SIC code via `xbrl_mappings/sic_lookup.py`); this is the primary accuracy gain for banks, insurers, and REITs. Second, the **expanded static mappings** (`xbrl_mappings/income_statement_xbrl_mapping.py`, `balance_sheet_xbrl_mapping.py`, `cash_flow_xbrl_mapping.py`) cover 1,236 concepts sourced from edgartools' `gaap_mappings.json` (2,924 raw concepts), tiered by confidence — high-confidence entries (≥ 0.7) precede lower-confidence ones (0.5–0.69). Third, an **AI fallback** (`use_ai_fallback=True`) attempts LLM-based discovery for any field still unresolved after both layers. The bridge mapping (`xbrl_mappings/bridge_mapping.json`) translates edgartools standard tags to fin_import2 field names and served as the generation key for the static expansion.
+
 Two entry points share the same extraction core:
 
 - **CLI** (`run_bulk_import.py`) — bulk import from a ticker CSV, async fan-out

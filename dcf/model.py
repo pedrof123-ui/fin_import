@@ -623,6 +623,22 @@ def _run_dcf_core(
     )
 
     warnings: list[str] = []
+
+    _DCF_CRITICAL_FIELDS = {
+        "income": ["revenue", "operating_income", "pretax_income", "income_tax_expense", "diluted_shares"],
+        "balance": ["long_term_debt", "cash_and_equivalents"],
+        "cashflow": ["depreciation_amortization", "capital_expenditures"],
+    }
+    for _stmt_key, _fields in _DCF_CRITICAL_FIELDS.items():
+        _df = annual[_stmt_key] if _stmt_key != "balance" else quarterly["balance"]
+        for _field in _fields:
+            if _field in _df.columns and _df[_field].notna().any():
+                continue
+            warnings.append(
+                f"Critical field '{_field}' ({_stmt_key}) is NULL for all periods — "
+                f"DCF output may be unreliable. Re-import {ticker} to resolve."
+            )
+
     if wacc_detail.market_cap == 0:
         warnings.append(
             "Market cap is zero — diluted shares not found in quarterly or annual income statements. "

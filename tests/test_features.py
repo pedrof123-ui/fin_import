@@ -4,6 +4,8 @@ Unit tests for Phase 3 feature formulas in historic_fundamentals/pe.py.
 Each test uses synthetic DataFrames with hand-calculated expected values.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -246,6 +248,48 @@ def test_rolling_slope_all_nan_returns_nan():
     s = pd.Series([np.nan] * 60)
     result = _rolling_slope(s, window=60, min_periods=36)
     assert result.isna().all()
+
+
+# ── Alpha model feature smoke test (Phase 5.2) ───────────────────────────────
+
+_DB_PATH = Path(__file__).parent.parent / "data" / "financial_statements.duckdb"
+_ALPHA_FIELDS = [
+    "revenue", "gross_profit", "operating_income",
+    "total_assets", "total_equity", "depreciation_amortization",
+]
+
+
+@pytest.mark.skipif(not _DB_PATH.exists(), reason="financial_statements.duckdb not present")
+def test_fundamentals_not_null():
+    """Last annual period for AAPL and MSFT must have all alpha-model fields non-NULL."""
+    from financial_statements_db import FinancialStatementsDB
+
+    try:
+        db = FinancialStatementsDB(str(_DB_PATH))
+    except Exception as e:
+        pytest.skip(f"DB unavailable: {e}")
+    nulls = {}
+    for ticker in ("AAPL", "MSFT"):
+        row = db.conn.execute(
+            """
+            SELECT i.revenue, i.gross_profit, i.operating_income,
+                   b.total_assets, b.total_equity, c.depreciation_amortization
+            FROM income_statements i
+            LEFT JOIN balance_sheets b ON i.ticker = b.ticker AND i.fiscal_year = b.fiscal_year
+            LEFT JOIN cash_flow_statements c ON i.ticker = c.ticker AND i.fiscal_year = c.fiscal_year
+            WHERE i.ticker = ?
+            ORDER BY i.fiscal_year DESC
+            LIMIT 1
+            """,
+            [ticker],
+        ).fetchdf()
+        if row.empty:
+            pytest.skip(f"{ticker} not in DB")
+        missing = [f for f in _ALPHA_FIELDS if row[f].isna().all()]
+        if missing:
+            nulls[ticker] = missing
+
+    assert not nulls, f"Alpha-model fields NULL in last annual period: {nulls}"
 
 
 def test_rolling_slope_monotone_increasing():
