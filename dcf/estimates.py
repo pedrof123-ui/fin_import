@@ -36,7 +36,10 @@ def fetch_and_cache(ticker: str, conn) -> list[dict]:
     if not raw:
         return []
 
-    _store(conn, ticker, raw)
+    try:
+        _store(conn, ticker, raw)
+    except Exception:
+        pass
     return [_normalize(e) for e in raw]
 
 

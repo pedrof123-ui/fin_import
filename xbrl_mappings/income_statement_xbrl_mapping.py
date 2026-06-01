@@ -48,6 +48,7 @@ INCOME_STATEMENT_MAPPING = {
         "elv_OperatingRevenue",  # Elevance Health
         # --- edgartools lower-confidence ---
         "InsuranceServicesRevenue",  # edgartools-expanded (conf=0.50)
+        "OilAndGasRevenue",       # Integrated oil majors (CVX, XOM) — "Sales and other operating revenues"
         "OilAndGasSalesRevenue",  # edgartools-expanded (conf=0.50)
         "OperatingLeasesIncomeStatementMinimumLeaseRevenue",  # edgartools-expanded (conf=0.50)
         "PercentageRent",  # edgartools-expanded (conf=0.50)

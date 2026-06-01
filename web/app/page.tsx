@@ -202,32 +202,32 @@ export default function Home() {
           </div>
         )}
 
-        {/* Financials tab */}
-        {activeTab === "financials" && data && (
-          <StatementViewer
-            data={data}
-            ticker={loadedTicker}
-            stmtType={stmtType}
-            periodType={displayPeriodType}
-            onStmtChange={handleStmtChange}
-            onPeriodTypeChange={handlePeriodTypeChange}
-            loading={fetching}
-          />
-        )}
-
-        {/* DCF tab */}
-        {activeTab === "dcf" && loadedTicker && (
-          <DcfViewer ticker={loadedTicker} />
-        )}
-
-        {/* AV Data tab */}
-        {activeTab === "av_financials" && loadedTicker && (
-          <AvFinancialsViewer ticker={loadedTicker} />
-        )}
-
-        {/* AV DCF tab */}
-        {activeTab === "av_dcf" && loadedTicker && (
-          <AvDcfViewer ticker={loadedTicker} />
+        {/* All tab panels rendered once; hidden when inactive to preserve state */}
+        {loadedTicker && (
+          <>
+            <div className={activeTab === "financials" ? undefined : "hidden"}>
+              {data && (
+                <StatementViewer
+                  data={data}
+                  ticker={loadedTicker}
+                  stmtType={stmtType}
+                  periodType={displayPeriodType}
+                  onStmtChange={handleStmtChange}
+                  onPeriodTypeChange={handlePeriodTypeChange}
+                  loading={fetching}
+                />
+              )}
+            </div>
+            <div className={activeTab === "dcf" ? undefined : "hidden"}>
+              <DcfViewer ticker={loadedTicker} />
+            </div>
+            <div className={activeTab === "av_financials" ? undefined : "hidden"}>
+              <AvFinancialsViewer ticker={loadedTicker} />
+            </div>
+            <div className={activeTab === "av_dcf" ? undefined : "hidden"}>
+              <AvDcfViewer ticker={loadedTicker} />
+            </div>
+          </>
         )}
 
         {/* Empty state */}

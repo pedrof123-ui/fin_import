@@ -2,6 +2,9 @@ import os
 import duckdb
 import pandas as pd
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _DEFAULT_PRICES_DB = Path(__file__).parent.parent / "data" / "prices.duckdb"
 _DEFAULT_FRED_DB = Path(__file__).parent.parent / "data" / "fred.duckdb"
@@ -20,6 +23,46 @@ def _fill_gross_profit(df: pd.DataFrame) -> pd.DataFrame:
     missing = df["gross_profit"].isna()
     if missing.any() and "revenue" in df.columns and "cost_of_revenue" in df.columns:
         df.loc[missing, "gross_profit"] = df.loc[missing, "revenue"] - df.loc[missing, "cost_of_revenue"]
+    return df
+
+
+def _fill_operating_income(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive operating_income = revenue - total_operating_expenses when missing.
+
+    Some companies (e.g. energy majors like CVX) report total_operating_expenses
+    as an aggregate line rather than operating_income directly in their XBRL filings.
+    """
+    if "operating_income" not in df.columns:
+        df = df.copy()
+        df["operating_income"] = float("nan")
+    missing = df["operating_income"].isna()
+    if missing.any() and "revenue" in df.columns and "total_operating_expenses" in df.columns:
+        df.loc[missing, "operating_income"] = (
+            df.loc[missing, "revenue"] - df.loc[missing, "total_operating_expenses"]
+        )
+    return df
+
+
+def _fill_diluted_shares(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive diluted_shares = net_income / diluted_eps when missing."""
+    if "diluted_shares" not in df.columns:
+        df = df.copy()
+        df["diluted_shares"] = float("nan")
+    missing = df["diluted_shares"].isna()
+    if (
+        missing.any()
+        and "net_income" in df.columns
+        and "diluted_eps" in df.columns
+    ):
+        eps = df["diluted_eps"].replace(0, float("nan"))
+        df.loc[missing, "diluted_shares"] = df.loc[missing, "net_income"] / eps.loc[missing]
+    return df
+
+
+def _enrich_income(df: pd.DataFrame) -> pd.DataFrame:
+    df = _fill_gross_profit(df)
+    df = _fill_operating_income(df)
+    df = _fill_diluted_shares(df)
     return df
 
 
@@ -42,7 +85,7 @@ def load_quarterly_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
             f"{ticker} has only {n} quarterly period(s). "
             f"Re-import as quarterly (Q) with at least {MIN_QUARTERLY_PERIODS} periods."
         )
-    stmts["income"] = _fill_gross_profit(stmts["income"])
+    stmts["income"] = _enrich_income(stmts["income"])
     return stmts
 
 
@@ -58,7 +101,7 @@ def load_annual_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
             f"SELECT * FROM {table} WHERE ticker = ? AND period_type = 'Annual' ORDER BY period_end_date DESC LIMIT 10",
             [ticker],
         ).df()
-    stmts["income"] = _fill_gross_profit(stmts["income"])
+    stmts["income"] = _enrich_income(stmts["income"])
     return stmts
 
 

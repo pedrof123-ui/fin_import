@@ -3061,3 +3061,38 @@ def get_industry_concepts(
     if not ff48_code:
         return []
     return INDUSTRY_OVERRIDES.get(statement_type, {}).get(ff48_code, {}).get(field_name, [])
+
+
+# Company-specific concept overrides.
+# When a ticker appears here for a field, these concepts REPLACE the full concept
+# list (generic + industry). This prevents the max-over-all-concepts logic from
+# picking up a broader aggregate concept instead of the correct operating figure.
+#
+# Use case: companies with non-standard income statement structures where the
+# generic "Revenues" XBRL concept maps to a broader total (e.g. CVX "Total Revenues
+# and Other Income") rather than the core operating revenue line.
+COMPANY_OVERRIDES: dict[str, dict[str, dict[str, list[str]]]] = {
+    "income": {
+        # CVX's income statement has no Operating Income subtotal. "Revenues" ($189B)
+        # = "Total Revenues and Other Income" (includes equity affiliates + other income).
+        # "RevenueFromContractWithCustomerExcludingAssessedTax" ($184B) = "Sales and
+        # other operating revenues" — the correct operating base for DCF cost ratios.
+        # Override replaces the full concept list so the max-over-concepts logic cannot
+        # select the broader "Revenues" aggregate.
+        "CVX": {
+            "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
+        },
+    },
+}
+
+
+def get_company_concepts(
+    statement_type: str,
+    ticker: str | None,
+    field_name: str,
+) -> list[str] | None:
+    """Return company-specific concepts that REPLACE the generic list, or None if no override."""
+    if not ticker:
+        return None
+    result = COMPANY_OVERRIDES.get(statement_type, {}).get(ticker, {}).get(field_name)
+    return result if result else None

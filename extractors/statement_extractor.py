@@ -10,6 +10,23 @@ from typing import Optional
 from .filing import parse_date
 
 
+def _build_concepts(
+    generic: list,
+    ff48_code: str | None,
+    statement_type: str | None,
+    field_name: str,
+) -> list:
+    """Prepend industry-specific concepts before the generic list."""
+    if ff48_code and statement_type:
+        from xbrl_mappings.industry_overrides import get_industry_concepts
+        industry = get_industry_concepts(statement_type, ff48_code, field_name)
+        if industry:
+            generic_bare = {c.split('_', 1)[1] if '_' in c else c for c in generic}
+            new = [c for c in industry if c not in generic_bare]
+            return new + generic
+    return generic
+
+
 def _extract_value(
     statement_df: pd.DataFrame,
     field_name: str,
@@ -19,24 +36,25 @@ def _extract_value(
     max_fields: set = frozenset(),
     ff48_code: str | None = None,
     statement_type: str | None = None,
+    ticker: str | None = None,
 ) -> tuple[Optional[float], Optional[str]]:
     generic = list(mapping.get(field_name) or [])
     if generic is None:
         return None, None
 
-    # Prepend industry-specific concepts before the generic list.
-    # Industry concepts are tried first; generic list acts as fallback.
-    if ff48_code and statement_type:
-        from xbrl_mappings.industry_overrides import get_industry_concepts
-        industry = get_industry_concepts(statement_type, ff48_code, field_name)
-        if industry:
-            generic_bare = {c.split('_', 1)[1] if '_' in c else c for c in generic}
-            new = [c for c in industry if c not in generic_bare]
-            concepts = new + generic
+    # Company-specific overrides replace the full concept list.
+    # This prevents max-over-all-concepts from picking up a broader aggregate
+    # (e.g. CVX "Revenues" = Total Revenues incl. equity affiliates) instead of
+    # the correct operating line (CVX "OilAndGasRevenue" = Sales revenue only).
+    if ticker and statement_type:
+        from xbrl_mappings.industry_overrides import get_company_concepts
+        company = get_company_concepts(statement_type, ticker, field_name)
+        if company is not None:
+            concepts = company
         else:
-            concepts = generic
+            concepts = _build_concepts(generic, ff48_code, statement_type, field_name)
     else:
-        concepts = generic
+        concepts = _build_concepts(generic, ff48_code, statement_type, field_name)
 
     if not concepts:
         return None, None
@@ -229,7 +247,7 @@ async def extract_statement(
         col = prior_period if (field_name in prior_period_fields and prior_period) else most_recent_period
         value, concept_used = _extract_value(
             stmt_df, field_name, col, mapping, aggregation_fields, max_fields,
-            ff48_code=ff48_code, statement_type=statement_type,
+            ff48_code=ff48_code, statement_type=statement_type, ticker=ticker,
         )
         if value is not None:
             found_count += 1

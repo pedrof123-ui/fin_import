@@ -554,6 +554,7 @@ def run_dcf(
 def run_dcf_av(
     ticker: str,
     overrides: "UserOverrides | None" = None,
+    estimates_conn=None,
 ) -> "DcfResult":
     import dataclasses
     from dcf.av_data import load_av_annual_financials, load_av_quarterly_financials
@@ -572,7 +573,7 @@ def run_dcf_av(
             overrides,
             default_ebit_margin_pct=_median_ebit_margin(annual["income"]),
         )
-    return _run_dcf_core(ticker, annual, quarterly, overrides, estimates_conn=None)
+    return _run_dcf_core(ticker, annual, quarterly, overrides, estimates_conn=estimates_conn)
 
 
 def _run_dcf_core(

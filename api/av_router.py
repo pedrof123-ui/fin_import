@@ -1,9 +1,8 @@
 import dataclasses
 import json
-import math
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import duckdb
 from fastapi import APIRouter, HTTPException
@@ -24,6 +23,14 @@ _TABLE = {
     "balance":  "balance_sheets",
     "cashflow": "cash_flow_statements",
 }
+
+# Populated by main.py via set_db() — shared with dcf_router to avoid double-open
+_db = None
+
+
+def set_db(db) -> None:
+    global _db
+    _db = db
 
 
 @router.get("/av-financials/{ticker}/{stmt}")
@@ -57,23 +64,22 @@ async def av_financials(
     return json.loads(df.to_json(orient="records", date_format="iso"))
 
 
-@router.get("/av-dcf/{ticker}")
-async def av_dcf_get(ticker: str):
+def _respond_av(ticker: str, overrides=None) -> JSONResponse:
+    estimates_conn = _db.conn if _db is not None else None
     try:
-        result = run_dcf_av(ticker.upper())
+        result = run_dcf_av(ticker, overrides, estimates_conn=estimates_conn)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return JSONResponse(_sanitize(dataclasses.asdict(result)))
+
+
+@router.get("/av-dcf/{ticker}")
+async def av_dcf_get(ticker: str):
+    return _respond_av(ticker.upper())
 
 
 @router.post("/av-dcf/{ticker}/run")
 async def av_dcf_run(ticker: str, req: RunRequest):
-    try:
-        result = run_dcf_av(ticker.upper(), _build_overrides(req))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    return JSONResponse(_sanitize(dataclasses.asdict(result)))
+    return _respond_av(ticker.upper(), _build_overrides(req))
