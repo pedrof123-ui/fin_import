@@ -16,11 +16,13 @@ _DDL = [
     "CREATE SEQUENCE IF NOT EXISTS fills_seq START 1",
     "CREATE SEQUENCE IF NOT EXISTS tax_lots_seq START 1",
     """CREATE TABLE IF NOT EXISTS strategies (
-        name           VARCHAR PRIMARY KEY,
-        description    VARCHAR,
-        inception_date DATE,
-        benchmark      VARCHAR DEFAULT 'SPY'
+        name             VARCHAR PRIMARY KEY,
+        description      VARCHAR,
+        inception_date   DATE,
+        benchmark        VARCHAR DEFAULT 'SPY',
+        initial_capital  DOUBLE
     )""",
+    "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS initial_capital DOUBLE",
     """CREATE TABLE IF NOT EXISTS fills (
         id              BIGINT    DEFAULT nextval('fills_seq') PRIMARY KEY,
         strategy        VARCHAR   NOT NULL,
@@ -100,11 +102,14 @@ def register_strategy(
     description: str | None = None,
     inception_date: date | None = None,
     benchmark: str = "SPY",
+    initial_capital: float | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO strategies (name, description, inception_date, benchmark) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT (name) DO NOTHING",
-        [name, description, inception_date, benchmark],
+        "INSERT INTO strategies (name, description, inception_date, benchmark, initial_capital) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT (name) DO UPDATE SET "
+        "initial_capital = COALESCE(excluded.initial_capital, strategies.initial_capital)",
+        [name, description, inception_date, benchmark, initial_capital],
     )
 
 
@@ -207,6 +212,13 @@ def sync_ib_fills(
     fills = client.ib.reqExecutions()
     count = 0
     for fill in fills:
+        # Only process fills whose orderRef matches this strategy tag.
+        # This prevents fills from other strategies sharing the same IB account
+        # from being recorded under the wrong strategy.
+        order_ref = getattr(fill.execution, "orderRef", "") or ""
+        if order_ref != strategy:
+            continue
+
         exec_id = fill.execution.execId
         ticker = fill.contract.symbol
         action = "BUY" if fill.execution.side == "BOT" else "SELL"
@@ -413,14 +425,35 @@ def compute_strategy_nav(
     conn: duckdb.DuckDBPyConnection,
     strategy: str,
     price_map: dict[str, float],
-) -> float:
-    """Compute strategy NAV as sum of open position market values.
+) -> tuple[float, float | None, float]:
+    """Compute strategy NAV = equity + cash.
 
-    Uses tracker tax lots (strategy-owned positions only), not the full account NAV.
-    Tickers missing from price_map are excluded from the sum.
+    Cash is derived from initial_capital (set via register_strategy) plus cumulative
+    sell proceeds minus cumulative buy costs recorded in fills. Returns None for cash
+    if initial_capital is not set, falling back to equity-only NAV.
+
+    Returns (nav, cash, equity_value).
     """
     positions = get_strategy_positions(conn, strategy)
-    return sum(qty * price_map[t] for t, qty in positions.items() if t in price_map)
+    equity = sum(qty * price_map[t] for t, qty in positions.items() if t in price_map)
+
+    row = conn.execute(
+        "SELECT initial_capital FROM strategies WHERE name = ?", [strategy]
+    ).fetchone()
+    initial_capital = float(row[0]) if row and row[0] is not None else None
+
+    if initial_capital is None:
+        return equity, None, equity
+
+    cash_row = conn.execute(
+        "SELECT SUM(CASE WHEN action='SELL' THEN qty * fill_price ELSE -(qty * fill_price) END) "
+        "FROM fills WHERE strategy = ?",
+        [strategy],
+    ).fetchone()
+    net_cash_flow = float(cash_row[0]) if cash_row and cash_row[0] is not None else 0.0
+    cash = initial_capital + net_cash_flow
+
+    return equity + cash, cash, equity
 
 
 def load_backtest_benchmarks(

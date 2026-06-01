@@ -51,14 +51,14 @@ uv run scripts/hf_update.py
 ### Part 2 — Score and rebalance (last trading day of the month, before 15:50 ET)
 
 ```bash
-# Step 1 — Generate ranked scores and write docs/live_scores_YYYYMMDD_vw_gr_top_n_25.csv
+# Step 1 — Generate ranked scores; note the exact filename produced (e.g. docs/live_scores_20260529_rf_vw_gr_top_n_25.csv)
 uv run scripts/score_live.py --top 25
 
-# Step 2 — Preview rebalance (dry run, no orders submitted)
-uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
+# Step 2 — Preview rebalance (dry run, no orders submitted); replace YYYYMMDD with today's date
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --scores docs/live_scores_YYYYMMDD_rf_vw_gr_top_n_25.csv --use-strategy-nav
 
 # Step 3 — Submit MOC orders (before 15:50 ET)
-uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run
+uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --scores docs/live_scores_YYYYMMDD_rf_vw_gr_top_n_25.csv --use-strategy-nav --no-dry-run
 
 # Step 4 — Sync confirmed fills (after close, same TWS session)
 uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
@@ -310,12 +310,16 @@ Run on the last trading day of each month (before 15:50 ET for steps 3–4). Set
 
 | Step | When | Command |
 |---|---|---|
-| 1. Generate scores | Morning | `uv run scripts/score_live.py --guardrails --vol-weight --top 25` |
-| 2. Preview rebalance | Midday | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb` |
-| 3. Submit MOC orders | Before 15:50 ET | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --no-dry-run` |
+| 1. Generate scores | Morning | `uv run scripts/score_live.py --top 25` |
+| 2. Preview rebalance | Midday | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --scores docs/live_scores_YYYYMMDD_rf_vw_gr_top_n_25.csv --use-strategy-nav` |
+| 3. Submit MOC orders | Before 15:50 ET | `uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --scores docs/live_scores_YYYYMMDD_rf_vw_gr_top_n_25.csv --use-strategy-nav --no-dry-run` |
 | 4. Sync confirmed fills | After close (same session) | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb` |
 | 5. Update forward returns | 30+ days after first rebalance | `uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --update-forward-returns` |
 | 6. View report | Anytime | `snapshot_report(conn, "vw_gr_top_n_25")` in Jupyter |
+
+**NAV sizing — shared paper account:** Account DUE946835 is shared with other strategies. Never use the raw account NAV — it inflates position sizes. Use `--use-strategy-nav` (as above) once a correct strategy NAV is recorded in the tracker after the first successful `sync_fills.py` run. For the very first rebalance, or after a NAV reset, use `--nav-override 100000` instead of `--use-strategy-nav`.
+
+**Scores file — always pass `--scores` explicitly:** The auto-finder picks the newest CSV by date, which may be a different strategy variant (e.g. `top_n_5`). Always pass the exact filename produced in step 1 to avoid loading the wrong portfolio.
 
 **One-time setup (before first rebalance):**
 
@@ -354,10 +358,10 @@ Set `IB_PORT=7496` in `.env` when targeting the live account.
 ### Step 1 — Generate live scores
 
 ```
-uv run scripts/score_live.py --guardrails --vol-weight --top 25
+uv run scripts/score_live.py --top 25
 ```
 
-Writes `docs/live_scores_YYYYMMDD_vw_gr_top_n_25.csv` with `alloc_pct` populated for the top-25 portfolio positions. Always regenerate scores before rebalancing to ensure the allocation reflects the latest data and regime signal.
+Writes `docs/live_scores_YYYYMMDD_rf_vw_gr_top_n_25.csv` with `alloc_pct` populated for the top-25 portfolio positions. Always regenerate scores before rebalancing to ensure the allocation reflects the latest data and regime signal.
 
 When `IB_TRACKER_DB` is set (or `--tracker-db` is passed to the downstream scripts), the score snapshot is recorded automatically for IC tracking.
 

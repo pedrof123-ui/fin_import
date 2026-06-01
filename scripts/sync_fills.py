@@ -112,9 +112,10 @@ def main() -> None:
             positions = get_strategy_positions(conn, args.strategy)
             if positions:
                 price_map = client.get_live_prices(list(positions.keys()))
-                nav = compute_strategy_nav(conn, args.strategy, price_map)
-                record_nav(conn, args.strategy, nav)
-                print(f"Recorded strategy NAV ${nav:,.0f} to tracker DB ({len(positions)} positions).")
+                nav, cash, equity = compute_strategy_nav(conn, args.strategy, price_map)
+                record_nav(conn, args.strategy, nav, cash=cash, equity_value=equity)
+                cash_str = f"  cash=${cash:,.0f}  equity=${equity:,.0f}" if cash is not None else ""
+                print(f"Recorded strategy NAV ${nav:,.0f} to tracker DB ({len(positions)} positions).{cash_str}")
             else:
                 print("No open positions — strategy NAV not recorded.")
         except Exception as exc:

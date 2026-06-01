@@ -153,8 +153,8 @@ def main() -> None:
                 positions = get_strategy_positions(tracker_conn, args.strategy)
                 if positions:
                     price_map = client.get_live_prices(list(positions.keys()))
-                    nav = compute_strategy_nav(tracker_conn, args.strategy, price_map)
-                    record_nav(tracker_conn, args.strategy, nav)
+                    nav, cash, equity = compute_strategy_nav(tracker_conn, args.strategy, price_map)
+                    record_nav(tracker_conn, args.strategy, nav, cash=cash, equity_value=equity)
                     log.info("Recorded strategy NAV $%,.0f to tracker DB.", nav)
             except Exception as exc:
                 log.warning("Could not record strategy NAV to tracker: %s", exc)
