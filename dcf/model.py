@@ -519,31 +519,8 @@ def _sum_debt(bs_row) -> float | None:
     return total if any(p is not None for p in parts) else None
 
 
-_GDP_NOMINAL = 0.025  # long-run nominal GDP anchor for terminal growth
-
 def _default_terminal_growth(income_df: pd.DataFrame) -> float:
-    """
-    GDP-anchored terminal growth rate: 20% company history + 80% long-run GDP.
-
-    The 80% GDP weight enforces the theoretical constraint that no company grows
-    faster than the economy in perpetuity. The 20% company weight gives a modest
-    tilt toward the firm's track record using the all-history median YoY revenue
-    growth (robust to single outlier years). Result is clamped to [0.5%, 4.0%].
-
-    Typical outputs:
-      Structural growers (MSFT, META):  ~4.0%  (GDP + 1.5% premium, capped)
-      Quality growers (AAPL):           ~3.8%
-      Stable companies (WMT, KO):       ~2.6%  (near GDP)
-      Mature / declining (UPS, PFE):    ~1.9–2.7%
-      Volatile commodities (CVX):       ~1.1%
-    """
-    rev = income_df["revenue"].dropna()
-    if len(rev) < 2:
-        return _GDP_NOMINAL
-    rates = rev.values[:-1] / rev.values[1:] - 1  # newest→oldest
-    hist_median = float(np.clip(np.nanmedian(rates), -0.10, 0.20))
-    blended = 0.20 * hist_median + 0.80 * _GDP_NOMINAL
-    return float(np.clip(blended, 0.005, 0.04))
+    return DEFAULT_TERMINAL_GROWTH
 
 
 def _median_ebit_margin(income_df: pd.DataFrame) -> float:
