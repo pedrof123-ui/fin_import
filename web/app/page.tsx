@@ -5,11 +5,12 @@ import ImportForm from "@/components/ImportForm";
 import StatementViewer from "@/components/StatementViewer";
 import AvFinancialsViewer from "@/components/AvFinancialsViewer";
 import AvDcfViewer from "@/components/AvDcfViewer";
+import FundamentalsViewer from "@/components/FundamentalsViewer";
 import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "av_financials" | "av_dcf" | "financials";
+type Tab = "av_financials" | "av_dcf" | "fundamentals" | "financials";
 
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
@@ -142,10 +143,11 @@ export default function Home() {
   const showSpinner = importing || !!quartersStatus;
   const displayStatus = quartersStatus ?? status;
 
-  const tabs: Tab[] = ["av_financials", "av_dcf", ...(xbrlLoaded ? (["financials"] as Tab[]) : [])];
+  const tabs: Tab[] = ["av_financials", "av_dcf", "fundamentals", ...(xbrlLoaded ? (["financials"] as Tab[]) : [])];
   const TAB_LABELS: Record<Tab, string> = {
     av_financials: "AV Data",
     av_dcf: "AV DCF",
+    fundamentals: "Fundamentals",
     financials: "XBRL",
   };
 
@@ -227,6 +229,9 @@ export default function Home() {
             </div>
             <div className={activeTab === "av_dcf" ? undefined : "hidden"}>
               <AvDcfViewer ticker={loadedTicker} />
+            </div>
+            <div className={activeTab === "fundamentals" ? undefined : "hidden"}>
+              <FundamentalsViewer ticker={loadedTicker} />
             </div>
             {xbrlLoaded && (
               <div className={activeTab === "financials" ? undefined : "hidden"}>

@@ -14,6 +14,7 @@ export interface EarningsEstimate {
 export interface WaccDetail {
   beta_raw: number;
   beta_relevered: number;
+  beta_2yr: number | null;
   risk_free_rate: number;
   market_risk_premium: number;
   cost_of_equity: number;
@@ -152,4 +153,141 @@ export interface RunRequest {
   cost_of_debt?: number;
   tax_rate?: number;
   y1_quarter_revenues?: Record<string, number>;  // keys "1"-"4", values in dollars
+}
+
+export interface MonthlyDataPoint {
+  date: string;
+  price: number | null;
+  pe_ratio: number | null;
+  pe_rolling_5yr_median: number | null;
+  pfcf_ratio: number | null;
+  pfcf_rolling_5yr_median: number | null;
+  ev_ebitda: number | null;
+  ev_ebitda_rolling_5yr_median: number | null;
+  ps_ratio: number | null;
+  ps_rolling_5yr_median: number | null;
+  roa: number | null;
+  roe: number | null;
+  roic: number | null;
+  ttm_gross_margin: number | null;
+  ttm_operating_margin: number | null;
+  ttm_fcf_margin: number | null;
+}
+
+export interface FundamentalsEstimate {
+  date: string;
+  horizon: string;
+  eps_avg: number | null;
+  eps_high: number | null;
+  eps_low: number | null;
+  eps_count: number | null;
+  rev_avg: number | null;
+  rev_high: number | null;
+  rev_low: number | null;
+  rev_count: number | null;
+}
+
+export interface FundamentalsData {
+  ticker: string;
+  company_name: string | null;
+  sector: string | null;
+  industry: string | null;
+  market_cap_b: number | null;
+  current_price: number | null;
+  analyst_target_price: number | null;
+  analyst_strong_buy: number | null;
+  analyst_buy: number | null;
+  analyst_hold: number | null;
+  analyst_sell: number | null;
+  analyst_strong_sell: number | null;
+  overview_updated_at: string | null;
+
+  // Valuation multiples
+  current_pe: number | null;
+  forward_pe: number | null;
+  pe_lt_median: number | null;
+  pe_p25: number | null;
+  pe_p75: number | null;
+  pe_rolling_5yr_median: number | null;
+
+  current_pfcf: number | null;
+  forward_pfcf: number | null;
+  pfcf_lt_median: number | null;
+  pfcf_p25: number | null;
+  pfcf_p75: number | null;
+  pfcf_rolling_5yr_median: number | null;
+
+  current_evebitda: number | null;
+  forward_evebitda: number | null;
+  evebitda_lt_median: number | null;
+  evebitda_p25: number | null;
+  evebitda_p75: number | null;
+  evebitda_rolling_5yr_median: number | null;
+
+  current_ps: number | null;
+  forward_ps: number | null;
+  ps_lt_median: number | null;
+  ps_p25: number | null;
+  ps_p75: number | null;
+  ps_rolling_5yr_median: number | null;
+
+  current_pbv: number | null;
+  pbv_lt_median: number | null;
+  pbv_rolling_5yr_median: number | null;
+
+  // Returns
+  current_roa: number | null;
+  roa_lt_median: number | null;
+  roa_rolling_5yr_median: number | null;
+
+  current_roe: number | null;
+  roe_lt_median: number | null;
+  roe_rolling_5yr_median: number | null;
+
+  current_roic: number | null;
+  roic_lt_median: number | null;
+  roic_rolling_5yr_median: number | null;
+
+  // Growth rates
+  rev_growth_1yr: number | null;
+  rev_cagr_3yr: number | null;
+  rev_cagr_5yr: number | null;
+  rev_ntm_growth_est: number | null;
+  earn_growth_1yr: number | null;
+  earn_cagr_3yr: number | null;
+  earn_cagr_5yr: number | null;
+  earn_ntm_growth_est: number | null;
+
+  // Margins
+  current_gross_margin: number | null;
+  gross_margin_5y_median: number | null;
+  current_operating_margin: number | null;
+  operating_margin_5y_median: number | null;
+  operating_margin_change_3y: number | null;
+  current_fcf_margin: number | null;
+  fcf_margin_5y_median: number | null;
+  fcf_margin_change_3y: number | null;
+
+  // Goal / implied prices
+  goal_pe: number | null;
+  goal_pcf: number | null;
+  goal_peg: number | null;
+  goal_bv: number | null;
+  goal_2x: number | null;
+  goal_low: number | null;
+  goal_high: number | null;
+
+  // EPS & dividends
+  current_ttm_eps: number | null;
+  forward_12m_eps: number | null;
+  dividend_yield: number | null;
+
+  // Leverage
+  debt_to_ebitda: number | null;
+  interest_coverage: number | null;
+
+  // Time series & estimates
+  monthly_series: MonthlyDataPoint[];
+  analyst_estimates: FundamentalsEstimate[];
+  stats_updated_at: string | null;
 }
