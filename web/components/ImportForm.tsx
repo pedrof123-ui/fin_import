@@ -34,7 +34,7 @@ export default function ImportForm({ onSubmit, loading }: Props) {
         disabled={!ticker.trim() || loading}
         className="font-mono text-xs tracking-widest uppercase h-8 bg-violet-700 hover:bg-violet-600 text-white px-4 cursor-pointer"
       >
-        Import ▶
+        Load ▶
       </Button>
     </form>
   );

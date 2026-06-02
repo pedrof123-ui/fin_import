@@ -3,14 +3,13 @@
 import { useState, useCallback, useEffect } from "react";
 import ImportForm from "@/components/ImportForm";
 import StatementViewer from "@/components/StatementViewer";
-import DcfViewer from "@/components/DcfViewer";
 import AvFinancialsViewer from "@/components/AvFinancialsViewer";
 import AvDcfViewer from "@/components/AvDcfViewer";
 import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "financials" | "dcf" | "av_financials" | "av_dcf";
+type Tab = "av_financials" | "av_dcf" | "financials";
 
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
@@ -27,18 +26,19 @@ function Spinner() {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<Tab>("financials");
+  const [activeTab, setActiveTab] = useState<Tab>("av_financials");
   const [stmtType, setStmtType] = useState<StmtType>("income");
-  const [data, setData] = useState<Record<string, unknown>[] | null>(null);
+  const [xbrlData, setXbrlData] = useState<Record<string, unknown>[] | null>(null);
   const [loadedTicker, setLoadedTicker] = useState("");
   const [displayPeriodType, setDisplayPeriodType] = useState<PeriodType>("FY");
+  const [xbrlLoaded, setXbrlLoaded] = useState(false);
   const [importing, setImporting] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [quartersStatus, setQuartersStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchStatement = useCallback(
+  const fetchXbrlStatement = useCallback(
     async (ticker: string, periodType: PeriodType, stmt: StmtType, periods: number) => {
       setFetching(true);
       setError(null);
@@ -48,10 +48,10 @@ export default function Home() {
         );
         const json = await res.json();
         if (!res.ok) throw new Error(json.detail ?? `HTTP ${res.status}`);
-        setData(json);
+        setXbrlData(json);
       } catch (e: unknown) {
         setError((e as Error).message);
-        setData(null);
+        setXbrlData(null);
       } finally {
         setFetching(false);
       }
@@ -59,12 +59,23 @@ export default function Home() {
     []
   );
 
-  const handleImport = async (ticker: string) => {
+  const handleLoad = (ticker: string) => {
+    setLoadedTicker(ticker.toUpperCase());
+    setActiveTab("av_financials");
+    setXbrlData(null);
+    setXbrlLoaded(false);
+    setError(null);
+    setStatus(null);
+    setQuartersStatus(null);
+  };
+
+  const handleXbrlDownload = async () => {
+    const ticker = loadedTicker;
+    if (!ticker) return;
     setImporting(true);
     setError(null);
     setQuartersStatus(null);
     setStatus(`Downloading 20 years of annual filings for ${ticker}…`);
-    setData(null);
 
     try {
       const res = await fetch(`${API}/import`, {
@@ -76,17 +87,17 @@ export default function Home() {
       if (!res.ok) throw new Error(json.detail ?? `HTTP ${res.status}`);
 
       const n = json.filings_processed as number;
+      setDisplayPeriodType("FY");
+      await fetchXbrlStatement(ticker, "FY", stmtType, FY_DISPLAY_PERIODS);
+
       setStatus(
         n > 0
           ? `${n} new filing${n !== 1 ? "s" : ""} imported for ${ticker}`
           : `${ticker} already up to date`
       );
-      setLoadedTicker(ticker);
-      setDisplayPeriodType("FY");
+      setXbrlLoaded(true);
+      setActiveTab("financials");
 
-      await fetchStatement(ticker, "FY", stmtType, FY_DISPLAY_PERIODS);
-
-      // Automatically fetch 20 quarters in background
       setQuartersStatus("Fetching 20 quarters of data…");
       fetch(`${API}/import`, {
         method: "POST",
@@ -114,23 +125,29 @@ export default function Home() {
 
   const handleStmtChange = (stmt: StmtType) => {
     setStmtType(stmt);
-    if (loadedTicker) {
+    if (loadedTicker && xbrlLoaded) {
       const periods = displayPeriodType === "Q" ? Q_DISPLAY_PERIODS : FY_DISPLAY_PERIODS;
-      fetchStatement(loadedTicker, displayPeriodType, stmt, periods);
+      fetchXbrlStatement(loadedTicker, displayPeriodType, stmt, periods);
     }
   };
 
   const handlePeriodTypeChange = (pt: PeriodType) => {
     setDisplayPeriodType(pt);
-    if (loadedTicker) {
+    if (loadedTicker && xbrlLoaded) {
       const periods = pt === "Q" ? Q_DISPLAY_PERIODS : FY_DISPLAY_PERIODS;
-      fetchStatement(loadedTicker, pt, stmtType, periods);
+      fetchXbrlStatement(loadedTicker, pt, stmtType, periods);
     }
   };
 
-  const busy = importing || fetching;
   const showSpinner = importing || !!quartersStatus;
   const displayStatus = quartersStatus ?? status;
+
+  const tabs: Tab[] = ["av_financials", "av_dcf", ...(xbrlLoaded ? (["financials"] as Tab[]) : [])];
+  const TAB_LABELS: Record<Tab, string> = {
+    av_financials: "AV Data",
+    av_dcf: "AV DCF",
+    financials: "XBRL",
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -144,8 +161,20 @@ export default function Home() {
             FinView
           </span>
           <div className="w-px h-4 bg-white/10 shrink-0" />
-          <ImportForm onSubmit={handleImport} loading={importing} />
-          {!error && displayStatus && (
+          <ImportForm onSubmit={handleLoad} loading={importing} />
+          {loadedTicker && !xbrlLoaded && (
+            <>
+              <div className="w-px h-4 bg-white/10 shrink-0" />
+              <button
+                onClick={handleXbrlDownload}
+                disabled={importing}
+                className="font-mono text-xs tracking-widest uppercase h-8 px-3 rounded border border-white/[0.07] text-zinc-400 hover:text-zinc-200 hover:border-white/[0.2] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {importing ? "Downloading…" : "Download XBRL"}
+              </button>
+            </>
+          )}
+          {displayStatus && !error && (
             <>
               <div className="w-px h-4 bg-white/10 shrink-0" />
               <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 min-w-0">
@@ -174,7 +203,7 @@ export default function Home() {
         {/* Tab bar — only shown when a ticker is loaded */}
         {loadedTicker && (
           <div className="flex items-center gap-1 mb-5">
-            {(["financials", "dcf", "av_financials", "av_dcf"] as Tab[]).map((tab) => (
+            {tabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -184,60 +213,47 @@ export default function Home() {
                     : "border-white/[0.07] text-zinc-500 hover:text-zinc-300 hover:border-white/[0.12]"
                 }`}
               >
-                {tab === "financials" ? "Financials"
-                  : tab === "dcf" ? "DCF Valuation"
-                  : tab === "av_financials" ? "AV Data"
-                  : "AV DCF"}
+                {TAB_LABELS[tab]}
               </button>
             ))}
-          </div>
-        )}
-
-        {/* Loading placeholder */}
-        {busy && !data && activeTab === "financials" && (
-          <div className="flex items-center justify-center h-64">
-            <span className="font-mono text-sm text-zinc-600 animate-pulse">
-              {status ?? "Loading…"}
-            </span>
           </div>
         )}
 
         {/* All tab panels rendered once; hidden when inactive to preserve state */}
         {loadedTicker && (
           <>
-            <div className={activeTab === "financials" ? undefined : "hidden"}>
-              {data && (
-                <StatementViewer
-                  data={data}
-                  ticker={loadedTicker}
-                  stmtType={stmtType}
-                  periodType={displayPeriodType}
-                  onStmtChange={handleStmtChange}
-                  onPeriodTypeChange={handlePeriodTypeChange}
-                  loading={fetching}
-                />
-              )}
-            </div>
-            <div className={activeTab === "dcf" ? undefined : "hidden"}>
-              <DcfViewer ticker={loadedTicker} />
-            </div>
             <div className={activeTab === "av_financials" ? undefined : "hidden"}>
               <AvFinancialsViewer ticker={loadedTicker} />
             </div>
             <div className={activeTab === "av_dcf" ? undefined : "hidden"}>
               <AvDcfViewer ticker={loadedTicker} />
             </div>
+            {xbrlLoaded && (
+              <div className={activeTab === "financials" ? undefined : "hidden"}>
+                {xbrlData && (
+                  <StatementViewer
+                    data={xbrlData}
+                    ticker={loadedTicker}
+                    stmtType={stmtType}
+                    periodType={displayPeriodType}
+                    onStmtChange={handleStmtChange}
+                    onPeriodTypeChange={handlePeriodTypeChange}
+                    loading={fetching}
+                  />
+                )}
+              </div>
+            )}
           </>
         )}
 
         {/* Empty state */}
-        {!busy && !loadedTicker && !error && (
+        {!loadedTicker && !error && (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
               No data loaded
             </p>
             <p className="font-mono text-xs text-zinc-700">
-              Enter a ticker above to import SEC filings
+              Enter a ticker above to view financials
             </p>
           </div>
         )}
