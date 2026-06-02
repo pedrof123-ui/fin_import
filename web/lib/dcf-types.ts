@@ -86,6 +86,9 @@ export interface HistoricalRow {
   income_tax_expense: number | null;
   pretax_income: number | null;
   is_actual: boolean;
+  accounts_receivable: number | null;
+  accounts_payable: number | null;
+  inventory: number | null;
 }
 
 export interface DcfData {

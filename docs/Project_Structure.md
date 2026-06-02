@@ -10,7 +10,7 @@ fin_import2/
 │
 ├── dcf/
 │   ├── __init__.py
-│   ├── assumptions.py                   Dataclasses: YearForecast, UserOverrides, NwcAssumptions, DcfResult, HistoricalRow
+│   ├── assumptions.py                   Dataclasses: YearForecast, UserOverrides, NwcAssumptions, DcfResult, HistoricalRow (includes AR/AP/inventory for WC day charts)
 │   ├── forecaster.py                    ARIMA(0,1,0) + OLS forecasting for P&L ratios; DSO/DPO/DIO
 │   ├── model.py                         FCFF build-up, terminal value, equity bridge, historical rows
 │   ├── wacc.py                          WACC, CAPM, cost of debt, Hamada beta re-levering
@@ -30,6 +30,10 @@ fin_import2/
 │   │   ├── DcfFcffTable.tsx             FCFF build-up (Revenue→EBIT→NOPAT→+D&A→-CapEx→-ΔNWC→FCFF→PV)
 │   │   ├── DcfTerminalValue.tsx         Terminal value decomposition: FCFF₅, TV, PV(TV), TV% of EV
 │   │   ├── DcfSensitivity.tsx           2D sensitivity table: intrinsic value vs WACC × terminal growth
+│   │   ├── DcfQuarterly.tsx             Q1-Q4 actual vs estimated quarterly revenue, gross profit, EBIT
+│   │   ├── DcfIncomeChart.tsx           Revenue/Gross Profit absolute chart + Gross/EBIT/Net margin % chart
+│   │   ├── DcfEfficiencyChart.tsx       Working Capital Days (DSO/DPO/DIO lines), Capex/Revenue %, Effective Tax Rate %
+│   │   ├── EarningsEstimates.tsx        Analyst EPS + revenue consensus estimates table
 │   │   └── ui/                          shadcn/ui primitives (Button, Input, Select)
 │   └── lib/
 │       ├── dcf-types.ts                 TypeScript interfaces for all DCF API shapes
@@ -216,7 +220,7 @@ scripts/ also contains:
 3. `dcf/forecaster.py` forecasts revenue (EWM annual growth blended with quarterly momentum signal for Y1-Y2; OLS slope anchored at Y2 for Y3-Y5) and 5 P&L ratios (ARIMA(0,1,0) Y1-Y2, OLS Y3-Y5); computes DSO/DPO/DIO from historical balance sheets
 4. `dcf/wacc.py` downloads beta via yfinance; computes ke (CAPM), kd (annual IE / avg debt), WACC with market-value weights. Diluted shares: quarterly → annual → derived from net_income/EPS. Emits `warnings` for zero market cap, D_w > 80%, WACC < 5%, or terminal growth clamped.
 5. `dcf/model.py` builds FCFF series: EBIT → NOPAT → +D&A → -CapEx → -ΔNWC (days-based); discounts; Gordon Growth terminal value; equity bridge
-6. Returns `DcfResult` with historical rows, proforma rows, FCFF series, WACC detail, sensitivity grid, terminal value decomposition. `HistoricalRow` fields: revenue, gross profit, EBIT, EBITDA, income tax expense, net income, D&A, CapEx, total assets, total debt, cash, diluted EPS, plus granular P&L components and pretax income for ratio display
+6. Returns `DcfResult` with historical rows, proforma rows, FCFF series, WACC detail, sensitivity grid, terminal value decomposition. `HistoricalRow` fields: revenue, gross profit, EBIT, EBITDA, income tax expense, pretax income, net income, D&A, CapEx, total assets, total debt, cash, diluted EPS, granular P&L components (COGS, SG&A, R&D, interest expense), and balance sheet working-capital items (accounts_receivable, accounts_payable, inventory) for DSO/DPO/DIO charting
 7. `POST /dcf/{ticker}/run` accepts per-year and global overrides, re-runs from step 5
 
 ### Bulk import (CLI)
@@ -322,6 +326,41 @@ Global: risk-free rate, market risk premium, beta, cost of debt, tax rate, termi
 Per-year: revenue_growth, cogs_pct, sga_pct, rd_pct, interest_pct, other_pct, capex_pct_revenue
 
 Reset button restores all inputs to model-computed defaults without re-fetching.
+
+**AV data adapter** (`dcf/av_data.py`)
+
+Alpha Vantage column names differ from what the DCF engine expects. `av_data.py` renames them on load so nothing downstream needs AV awareness.
+
+| Statement | AV column | DCF engine name |
+|-----------|-----------|-----------------|
+| income | `fiscal_date_ending` | `period_end_date` |
+| income | `total_revenue` | `revenue` |
+| income | `selling_general_and_administrative` | `selling_general_admin` |
+| income | `research_and_development` | `research_development` |
+| income | `income_before_tax` | `pretax_income` |
+| income | `depreciation_and_amortization` | `depreciation_amortization` |
+| balance | `fiscal_date_ending` | `period_end_date` |
+| balance | `cash_and_cash_equivalents` | `cash_and_equivalents` |
+| balance | `current_net_receivables` | `accounts_receivable` |
+| balance | `current_accounts_payable` | `accounts_payable` |
+| balance | `current_long_term_debt` | `current_portion_long_term_debt` |
+| cashflow | `fiscal_date_ending` | `period_end_date` |
+| cashflow | `depreciation_depletion_and_amortization` | `depreciation_amortization` |
+
+AV `period_type` is lowercase (`'annual'`/`'quarterly'`); the adapter normalises to title-case so no other module needs awareness.
+
+**Diluted shares approximation:** AV income statements carry no `diluted_shares`. The adapter derives shares from `common_stock_shares_outstanding` on the balance sheet (basic, not diluted). This overstates intrinsic value per share by the dilution gap — typically 1–5% (AAPL ~0.7%, NVDA ~1.2%, high-SBC companies up to ~4%).
+
+**Terminal growth default (AV DCF only):** median of all historical annual revenue YoY growth rates, clamped to [0%, 15%]. Capped at 15% to prevent outlier growth years from producing an unrealistic perpetuity rate.
+
+**Known constraints and non-obvious decisions:**
+
+| Constraint | Decision |
+|------------|----------|
+| AV has no diluted shares in income statement | Use `common_stock_shares_outstanding` from balance sheet; ~1–5% intrinsic value overstatement |
+| AV cashflow may lack D&A for some tickers | Fall back to income statement `depreciation_and_amortization` |
+| AV reports fewer than 8 quarterly periods for some tickers | Raise `ValueError` → API returns HTTP 404 with actionable message |
+| `UserOverrides` is a dataclass | Use `dataclasses.replace()` to apply terminal growth default without mutating caller's object |
 
 ## Fundamentals Alpha model
 

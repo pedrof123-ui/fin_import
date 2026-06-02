@@ -84,6 +84,7 @@ class WaccDetail:
     wacc: float
     total_debt: float
     market_cap: float
+    beta_2yr: float | None = None
 
 
 @dataclass
@@ -130,6 +131,10 @@ class HistoricalRow:
     income_tax_expense: float | None = None
     pretax_income: float | None = None
     is_actual: bool = False
+    # Balance sheet items for working-capital day metrics
+    accounts_receivable: float | None = None
+    accounts_payable: float | None = None
+    inventory: float | None = None
 
 
 @dataclass

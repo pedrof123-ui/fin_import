@@ -12,6 +12,7 @@ import DcfNwcCapex from "./DcfNwcCapex";
 import DcfTerminalValue from "./DcfTerminalValue";
 import DcfQuarterly from "./DcfQuarterly";
 import DcfIncomeChart from "./DcfIncomeChart";
+import DcfEfficiencyChart from "./DcfEfficiencyChart";
 import EarningsEstimates from "./EarningsEstimates";
 
 function fmtBn(v: number | null | undefined): string {
@@ -362,7 +363,7 @@ export default function DcfViewer({ ticker, apiPath = "/dcf", variant }: { ticke
       />
 
       <DcfStatements
-        historical={historical}
+        historical={historical.slice(-5)}
         proforma={data.proforma}
         yearRows={yearRows}
         onYearRowChange={(year, field, value) =>
@@ -426,6 +427,8 @@ export default function DcfViewer({ ticker, apiPath = "/dcf", variant }: { ticke
       />
 
       <DcfIncomeChart historical={historical} proforma={data.proforma} />
+
+      <DcfEfficiencyChart historical={historical} proforma={data.proforma} />
 
       <EarningsEstimates
         estimates={data.analyst_estimates ?? []}

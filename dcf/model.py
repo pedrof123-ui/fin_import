@@ -186,6 +186,9 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
                 ebitda=ebitda,
                 income_tax_expense=income_tax,
                 pretax_income=_val(row, "pretax_income"),
+                accounts_receivable=_val(bs_row, "accounts_receivable"),
+                accounts_payable=_val(bs_row, "accounts_payable"),
+                inventory=_val(bs_row, "inventory"),
             )
         )
     return rows
