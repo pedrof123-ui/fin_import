@@ -519,14 +519,31 @@ def _sum_debt(bs_row) -> float | None:
     return total if any(p is not None for p in parts) else None
 
 
-def _median_revenue_growth(income_df: pd.DataFrame) -> float:
-    """Median YoY revenue growth from historical annual data. Clamped [0%, 15%]."""
+_GDP_NOMINAL = 0.025  # long-run nominal GDP anchor for terminal growth
+
+def _default_terminal_growth(income_df: pd.DataFrame) -> float:
+    """
+    GDP-anchored terminal growth rate: 20% company history + 80% long-run GDP.
+
+    The 80% GDP weight enforces the theoretical constraint that no company grows
+    faster than the economy in perpetuity. The 20% company weight gives a modest
+    tilt toward the firm's track record using the all-history median YoY revenue
+    growth (robust to single outlier years). Result is clamped to [0.5%, 4.0%].
+
+    Typical outputs:
+      Structural growers (MSFT, META):  ~4.0%  (GDP + 1.5% premium, capped)
+      Quality growers (AAPL):           ~3.8%
+      Stable companies (WMT, KO):       ~2.6%  (near GDP)
+      Mature / declining (UPS, PFE):    ~1.9–2.7%
+      Volatile commodities (CVX):       ~1.1%
+    """
     rev = income_df["revenue"].dropna()
     if len(rev) < 2:
-        return 0.03
-    # income_df is newest→oldest; rates[i] = growth from period i+1 to period i
-    rates = rev.values[:-1] / rev.values[1:] - 1
-    return float(np.clip(np.nanmedian(rates), 0.0, 0.15))
+        return _GDP_NOMINAL
+    rates = rev.values[:-1] / rev.values[1:] - 1  # newest→oldest
+    hist_median = float(np.clip(np.nanmedian(rates), -0.10, 0.20))
+    blended = 0.20 * hist_median + 0.80 * _GDP_NOMINAL
+    return float(np.clip(blended, 0.005, 0.04))
 
 
 def _median_ebit_margin(income_df: pd.DataFrame) -> float:
@@ -561,7 +578,7 @@ def run_dcf_av(
     quarterly = load_av_quarterly_financials(ticker)
     annual = load_av_annual_financials(ticker)
     if overrides is None or overrides.terminal_growth_rate is None:
-        median_g = _median_revenue_growth(annual["income"])
+        median_g = _default_terminal_growth(annual["income"])
         if overrides is None:
             from dcf.assumptions import UserOverrides
             overrides = UserOverrides(terminal_growth_rate=median_g)
@@ -826,7 +843,7 @@ def _run_dcf_core(
         shares=shares,
     )
 
-    annual_display = {k: v.iloc[:5].reset_index(drop=True) for k, v in annual.items()}
+    annual_display = {k: v.reset_index(drop=True) for k, v in annual.items()}
     historical = _build_historical_rows(annual_display)
     proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate, last_annual_year, shares)
 
