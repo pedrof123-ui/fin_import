@@ -172,17 +172,23 @@ def compute_nwc_days(
     ap = _col(balance_df, "accounts_payable")
     inv = _col(balance_df, "inventory")
 
-    # Align on common index
+    # Align on common index — cap at 7 years (one full business cycle).
+    # Median over the full history incorporates stale structural data for companies
+    # whose working capital model has shifted (e.g. AAPL receivables, CAT inventory).
+    # 7 years is long enough to span a cyclical peak-to-trough-to-peak while staying
+    # within the current operating era.
+    _LOOKBACK = 7
     idx = income_df.index.intersection(balance_df.index)
     if len(idx) == 0:
         # Fall back to positional alignment (take min length)
-        n = min(len(income_df), len(balance_df))
+        n = min(len(income_df), len(balance_df), _LOOKBACK)
         rev_v = rev.values[:n]
         cogs_v = cogs.values[:n]
         ar_v = ar.values[:n] if len(ar) >= n else np.full(n, np.nan)
         ap_v = ap.values[:n] if len(ap) >= n else np.full(n, np.nan)
         inv_v = inv.values[:n] if len(inv) >= n else np.full(n, np.nan)
     else:
+        idx = idx[:_LOOKBACK]
         rev_v = rev.loc[idx].values
         cogs_v = cogs.loc[idx].values
         ar_v = ar.reindex(idx).values
@@ -196,7 +202,7 @@ def compute_nwc_days(
 
     def _mean_pos(arr):
         valid = arr[~np.isnan(arr) & (arr >= 0)]
-        return float(valid.mean()) if len(valid) > 0 else 0.0
+        return float(np.median(valid)) if len(valid) > 0 else 0.0
 
     return NwcAssumptions(
         dso=_mean_pos(dso_series),
@@ -252,6 +258,29 @@ def forecast_assumptions(
         inferred = _safe_ratio(residual, inc_a["revenue"]).dropna().values
         if len(inferred) >= 2:
             hist_sga = inferred
+            _sga_fallback_used = True
+
+    # Guard against AV double-counting: some companies (e.g. UPS) have AV reporting
+    # total operating expenses in the SGA field while also reporting cost_of_revenue
+    # separately. When the two together exceed 100% of revenue on a profitable company,
+    # recompute SGA as gross_profit − operating_income (the true below-gross-profit
+    # operating cost residual) instead of the raw AV figure.
+    if (
+        reports_cogs
+        and not _sga_fallback_used
+        and len(hist_cogs) >= 2
+        and len(hist_sga) >= 2
+        and not gp_ser.isna().all()
+        and "operating_income" in inc_a.columns
+    ):
+        _trial_cogs = _mean_ratio(hist_cogs, 0.5, 0.0, 1.0)
+        _trial_sga  = _mean_ratio(hist_sga,  0.1, 0.0, 0.8)
+        _ebit_hist  = _safe_ratio(
+            inc_a["operating_income"].reindex(inc_a.index), inc_a["revenue"]
+        ).dropna().values
+        if _trial_cogs + _trial_sga > 1.0 and len(_ebit_hist) >= 2 and float(np.median(_ebit_hist)) > 0:
+            sga_ser = (gp_ser - inc_a["operating_income"].reindex(inc_a.index)).clip(lower=0)
+            hist_sga = _safe_ratio(sga_ser, inc_a["revenue"]).dropna().values
             _sga_fallback_used = True
 
     # R&D % of revenue — may be all-null for many companies
