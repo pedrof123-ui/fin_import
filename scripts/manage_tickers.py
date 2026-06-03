@@ -122,7 +122,7 @@ log = logging.getLogger(__name__)
 # ETF tickers are routed to etf_prices instead of stock_prices in prices.duckdb.
 # Keep in sync with trade_systems/utilities/etf_tickers.py.
 _ETF_TICKERS: frozenset[str] = frozenset({
-    "SPY", "IWM", "IWN",
+    "SPY", "IWM", "IWN", "MDY", "VTI",
     "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
     "GLD", "SLV", "USO", "CPER",
     "SDS", "SH", "RWM", "TWM",
@@ -486,7 +486,6 @@ def _add_ticker(
     ticker: str,
     av_db: AVFinancialsDB,
     hf_db: HistoricFundamentalsDB,
-    prices_conn,
     prices_db_path: str,
     api_key: str,
     limiter: RateLimiter,
@@ -495,7 +494,8 @@ def _add_ticker(
 ) -> bool:
     """Run the full add pipeline for one ticker. Returns True on success."""
 
-    # Step 1 — Price backfill
+    # Step 1 — Price backfill (opens its own R/W connection; must complete before
+    # any read-only connection is opened to the same file)
     try:
         n = _backfill_prices(ticker, prices_db_path, api_key, limiter)
         log.info("  prices: %d rows upserted", n)
@@ -503,73 +503,78 @@ def _add_ticker(
         log.error("  prices: FAILED — %s", exc)
         return False
 
-    # Step 2-4 — Financial statements, shares, dividends
-    if not force and av_db.has_ticker(ticker):
-        log.info("  av_financials: already present (use --force to re-import)")
-    else:
-        try:
-            rows = av_db.import_ticker(ticker, api_key, limiter)
-            log.debug("  statements: %d rows", rows)
-        except Exception as exc:
-            log.error("  statements: FAILED — %s", exc)
-            return False
-        try:
-            av_db.import_shares_outstanding(ticker, api_key, limiter)
-        except Exception as exc:
-            log.error("  shares: FAILED — %s", exc)
-            return False
-        try:
-            av_db.import_dividends(ticker, api_key, limiter)
-        except Exception as exc:
-            log.error("  dividends: FAILED — %s", exc)
-            return False
-
-    # Step 5 — Company overview (sector/industry)
+    # Steps 2–8 need a read-only prices connection; open it after the R/W backfill
+    prices_conn = duckdb.connect(prices_db_path, read_only=True)
     try:
-        av_db.import_company_overview(ticker, api_key, limiter)
-        log.debug("  overview: imported")
-    except Exception as exc:
-        log.warning("  overview: failed (scoring will lack sector data) — %s", exc)
-
-    # Step 6 — PE timeseries + goal prices
-    try:
-        monthly_pe, stats = process_ticker(ticker, av_db.conn, prices_conn)
-        if monthly_pe.empty:
-            log.warning("  pe: no data computed (missing financials or prices?)")
+        # Step 2-4 — Financial statements, shares, dividends
+        if not force and av_db.has_ticker(ticker):
+            log.info("  av_financials: already present (use --force to re-import)")
         else:
-            if stats:
-                monthly_pe = enrich_goals(monthly_pe, stats, hf_db.conn, ticker)
-                stats.update(extract_goal_stats(monthly_pe))
-            hf_db.upsert_monthly_pe(ticker, monthly_pe)
-            if stats:
-                hf_db.upsert_pe_stats(stats)
-            log.debug("  pe: %d months", len(monthly_pe))
-    except Exception as exc:
-        log.error("  pe timeseries: FAILED — %s", exc)
-        return False
+            try:
+                rows = av_db.import_ticker(ticker, api_key, limiter)
+                log.debug("  statements: %d rows", rows)
+            except Exception as exc:
+                log.error("  statements: FAILED — %s", exc)
+                return False
+            try:
+                av_db.import_shares_outstanding(ticker, api_key, limiter)
+            except Exception as exc:
+                log.error("  shares: FAILED — %s", exc)
+                return False
+            try:
+                av_db.import_dividends(ticker, api_key, limiter)
+            except Exception as exc:
+                log.error("  dividends: FAILED — %s", exc)
+                return False
 
-    # Step 7 — Analyst estimates
-    if not skip_estimates:
+        # Step 5 — Company overview (sector/industry)
         try:
-            raw = fetch_estimates(ticker, api_key, limiter)
-            est_rows = normalize_estimates(ticker, raw)
-            hf_db.upsert_estimates(ticker, est_rows)
-            log.debug("  estimates: %d rows", len(est_rows))
+            av_db.import_company_overview(ticker, api_key, limiter)
+            log.debug("  overview: imported")
         except Exception as exc:
-            log.warning("  estimates: failed — %s", exc)
+            log.warning("  overview: failed (scoring will lack sector data) — %s", exc)
 
-    # Step 8 — Forward multiples
-    try:
-        _update_forward_pe(hf_db, prices_conn, ticker)
-        _update_rev_ntm_growth_est(hf_db, av_db.conn, ticker)
-        _update_earn_ntm_growth_est(hf_db, ticker)
-        _update_forward_pfcf(hf_db, av_db.conn, prices_conn, ticker)
-        _update_forward_evebitda(hf_db, av_db.conn, prices_conn, ticker)
-        _update_forward_ps(hf_db, av_db.conn, prices_conn, ticker)
-        _update_market_cap(hf_db, av_db.conn, prices_conn, ticker)
-        log.debug("  forward multiples: updated")
-    except Exception as exc:
-        log.warning("  forward multiples: failed — %s", exc)
+        # Step 6 — PE timeseries + goal prices
+        try:
+            monthly_pe, stats = process_ticker(ticker, av_db.conn, prices_conn)
+            if monthly_pe.empty:
+                log.warning("  pe: no data computed (missing financials or prices?)")
+            else:
+                if stats:
+                    monthly_pe = enrich_goals(monthly_pe, stats, hf_db.conn, ticker)
+                    stats.update(extract_goal_stats(monthly_pe))
+                hf_db.upsert_monthly_pe(ticker, monthly_pe)
+                if stats:
+                    hf_db.upsert_pe_stats(stats)
+                log.debug("  pe: %d months", len(monthly_pe))
+        except Exception as exc:
+            log.error("  pe timeseries: FAILED — %s", exc)
+            return False
+
+        # Step 7 — Analyst estimates
+        if not skip_estimates:
+            try:
+                raw = fetch_estimates(ticker, api_key, limiter)
+                est_rows = normalize_estimates(ticker, raw)
+                hf_db.upsert_estimates(ticker, est_rows)
+                log.debug("  estimates: %d rows", len(est_rows))
+            except Exception as exc:
+                log.warning("  estimates: failed — %s", exc)
+
+        # Step 8 — Forward multiples
+        try:
+            _update_forward_pe(hf_db, prices_conn, ticker)
+            _update_rev_ntm_growth_est(hf_db, av_db.conn, ticker)
+            _update_earn_ntm_growth_est(hf_db, ticker)
+            _update_forward_pfcf(hf_db, av_db.conn, prices_conn, ticker)
+            _update_forward_evebitda(hf_db, av_db.conn, prices_conn, ticker)
+            _update_forward_ps(hf_db, av_db.conn, prices_conn, ticker)
+            _update_market_cap(hf_db, av_db.conn, prices_conn, ticker)
+            log.debug("  forward multiples: updated")
+        except Exception as exc:
+            log.warning("  forward multiples: failed — %s", exc)
+    finally:
+        prices_conn.close()
 
     return True
 
@@ -594,7 +599,6 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
         return 0
 
     av_db = AVFinancialsDB(av_db_path)
-    prices_conn = duckdb.connect(prices_db_path, read_only=True)
     hf_db = HistoricFundamentalsDB(hf_db_path)
     limiter = RateLimiter()
 
@@ -603,7 +607,7 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
         for i, ticker in enumerate(tickers, 1):
             log.info("[%d/%d] %s", i, len(tickers), ticker)
             success = _add_ticker(
-                ticker, av_db, hf_db, prices_conn, prices_db_path,
+                ticker, av_db, hf_db, prices_db_path,
                 api_key, limiter, args.force, args.skip_estimates,
             )
             if success:
@@ -614,7 +618,6 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
                 log.error("[%d/%d] %s — failed", i, len(tickers), ticker)
     finally:
         av_db.close()
-        prices_conn.close()
         hf_db.close()
 
     log.info("add complete: %d ok, %d failed", ok, failed)

@@ -1,0 +1,26 @@
+rank,percentile,ticker,company_name,score,sector,market_cap,price,liquidity,pe_ratio,fcf_yield,earnings_yield,ttm_gross_margin,ttm_operating_margin,debt_to_ebitda,roa,top_factor,value_trap,missing_factor_count,data_quality,feature_available_date,weight_pct,alloc_pct
+1,100.0%,WINA,Winmark Corporation,2.6,CONSUMER CYCLICAL,1B,391.4,16M,35.4,2.9%,2.8%,96.7%,62.8%,0.0,116.8%,high_earnings_yield,False,0,good,2026-05-30,4.2%,2.1%
+2,99.9%,SNDK,Sandisk Corp,2.3,TECHNOLOGY,235B,1641.6,20B,57.2,1.7%,1.7%,56.0%,40.9%,0.0,26.4%,high_fcf_yield,False,1,partial,2026-05-30,0.9%,0.5%
+3,99.9%,FTNT,Fortinet Inc,2.0,TECHNOLOGY,94B,129.7,813M,49.3,2.5%,2.0%,80.7%,31.1%,0.4,19.8%,low_pe,False,1,partial,2026-05-30,2.2%,1.1%
+4,99.8%,ZTO,ZTO Express (Cayman) Inc,1.7,INDUSTRIALS,17B,22.2,49M,1.9,79.3%,51.6%,24.9%,20.1%,1.9,9.4%,high_fcf_yield,False,0,good,2026-05-30,5.8%,2.9%
+5,99.7%,TGTX,TG Therapeutics Inc,1.6,HEALTHCARE,6B,38.8,86M,13.5,-0.2%,7.4%,83.0%,21.3%,0.0,30.2%,high_earnings_yield,False,1,partial,2026-05-30,4.2%,2.1%
+6,99.6%,MAR,Marriott International Inc,1.1,CONSUMER CYCLICAL,102B,385.8,523M,40.2,2.7%,2.5%,21.4%,16.0%,0.5,9.3%,high_div_yield,False,0,good,2026-05-30,7.0%,3.5%
+7,99.5%,LOW,Lowe's Companies Inc,0.9,CONSUMER CYCLICAL,122B,217.9,680M,18.3,6.3%,5.5%,33.5%,11.8%,0.5,12.3%,high_earnings_yield,False,0,good,2026-05-01,5.9%,2.9%
+8,99.4%,AMN,AMN Healthcare Services Inc,0.9,HEALTHCARE,1B,27.9,33M,18.3,64.6%,-3.0%,27.6%,0.3%,0.0,-1.2%,high_fcf_yield,False,1,partial,2026-05-30,2.5%,1.2%
+9,99.3%,VRSN,VeriSign Inc,0.9,TECHNOLOGY,27B,296.1,245M,32.3,3.9%,3.1%,88.3%,67.9%,0.0,64.8%,high_div_yield,False,0,good,2026-05-30,6.4%,3.2%
+10,99.2%,MTD,Mettler-Toledo International Inc,0.8,HEALTHCARE,23B,1163.5,240M,27.0,3.4%,3.7%,57.8%,28.0%,0.1,23.9%,high_earnings_yield,False,1,partial,2026-05-30,6.6%,3.3%
+11,99.2%,IT,Gartner Inc,0.8,TECHNOLOGY,11B,161.2,262M,15.2,11.2%,6.6%,68.2%,16.4%,0.0,9.7%,high_fcf_yield,False,1,partial,2026-05-30,3.4%,1.7%
+12,99.1%,KSS,Kohl's Corporation,0.8,CONSUMER CYCLICAL,1B,15.6,79M,6.6,52.5%,15.1%,40.6%,3.3%,0.1,2.0%,high_fcf_yield,False,0,good,2026-05-01,2.0%,1.0%
+13,99.0%,EE,Excelerate Energy Inc,0.8,ENERGY,4B,32.6,14M,26.8,19.4%,3.7%,32.9%,21.1%,0.3,1.0%,high_fcf_yield,False,0,good,2026-05-30,3.5%,1.8%
+14,98.9%,RNG,Ringcentral Inc,0.7,TECHNOLOGY,3B,41.9,87M,43.2,16.1%,2.3%,71.6%,6.5%,0.3,5.9%,high_fcf_yield,False,0,good,2026-05-30,3.0%,1.5%
+15,98.9%,DXC,DXC Technology Co,0.6,TECHNOLOGY,2B,9.3,55M,92.0,57.5%,1.1%,14.8%,2.0%,0.8,0.1%,high_fcf_yield,False,0,good,2026-05-30,5.5%,2.8%
+17,98.7%,DEC,Diversified Energy Company plc,0.6,ENERGY,1B,14.9,12M,2.8,32.5%,35.6%,10.6%,6.5%,0.5,6.4%,high_earnings_yield,False,0,good,2026-05-30,3.5%,1.8%
+20,98.5%,BBWI,Bath & Body Works Inc.,0.6,CONSUMER CYCLICAL,4B,20.4,127M,6.3,21.0%,15.8%,43.7%,15.4%,0.5,12.8%,high_fcf_yield,False,0,good,2026-05-01,3.7%,1.9%
+21,98.5%,IDT,IDT Corporation,0.6,COMMUNICATION SERVICES,1B,56.0,7M,17.2,8.0%,5.8%,36.9%,8.4%,0.0,12.1%,high_fcf_yield,False,0,good,2026-04-01,5.3%,2.7%
+23,98.3%,CALM,Cal-Maine Foods Inc,0.6,CONSUMER DEFENSIVE,4B,76.5,52M,5.2,19.9%,19.2%,33.8%,25.1%,0.0,22.1%,high_earnings_yield,False,0,good,2026-04-29,5.5%,2.8%
+25,98.1%,YELP,Yelp Inc,0.5,COMMUNICATION SERVICES,1B,23.3,31M,10.0,20.3%,10.0%,88.9%,12.8%,0.0,13.7%,high_fcf_yield,False,1,partial,2026-05-30,4.2%,2.1%
+26,98.0%,HLF,Herbalife Nutrition Ltd,0.5,CONSUMER DEFENSIVE,1B,11.9,22M,5.4,29.0%,18.6%,75.9%,9.1%,0.0,8.3%,high_fcf_yield,False,0,good,2026-05-30,1.9%,0.9%
+27,98.0%,NBR,Nabors Industries Ltd.,0.5,ENERGY,1B,92.5,28M,6.3,0.2%,15.8%,24.6%,13.5%,0.0,4.7%,high_earnings_yield,False,0,good,2026-05-30,4.5%,2.2%
+28,97.9%,OSCR,Oscar Health Inc,0.5,HEALTHCARE,7B,23.0,195M,30.8,37.0%,-0.5%,17.4%,0.1%,,-0.4%,high_fcf_yield,False,2,partial,2026-05-30,1.8%,0.9%
+29,97.8%,NCLH,Norwegian Cruise Line Holdings Ltd,0.5,CONSUMER CYCLICAL,8B,18.3,451M,15.0,-11.1%,6.7%,43.0%,15.9%,1.0,2.4%,high_fcf_yield,False,1,partial,2026-05-30,3.1%,1.5%
+32,97.6%,APA,APA Corporation,0.5,ENERGY,13B,36.5,263M,8.4,11.5%,11.9%,53.9%,34.6%,0.0,8.5%,high_earnings_yield,False,0,good,2026-05-30,3.3%,1.6%
