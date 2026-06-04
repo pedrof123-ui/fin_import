@@ -193,7 +193,7 @@ produces sensible portfolios before capital is committed.
 | 1 | Fix walk-forward equity curve | **Done** (commit 68e1b85) | Nothing |
 | 2 | Align comparison periods | **Done** (commit fc510b7) | Nothing |
 | 3 | Recency check | **Done** (commit 75d381a) | Phase 1 |
-| 4 | Portfolio-level backtest | Not started | Phases 1–2 |
+| 4 | Portfolio-level backtest | **Done** (commit b175669) | Phases 1–2 |
 | 5 | Survivorship bias estimate | **Done** (analytical, no commit) | Nothing |
 | 6 | Paper trading | Not started | Phases 1–5 |
 
