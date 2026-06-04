@@ -190,7 +190,7 @@ produces sensible portfolios before capital is committed.
 
 | Phase | Description | Status | Blocking |
 |-------|-------------|--------|---------|
-| 1 | Fix walk-forward equity curve | Not started | Nothing |
+| 1 | Fix walk-forward equity curve | **Done** (commit TBD) | Nothing |
 | 2 | Align comparison periods | Not started | Nothing |
 | 3 | Recency check | Not started | Phase 1 |
 | 4 | Portfolio-level backtest | Not started | Phases 1–2 |
