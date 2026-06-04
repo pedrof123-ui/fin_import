@@ -22,7 +22,7 @@ performance, before a live replacement is considered.
 | ML vs composite comparison | **Not done — different time periods** |
 | Composite backtest period | 211 months (~2005–2026) |
 | ML walk-forward period | 436 months (~1984–2026) |
-| Survivorship bias | Not quantified |
+| Survivorship bias | **~1%/yr upward bias; relative comparison unaffected** |
 
 ### Why the current +31.92% ML CAGR cannot be trusted
 
@@ -194,7 +194,7 @@ produces sensible portfolios before capital is committed.
 | 2 | Align comparison periods | **Done** (commit fc510b7) | Nothing |
 | 3 | Recency check | **Done** (commit 75d381a) | Phase 1 |
 | 4 | Portfolio-level backtest | Not started | Phases 1–2 |
-| 5 | Survivorship bias estimate | Not started | Nothing |
+| 5 | Survivorship bias estimate | **Done** (analytical, no commit) | Nothing |
 | 6 | Paper trading | Not started | Phases 1–5 |
 
 ---
