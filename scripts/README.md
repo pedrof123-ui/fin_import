@@ -379,6 +379,7 @@ uv run scripts/run_backtest.py --model --guardrails
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--sector-neutral` | off | Z-score factors within (month, sector) instead of market-wide. Sectors with <3 stocks fall back to market-wide. **Recommended** — validated +0.3–0.5pp CAGR, +0.004–0.020 Sharpe, -1 to -5pp MaxDD. Output file gets `_sector_neutral` prefix. |
 | `--guardrails` | off | Apply risk guardrails + 25% sector cap; produces `gr_*` portfolios |
 | `--vol-weight` | off | Inverse-vol position sizing (12m rolling); produces `vw_gr_*` portfolios |
 | `--regime-filter` | off | SPY 12m regime filter (50% exposure when >25% or <-20%); produces `rf_gr_*` |
@@ -390,13 +391,15 @@ uv run scripts/run_backtest.py --model --guardrails
 
 Required: `HF_DB_PATH`, `AV_DB_PATH`, `PRICES_DB_PATH`.
 
-**Recommended portfolio variants (211-month backtest 2005-2025, 25 stocks):**
+**Recommended portfolio variants (sector-neutral, 404 months 1983–2026, 25 stocks):**
 
 | Portfolio | CAGR | Sharpe | MaxDD | Notes |
 |---|---|---|---|---|
-| `gr_top_n_25` | 25.2% | 1.32 | -23.7% | Best CAGR, equal-weight |
-| `vw_gr_top_n_25` | 24.5% | 1.35 | -21.6% | Recommended default |
-| `rf_gr_top_n_25` | 21.6% | 1.37 | -21.3% | Capital-preservation, regime filter |
+| `gr_top_n_25` | 17.0% | 0.96 | -39.7% | Equal-weight |
+| `vw_gr_top_n_25` | 16.7% | 1.00 | -35.4% | Recommended default |
+| `rf_gr_top_n_25` | 15.6% | 1.02 | -25.7% | Capital-preservation, regime filter |
+
+Run with: `uv run scripts/run_backtest.py --sector-neutral --guardrails --vol-weight --regime-filter`
 
 ---
 
@@ -430,6 +433,8 @@ uv run scripts/score_live.py --no-guardrails
 - Regime banner: SPY 12-month trailing return and current exposure level (FULL = 100%, REDUCED = 50%).
 - Portfolio table with `weight_pct` (inverse-vol position weight) and `alloc_pct` (regime-adjusted allocation).
 - CSV with all ranked universe stocks; `weight_pct`/`alloc_pct` populated only for top-N portfolio.
+
+**Scoring:** Composite baseline uses sector-neutral z-scores by default — each factor is z-scored within `(month_end_date, sector)` so stocks are compared only against sector peers. Sectors with <3 stocks fall back to market-wide z-score. Validated improvement: +0.3pp CAGR, +0.004 Sharpe, -1pp MaxDD on `rf_gr_top_n_25` (404 months).
 
 Required: `HF_DB_PATH`, `AV_DB_PATH`. `PRICES_DB_PATH` optional but required for vol-weighted sizing and regime signal.
 

@@ -1,0 +1,26 @@
+rank,percentile,ticker,company_name,score,sector,market_cap,price,liquidity,pe_ratio,fcf_yield,earnings_yield,ttm_gross_margin,ttm_operating_margin,debt_to_ebitda,roa,top_factor,value_trap,missing_factor_count,data_quality,feature_available_date,weight_pct,alloc_pct
+1,100.0%,WINA,Winmark Corporation,1.8,CONSUMER CYCLICAL,1B,374.4,15M,33.9,3.0%,2.9%,96.7%,62.8%,0.0,116.8%,high_earnings_yield,False,0,good,2026-05-30,4.1%,4.1%
+2,99.9%,ZTO,ZTO Express (Cayman) Inc,1.7,INDUSTRIALS,17B,22.6,44M,2.0,79.3%,50.8%,24.9%,20.1%,1.9,9.4%,high_fcf_yield,False,0,good,2026-05-30,5.8%,5.8%
+3,99.9%,FTNT,Fortinet Inc,1.5,TECHNOLOGY,94B,148.9,864M,56.6,2.2%,1.8%,80.7%,31.1%,0.4,19.8%,high_fcf_yield,False,1,partial,2026-05-30,2.2%,2.2%
+4,99.8%,SNDK,Sandisk Corp,1.4,TECHNOLOGY,235B,1716.4,20B,59.8,1.7%,1.7%,56.0%,40.9%,0.0,26.4%,high_fcf_yield,False,1,partial,2026-05-30,0.9%,0.9%
+5,99.7%,CALM,Cal-Maine Foods Inc,1.2,CONSUMER DEFENSIVE,4B,74.5,52M,5.1,20.5%,19.7%,33.8%,25.1%,0.0,22.1%,high_earnings_yield,False,0,good,2026-04-29,5.5%,5.5%
+6,99.6%,KSS,Kohl's Corporation,1.0,CONSUMER CYCLICAL,1B,15.9,81M,6.7,51.7%,14.9%,40.6%,3.3%,0.1,2.0%,high_fcf_yield,False,0,good,2026-05-01,2.0%,2.0%
+7,99.5%,HLF,Herbalife Nutrition Ltd,1.0,CONSUMER DEFENSIVE,1B,12.0,22M,5.4,28.8%,18.5%,75.9%,9.1%,0.0,8.3%,high_fcf_yield,False,0,good,2026-05-30,1.8%,1.8%
+8,99.4%,AMN,AMN Healthcare Services Inc,0.8,HEALTHCARE,1B,30.2,34M,18.3,59.7%,-2.7%,27.6%,0.3%,0.0,-1.2%,high_fcf_yield,False,1,partial,2026-05-30,2.4%,2.4%
+9,99.3%,BAH,Booz Allen Hamilton Holding,0.8,INDUSTRIALS,10B,79.2,137M,11.3,9.9%,8.9%,44.5%,9.2%,0.1,11.5%,high_earnings_yield,False,0,good,2026-05-30,7.9%,7.9%
+10,99.2%,GFI,Gold Fields Ltd ADR,0.8,BASIC MATERIALS,35B,38.6,128M,7.2,11.2%,14.0%,52.5%,48.3%,0.1,31.7%,high_earnings_yield,False,0,good,2026-03-31,2.7%,2.7%
+11,99.2%,NBR,Nabors Industries Ltd.,0.8,ENERGY,1B,94.4,28M,6.5,0.2%,15.5%,24.6%,13.5%,0.0,4.7%,high_earnings_yield,False,0,good,2026-05-30,4.6%,4.6%
+12,99.1%,ENR,Energizer Holdings Inc,0.8,INDUSTRIALS,1B,18.3,22M,6.5,12.6%,15.4%,40.9%,14.7%,0.1,4.4%,high_earnings_yield,False,0,good,2026-05-30,3.0%,3.0%
+13,99.0%,EE,Excelerate Energy Inc,0.8,ENERGY,4B,32.7,13M,26.9,19.4%,3.7%,32.9%,21.1%,0.3,1.0%,high_fcf_yield,False,0,good,2026-05-30,3.5%,3.5%
+14,98.9%,AU,AngloGold Ashanti plc,0.7,BASIC MATERIALS,48B,91.8,225M,13.3,8.6%,7.5%,52.2%,48.1%,0.0,22.1%,high_earnings_yield,False,0,good,2026-05-30,2.6%,2.6%
+15,98.9%,IT,Gartner Inc,0.7,TECHNOLOGY,11B,170.6,246M,16.1,10.5%,6.2%,68.2%,16.4%,0.0,9.7%,high_fcf_yield,False,0,good,2026-05-30,3.6%,3.6%
+16,98.8%,IDT,IDT Corporation,0.7,COMMUNICATION SERVICES,1B,55.4,7M,17.0,8.1%,5.9%,36.9%,8.4%,0.0,12.1%,high_fcf_yield,False,0,good,2026-04-01,5.3%,5.3%
+17,98.7%,BHP,BHP Group Limited,0.7,BASIC MATERIALS,223B,93.2,214M,11.0,8.8%,9.1%,82.7%,41.0%,0.1,18.7%,high_earnings_yield,False,0,good,2026-03-01,5.5%,5.5%
+18,98.7%,EIX,Edison International,0.7,UTILITIES,28B,70.9,189M,7.4,-2.3%,13.5%,37.7%,21.3%,1.2,3.9%,high_earnings_yield,False,0,good,2026-05-30,7.1%,7.1%
+19,98.5%,MAR,Marriott International Inc,0.7,CONSUMER CYCLICAL,102B,373.8,518M,39.0,2.8%,2.6%,21.4%,16.0%,0.5,9.3%,high_div_yield,False,0,good,2026-05-30,7.0%,7.0%
+20,98.5%,OSCR,Oscar Health Inc,0.7,HEALTHCARE,7B,21.1,198M,30.8,40.2%,-0.6%,17.4%,0.1%,,-0.4%,high_fcf_yield,False,2,partial,2026-05-30,1.8%,1.8%
+21,98.4%,IAG,IAMGold Corporation,0.7,BASIC MATERIALS,10B,17.5,97M,10.3,12.3%,9.7%,47.9%,44.8%,0.0,16.9%,high_fcf_yield,False,0,good,2026-05-30,2.0%,2.0%
+22,98.3%,BBWI,Bath & Body Works Inc.,0.7,CONSUMER CYCLICAL,4B,20.0,121M,6.2,21.4%,16.0%,43.7%,15.4%,0.5,12.8%,high_fcf_yield,False,0,good,2026-05-01,3.6%,3.6%
+23,98.2%,VRSN,VeriSign Inc,0.6,TECHNOLOGY,27B,297.4,241M,32.5,3.8%,3.1%,88.3%,67.9%,0.0,64.8%,high_earnings_yield,False,0,good,2026-05-30,6.3%,6.3%
+24,98.2%,DXC,DXC Technology Co,0.6,TECHNOLOGY,2B,9.9,52M,98.4,53.8%,1.0%,14.8%,2.0%,0.8,0.1%,high_fcf_yield,False,0,good,2026-05-30,5.7%,5.7%
+25,98.1%,KGC,Kinross Gold Corporation,0.6,BASIC MATERIALS,34B,29.0,197M,12.2,8.6%,8.2%,52.8%,48.2%,0.0,22.1%,high_earnings_yield,False,0,good,2026-05-30,3.2%,3.2%

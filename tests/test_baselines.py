@@ -231,6 +231,97 @@ def test_composite_score_nan_contributes_zero():
     assert scores.notna().all(), "All stocks should receive a composite score"
 
 
+def test_composite_score_sector_neutral_false_identical():
+    """sector_neutral=False (default) must produce bit-for-bit identical results."""
+    df = pd.DataFrame({
+        "ticker": ["A", "B", "C", "D"],
+        "month_end_date": [pd.Timestamp("2020-01-31")] * 4,
+        "sector": ["Tech", "Tech", "Energy", "Energy"],
+        "ps_ratio": [1.0, 5.0, 2.0, 8.0],
+    })
+    scores_default = composite_score(df, ["ps_ratio"], {"ps_ratio": True})
+    scores_explicit = composite_score(df, ["ps_ratio"], {"ps_ratio": True}, sector_neutral=False)
+    pd.testing.assert_series_equal(scores_default, scores_explicit)
+
+
+def test_composite_score_sector_neutral_independent_per_sector():
+    """
+    With sector_neutral=True, each sector is z-scored independently.
+
+    Sector A: ps_ratio [1, 2, 3, 4, 5]  (values 1-5)
+    Sector B: ps_ratio [10, 20, 30, 40, 50]  (values 10-50, same relative spread)
+
+    Market-wide: all of Sector A falls below the overall mean, so Sector A
+    stocks would all get positive z-scores (lower ps is better → inverted).
+    Sector-neutral: both sectors are scored relative to their own peers, so
+    Sector A and Sector B should have the same rank order and similar z-score
+    magnitudes (since they have the same relative spread within each sector).
+    """
+    rng = np.random.default_rng(0)
+    month = pd.Timestamp("2020-01-31")
+    # Same relative ordering in both sectors — sector-neutral should produce
+    # nearly equal z-scores for rank-matched stocks across sectors.
+    df = pd.DataFrame({
+        "ticker": [f"A{i}" for i in range(5)] + [f"B{i}" for i in range(5)],
+        "month_end_date": [month] * 10,
+        "sector": ["Tech"] * 5 + ["Energy"] * 5,
+        "ps_ratio": [1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+    })
+
+    market_scores = composite_score(df, ["ps_ratio"], {"ps_ratio": True}, sector_neutral=False)
+    sector_scores = composite_score(df, ["ps_ratio"], {"ps_ratio": True}, sector_neutral=True)
+
+    # Scores must differ (sector-neutral is not identical to market-wide here)
+    assert not np.allclose(market_scores.values, sector_scores.values), (
+        "Sector-neutral scores should differ from market-wide when sectors have "
+        "very different factor distributions"
+    )
+
+    # Within each sector, relative ordering is preserved
+    tech_idx = df[df["sector"] == "Tech"].index
+    energy_idx = df[df["sector"] == "Energy"].index
+    assert sector_scores[tech_idx].is_monotonic_decreasing, (
+        "Higher ps_ratio (lower_is_better) → lower score within Tech sector"
+    )
+    assert sector_scores[energy_idx].is_monotonic_decreasing, (
+        "Higher ps_ratio (lower_is_better) → lower score within Energy sector"
+    )
+
+    # No NaN in output
+    assert sector_scores.notna().all(), "Sector-neutral must not produce NaN scores"
+
+
+def test_composite_score_sector_neutral_small_sector_fallback():
+    """
+    Stocks in a sector with < 3 peers fall back to market-wide z-score.
+    """
+    month = pd.Timestamp("2020-01-31")
+    # Sector A: 5 stocks (eligible), Sector B: 2 stocks (too small → fallback)
+    df = pd.DataFrame({
+        "ticker": [f"A{i}" for i in range(5)] + ["B0", "B1"],
+        "month_end_date": [month] * 7,
+        "sector": ["Tech"] * 5 + ["Energy", "Energy"],
+        "ps_ratio": [1.0, 2.0, 3.0, 4.0, 5.0, 2.5, 3.5],
+    })
+
+    sector_scores = composite_score(df, ["ps_ratio"], {"ps_ratio": True}, sector_neutral=True)
+    market_scores = composite_score(df, ["ps_ratio"], {"ps_ratio": True}, sector_neutral=False)
+
+    # Sector B stocks must use market-wide fallback → scores equal to market-wide
+    b_idx = df[df["sector"] == "Energy"].index
+    np.testing.assert_allclose(
+        sector_scores[b_idx].values,
+        market_scores[b_idx].values,
+        err_msg="Small-sector stocks must use market-wide fallback",
+    )
+
+    # Sector A stocks must use sector z-score → different from market-wide
+    a_idx = df[df["sector"] == "Tech"].index
+    assert not np.allclose(sector_scores[a_idx].values, market_scores[a_idx].values), (
+        "Stocks in a full sector should get sector z-scores, not market-wide"
+    )
+
+
 # ── Test 7 ────────────────────────────────────────────────────────────────────
 
 def test_run_all_baselines_row_count():

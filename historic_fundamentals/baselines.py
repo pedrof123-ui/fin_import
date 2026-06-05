@@ -319,6 +319,8 @@ def composite_score(
     factor_cols: list[str],
     lower_is_better_map: dict[str, bool],
     group_col: str = "month_end_date",
+    sector_col: str = "sector",
+    sector_neutral: bool = False,
 ) -> pd.Series:
     """
     Cross-sectional z-score composite.
@@ -326,6 +328,11 @@ def composite_score(
     For each month, z-score each factor, flip sign for lower_is_better
     factors (so that higher z-score always means "better"), then average
     across factors. NaN factor values contribute 0 to the composite.
+
+    When sector_neutral=True, stocks with a valid sector and at least 3 peers
+    in the same (month, sector) are z-scored against sector peers only.
+    Stocks with no sector or sectors with fewer than 3 stocks fall back to
+    market-wide z-score for that month.
 
     Parameters
     ----------
@@ -338,6 +345,13 @@ def composite_score(
     group_col : str
         Column to group by for cross-sectional normalization. Default
         'month_end_date'.
+    sector_col : str
+        Column containing sector labels. Only used when sector_neutral=True.
+        Default 'sector'.
+    sector_neutral : bool
+        If True, z-score within (group_col, sector_col) for stocks with
+        sufficient sector peers, falling back to market-wide for the rest.
+        Default False preserves existing market-wide behavior exactly.
 
     Returns
     -------
@@ -355,9 +369,31 @@ def composite_score(
     scores = pd.Series(0.0, index=df.index)
     counts = pd.Series(0.0, index=df.index)
 
+    # Precompute sector eligibility once (reused across all factor columns)
+    if sector_neutral and sector_col in df.columns:
+        _sec_key = df[sector_col].fillna("__MISSING__")
+        _size_df = pd.DataFrame({"_g": df[group_col], "_s": _sec_key, "_v": 1})
+        _size_s = _size_df.groupby(["_g", "_s"])["_v"].transform("sum")
+        sector_eligible = df[sector_col].notna() & (_size_s >= 3)
+    else:
+        sector_eligible = None
+
     for col in present_cols:
         sign = -1.0 if lower_is_better_map.get(col, False) else 1.0
+
+        # Market-wide z-score (default, and used as fallback in sector_neutral mode)
         zscored = df.groupby(group_col)[col].transform(_xsec_zscore)
+
+        if sector_eligible is not None and sector_eligible.any():
+            # Override with sector z-score for eligible rows
+            sector_z = (
+                df.loc[sector_eligible]
+                .groupby([group_col, sector_col])[col]
+                .transform(_xsec_zscore)
+            )
+            zscored = zscored.copy()
+            zscored[sector_eligible] = sector_z
+
         # NaN values contribute 0 to the composite score
         zscored = zscored.fillna(0.0)
         scores += sign * zscored

@@ -106,7 +106,7 @@ def _join_sector(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
     return df
 
 
-def _compute_pit_composite_score(df: pd.DataFrame) -> pd.Series:
+def _compute_pit_composite_score(df: pd.DataFrame, sector_neutral: bool = False) -> pd.Series:
     """
     Compute composite baseline score POINT-IN-TIME.
 
@@ -118,6 +118,9 @@ def _compute_pit_composite_score(df: pd.DataFrame) -> pd.Series:
 
     The composite uses the value+quality score when quality columns are present,
     falling back to value_composite, then the raw available factors.
+
+    When sector_neutral=True, z-scores are computed within each (month, sector)
+    group (min 3 peers required; falls back to market-wide for smaller groups).
     """
     value_cols = [c for c in _VALUE_COLS if c in df.columns and df[c].notna().any()]
     value_sign = {c: _VALUE_SIGN[c] for c in value_cols}
@@ -143,7 +146,7 @@ def _compute_pit_composite_score(df: pd.DataFrame) -> pd.Series:
         log.warning("No composite factor columns found — using constant score 0.")
         return pd.Series(0.0, index=df.index)
 
-    return composite_score(df, cols, sign_map)
+    return composite_score(df, cols, sign_map, sector_neutral=sector_neutral)
 
 
 def _load_historical_adv(prices_db_path: str, tickers: list[str], lookback_days: int = 30) -> pd.DataFrame:
@@ -329,15 +332,17 @@ def _build_md_report(
     model_bt_results: dict | None = None,
     gr_bt_results: dict | None = None,
     max_missing: int | None = None,
+    sector_neutral: bool = False,
 ) -> str:
     rebalance_months = 3 if rebalance_label == "quarterly" else 1
+    signal_note = "sector-neutral composite baseline" if sector_neutral else "composite baseline"
     lines = [
         "# Backtest Results\n",
         f"**Universe**: {universe_n}\n",
         f"**Filters**: min_market_cap={universe_filters.get('min_market_cap', 'N/A'):.0f} "
         f"| min_price={universe_filters.get('min_price', 'N/A'):.2f}\n",
         f"**TC**: {tc_bps:.0f} bps one-way per trade\n",
-        f"**Signal**: composite baseline (value+quality+momentum where available)\n",
+        f"**Signal**: {signal_note} (value+quality+momentum where available)\n",
         f"**Rebalancing**: {rebalance_label} equal-weight, non-overlapping {rebalance_months}-month returns\n",
         "\n## Portfolio weighting\n",
         "All portfolios in this backtest are equal-weight (each selected stock receives "
@@ -450,6 +455,12 @@ def main() -> None:
     parser.add_argument("--regime-filter", action="store_true",
                         help="Also run regime-filtered guardrailed backtests (rf_gr_*): "
                              "50%% exposure when SPY 12m return >25%% or <-20%%")
+    parser.add_argument("--sector-neutral", action="store_true",
+                        help="Z-score factors within (month, sector) instead of market-wide; "
+                             "sectors with <3 stocks fall back to market-wide. "
+                             "Recommended for gr_* portfolios (Phase 3 validated: +0.3–0.5pp CAGR, "
+                             "+0.004–0.020 Sharpe, -1 to -5pp MaxDD). "
+                             "Output saved to backtest_results_sector_neutral*.md")
     parser.add_argument("--save-returns", action="store_true",
                         help="Save monthly returns for each portfolio to docs/monthly_returns_*.csv")
     parser.add_argument("--verbose", action="store_true",
@@ -512,9 +523,14 @@ def main() -> None:
              len(universe), universe["ticker"].nunique())
 
     # Compute composite score POINT-IN-TIME
-    log.info("Computing composite score ...")
+    log.info(
+        "Computing composite score (sector_neutral=%s) ...",
+        args.sector_neutral,
+    )
     universe = universe.copy()
-    universe["composite_score"] = _compute_pit_composite_score(universe)
+    universe["composite_score"] = _compute_pit_composite_score(
+        universe, sector_neutral=args.sector_neutral
+    )
 
     # Optionally compute XGBoost model scores per month
     model_loaded = None
@@ -817,7 +833,8 @@ def main() -> None:
     docs_dir = ROOT / "docs"
     docs_dir.mkdir(exist_ok=True)
     suffix = (
-        ("_model" if args.model else "")
+        ("_sector_neutral" if args.sector_neutral else "")
+        + ("_model" if args.model else "")
         + ("_guardrails" if args.guardrails else "")
         + ("_quarterly" if args.quarterly else "")
     )
@@ -833,6 +850,7 @@ def main() -> None:
         model_bt_results=model_bt_results if model_bt_results else None,
         gr_bt_results={**gr_bt_results, **gr_model_bt_results} if args.guardrails else None,
         max_missing=args.max_missing if args.guardrails else None,
+        sector_neutral=args.sector_neutral,
     )
     out_path.write_text(md)
     log.info("Wrote results to %s", out_path)

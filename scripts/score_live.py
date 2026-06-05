@@ -59,17 +59,14 @@ from historic_fundamentals.model import _apply_sector_zscore  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-# Backtest reference metrics (2005–2025, 211 months, composite score variants).
-# rf_vw_* entries reflect rf_* backtest runs (which used --vol-weight; naming is equivalent).
+# Backtest reference metrics — sector-neutral composite score (Phase 3 validation).
+# Full universe 1983–2026, 404 months guardrailed, vol-weighted, regime-filtered.
+# rf_vw_* entries use vol-weighting + regime filter (the live portfolio configuration).
 _BACKTEST_METRICS: dict[str, dict] = {
-    "gr_top_n_25":           dict(cagr="25.2%", sharpe="1.318", max_dd="-23.7%", beta="1.038", win_rate="67.8%", months=211),
-    "gr_top_n_10":           dict(cagr="25.9%", sharpe="1.328", max_dd="-26.8%", beta="0.997", win_rate="68.7%", months=211),
-    "vw_gr_top_n_25":        dict(cagr="24.5%", sharpe="1.351", max_dd="-21.6%", beta="0.984", win_rate="71.1%", months=211),
-    "vw_gr_top_n_10":        dict(cagr="24.4%", sharpe="1.306", max_dd="-27.1%", beta="0.968", win_rate="67.3%", months=211),
-    "rf_gr_top_n_25":        dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
-    "rf_gr_top_n_10":        dict(cagr="21.6%", sharpe="1.329", max_dd="-23.5%", beta="0.843", win_rate="67.3%", months=211),
-    "rf_vw_gr_top_n_25":     dict(cagr="21.6%", sharpe="1.370", max_dd="-21.3%", beta="0.863", win_rate="71.1%", months=211),
-    "rf_vw_gr_top_n_10":     dict(cagr="21.6%", sharpe="1.329", max_dd="-23.5%", beta="0.843", win_rate="67.3%", months=211),
+    "gr_top_n_25":           dict(cagr="17.0%", sharpe="0.960", max_dd="-39.7%", beta="0.781", win_rate="65.6%", months=404),
+    "vw_gr_top_n_25":        dict(cagr="16.7%", sharpe="1.000", max_dd="-35.4%", beta="0.735", win_rate="67.1%", months=404),
+    "rf_gr_top_n_25":        dict(cagr="15.6%", sharpe="1.015", max_dd="-25.7%", beta="0.634", win_rate="67.1%", months=404),
+    "rf_vw_gr_top_n_25":     dict(cagr="15.6%", sharpe="1.015", max_dd="-25.7%", beta="0.634", win_rate="67.1%", months=404),
     "xgb_gr_top_n_25":       dict(cagr="20.5%", sharpe="1.076", max_dd="-26.6%", beta="1.054", win_rate="62.6%", months=211),
     "vw_xgb_gr_top_n_25":    dict(cagr="19.5%", sharpe="1.089", max_dd="-23.5%", beta="0.989", win_rate="62.6%", months=211),
     "rf_xgb_gr_top_n_25":    dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
@@ -230,8 +227,15 @@ def _compute_market_cap(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _compute_composite_score(df: pd.DataFrame) -> pd.Series:
-    """Build composite score using value+quality+momentum factors available."""
+def _compute_composite_score(df: pd.DataFrame, sector_neutral: bool = True) -> pd.Series:
+    """Build composite score using value+quality+momentum factors available.
+
+    sector_neutral=True (default): z-score each factor within (date, sector)
+    so Apple is ranked against tech peers, not against ExxonMobil. Sectors
+    with fewer than 3 stocks fall back to market-wide z-score for that group.
+    Validated in Phase 3: +0.3pp CAGR, +0.004 Sharpe, -1pp MaxDD improvement
+    over market-wide on rf_gr_top_n_25 across 404 months.
+    """
     value_cols = [c for c in _VALUE_COLS if c in df.columns and df[c].notna().any()]
     value_sign = {c: _VALUE_SIGN[c] for c in value_cols}
 
@@ -263,7 +267,7 @@ def _compute_composite_score(df: pd.DataFrame) -> pd.Series:
         df = df.copy()
         df["_dummy_date"] = "live"
 
-    return composite_score(df, cols, sign_map, group_col=group_col)
+    return composite_score(df, cols, sign_map, group_col=group_col, sector_neutral=sector_neutral)
 
 
 def _load_model(model_path):
@@ -799,7 +803,7 @@ def main() -> None:
     guardrail_note = " [guardrails on]" if args.guardrails else ""
     print(f"\nFundamentals Alpha — Live Scores ({today})")
     print(f"Portfolio: {port_label}{guardrail_note}")
-    print(f"Scoring:   {'XGBoost model' if use_model else 'Composite (value + quality + momentum)'}")
+    print(f"Scoring:   {'XGBoost model' if use_model else 'Composite (value + quality + momentum, sector-neutral)'}")
     print(f"Universe:  {len(out_df)} tickers after filters")
     print(f"Regime:    {regime_label}")
     if cash_pct > 0:

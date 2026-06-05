@@ -76,8 +76,8 @@ uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_trac
 | Submit MOC orders | `rebalance.py --no-dry-run` | Before 15:50 ET | seconds |
 | Sync confirmed fills | `sync_fills.py` | After close | seconds |
 
-**Recommended portfolio:** `vw_gr_top_n_25` — vol-weighted, guardrails on, top 25.
-Backtest (211 months, 2005–2025): 24.5% CAGR, 1.35 Sharpe, -21.6% MaxDD, 71.1% win rate.
+**Recommended portfolio:** `vw_gr_top_n_25` — vol-weighted, guardrails on, top 25, sector-neutral scoring.
+Backtest (404 months, 1983–2026): 16.7% CAGR, 1.00 Sharpe, -35.4% MaxDD, 67.1% win rate.
 
 ---
 
@@ -205,6 +205,7 @@ Key flags:
 
 | Flag | Description |
 |---|---|
+| `--sector-neutral` | Z-score factors within (month, sector) instead of market-wide. Sectors with <3 stocks fall back to market-wide. **Recommended for all `gr_*` portfolios.** Output file gets `_sector_neutral` prefix. |
 | `--guardrails` | Apply risk guardrails and 25% sector cap; produces `gr_*` portfolios |
 | `--vol-weight` | Inverse-volatility position sizing (12-month rolling); produces `vw_gr_*` portfolios |
 | `--regime-filter` | SPY 12-month regime filter (50% exposure when SPY 12m >25% or <-20%); produces `rf_gr_*` portfolios |
@@ -217,23 +218,26 @@ Key flags:
 | Command | Output file |
 |---|---|
 | `run_backtest.py` | `docs/backtest_results.md` — equal-weight composite baseline |
-| `run_backtest.py --guardrails --vol-weight` | `docs/backtest_results_guardrails.md` — `gr_*` and `vw_gr_*` variants (recommended) |
+| `run_backtest.py --sector-neutral --guardrails --vol-weight --regime-filter` | `docs/backtest_results_sector_neutral_guardrails.md` — **recommended** sector-neutral `gr_*`, `vw_gr_*`, `rf_gr_*` |
+| `run_backtest.py --guardrails --vol-weight` | `docs/backtest_results_guardrails.md` — market-wide `gr_*` and `vw_gr_*` (historical reference) |
 | `run_backtest.py --model` | `docs/backtest_results_model.md` — XGBoost model, equal-weight |
 | `run_backtest.py --model --guardrails --vol-weight` | `docs/backtest_results_model_guardrails.md` — XGBoost model with guardrails |
 
 To view pre-computed results without re-running, open the file directly:
 
 ```
-cat docs/backtest_results_guardrails.md
+cat docs/backtest_results_sector_neutral_guardrails.md
 ```
 
-Recommended production portfolio variants (from the guardrails backtest, 211 months 2005–2025, 25-stock):
+Recommended production portfolio variants (sector-neutral composite score, 404 months 1983–2026, 25-stock):
 
 | Portfolio | CAGR | Sharpe | MaxDD | Notes |
 |---|---|---|---|---|
-| `gr_top_n_25` | 25.2% | 1.32 | -23.7% | Best CAGR, equal-weight |
-| `vw_gr_top_n_25` | 24.5% | 1.35 | -21.6% | Recommended default — best risk-adjusted |
-| `rf_gr_top_n_25` | 21.6% | 1.37 | -21.3% | Capital-preservation priority; regime filter active |
+| `gr_top_n_25` | 17.0% | 0.96 | -39.7% | Equal-weight |
+| `vw_gr_top_n_25` | 16.7% | 1.00 | -35.4% | Recommended default — best risk-adjusted |
+| `rf_gr_top_n_25` | 15.6% | 1.02 | -25.7% | Capital-preservation priority; regime filter active |
+
+Sector-neutral scoring validated in Phase 3: +0.3–0.5pp CAGR, +0.004–0.020 Sharpe, -1 to -5pp MaxDD vs market-wide z-score over the same period. Turnover unchanged.
 
 Required environment variables: `HF_DB_PATH`, `AV_DB_PATH`, `PRICES_DB_PATH`.
 
@@ -331,9 +335,10 @@ register_strategy(conn, "vw_gr_top_n_25",
                   description="Vol-weighted guardrails top-25, paper $100K",
                   inception_date="2026-05-29", benchmark="SPY")
 load_backtest_benchmarks(conn, "vw_gr_top_n_25", "vw_gr_top_n_25", {
-    "cagr": 0.245, "ann_vol": 0.182, "sharpe": 1.35, "sortino": 1.62,
-    "max_dd": -0.216, "beta": 1.32, "alpha": 0.10, "win_rate": 0.67,
+    "cagr": 0.167, "ann_vol": 0.169, "sharpe": 1.00, "sortino": 1.37,
+    "max_dd": -0.354, "beta": 0.735, "alpha": 0.10, "win_rate": 0.671,
 })
+# Sector-neutral composite score, 404 months 1983–2026
 conn.close()
 ```
 
@@ -616,7 +621,7 @@ The 12-month embargo ensures that training labels do not embed prices from the t
 
 **Composite baseline score**
 
-Cross-sectional z-score of eight factors within each month:
+Sector-neutral z-score composite of ten factors. Each factor is z-scored within `(month_end_date, sector)` — i.e. Apple is compared against tech peers, not against ExxonMobil. Sectors with fewer than 3 stocks in a month fall back to market-wide z-score for that group.
 
 | Factor | Direction | Group |
 |---|---|---|
@@ -626,10 +631,14 @@ Cross-sectional z-score of eight factors within each month:
 | `earnings_yield` | Higher is better | Value |
 | `roic` | Higher is better | Quality |
 | `roa` | Higher is better | Quality |
+| `operating_margin_slope_5y` | Higher is better | Quality |
 | `earnings_quality` | Higher is better | Quality (Sloan accruals: OCF−NI / avg_assets; higher = less accrual = more cash-backed) |
+| `asset_growth` | Lower is better | Quality (Titman 2004: overinvestment predicts underperformance) |
 | `momentum_12_1` | Higher is better | Momentum |
 
 Factors with the "lower is better" convention are sign-flipped before z-scoring so that a higher composite score always means a better-ranked stock.
+
+Implemented in `historic_fundamentals/baselines.py:composite_score()` with `sector_neutral=True` (default). Pass `sector_neutral=False` to revert to market-wide z-scores.
 
 **XGBoost model features (35 total)**
 
@@ -678,7 +687,7 @@ The model should be treated as a research tool until all criteria below are veri
 
 - [x] Walk-forward OOS rank IC > 0.03 — **PASSED** (mean IC = 0.035, NW-ICIR = 3.33 across 16 folds)
 - [x] Walk-forward hit rate > 50% — **PASSED** (58.3%)
-- [x] Backtest Sharpe ratio (net of transaction costs) > 0.5 — **PASSED** (vw_gr_top_n_25: 1.35)
+- [x] Backtest Sharpe ratio (net of transaction costs) > 0.5 — **PASSED** (vw_gr_top_n_25: 1.00, sector-neutral, 404 months)
 - [ ] No single sector > 40% of live portfolio in the current month
 - [ ] No more than 20% of live output flagged as `value_trap = True`
 - [ ] All unit tests pass (`uv run pytest tests/ --ignore=tests/test_api.py`)
