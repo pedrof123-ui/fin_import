@@ -6,9 +6,11 @@ For each ticker this script:
     1. Fetches income / balance / cashflow statements  -> av_financials.duckdb
     2. Fetches shares outstanding                      -> av_financials.duckdb
     3. Fetches dividend history                        -> av_financials.duckdb
-    4. Computes monthly PE timeseries                  -> historic_fundamentals.duckdb
-    5. Fetches analyst earnings estimates              -> historic_fundamentals.duckdb
-    6. Computes forward PE from estimates              -> pe_stats
+    4. Fetches company overview                        -> av_financials.duckdb
+    5. Backfills complete price history                -> prices.duckdb
+    6. Computes monthly PE timeseries                  -> historic_fundamentals.duckdb
+    7. Fetches analyst earnings estimates              -> historic_fundamentals.duckdb
+    8. Computes forward PE from estimates              -> pe_stats
 
 Use this script when adding new tickers.  For monthly refreshes of existing
 tickers use av_update.py + hf_update.py instead.
@@ -23,16 +25,19 @@ Options:
     --skip-estimates   Skip EARNINGS_ESTIMATES API calls.
     --verbose          Show DEBUG-level output.
 
-Rate: 5-6 AV API calls per ticker (3 statements + shares + dividends + estimates).
+Rate: 7-8 AV API calls per ticker (3 statements + shares + dividends + overview + prices + estimates).
 """
 
 import argparse
 import logging
 import os
 import sys
+from datetime import datetime as _dt
 from pathlib import Path
 
 import duckdb
+import pandas as pd
+import requests
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +49,95 @@ from historic_fundamentals.pe import process_ticker  # noqa: E402
 from historic_fundamentals.estimates import fetch_estimates, normalize_estimates, compute_forward_eps, compute_ntm_revenue  # noqa: E402
 
 log = logging.getLogger(__name__)
+
+_AV_URL = "https://www.alphavantage.co/query"
+
+_ETF_TICKERS: frozenset[str] = frozenset({
+    "SPY", "IWM", "IWN", "MDY", "VTI",
+    "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
+    "GLD", "SLV", "USO", "CPER", "SDS", "SH", "RWM", "TWM", "SGOV", "SHV",
+})
+
+_PRICES_INIT_SQL = """
+CREATE TABLE IF NOT EXISTS {table} (
+    ticker    VARCHAR  NOT NULL,
+    date      DATE     NOT NULL,
+    open      DOUBLE,
+    high      DOUBLE,
+    low       DOUBLE,
+    close     DOUBLE,
+    adj_close DOUBLE,
+    volume    BIGINT,
+    PRIMARY KEY (ticker, date)
+)
+"""
+
+_PRICES_UPSERT_SQL = """
+INSERT INTO {table} (ticker, date, open, high, low, close, adj_close, volume)
+    SELECT ticker, date, open, high, low, close, adj_close, volume
+    FROM _batch
+ON CONFLICT (ticker, date) DO UPDATE SET
+    open = excluded.open, high = excluded.high, low = excluded.low,
+    close = excluded.close, adj_close = excluded.adj_close, volume = excluded.volume
+"""
+
+
+def _ticker_has_prices(ticker: str, prices_conn) -> bool:
+    try:
+        return prices_conn.execute(
+            "SELECT 1 FROM stock_prices WHERE ticker = ? LIMIT 1", [ticker]
+        ).fetchone() is not None
+    except Exception:
+        return False
+
+
+def _import_prices(ticker: str, prices_db_path: str, api_key: str, limiter) -> int:
+    """Fetch full AV price history and upsert into prices.duckdb. Returns rows upserted."""
+    limiter.wait()
+    resp = requests.get(
+        _AV_URL,
+        params={
+            "function": "TIME_SERIES_DAILY_ADJUSTED",
+            "symbol": ticker,
+            "outputsize": "full",
+            "datatype": "json",
+            "apikey": api_key,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    for key in ("Error Message", "Information", "Note"):
+        if data.get(key):
+            raise RuntimeError(f"AV [TIME_SERIES_DAILY_ADJUSTED] {data[key]}")
+    if "Time Series (Daily)" not in data:
+        raise ValueError(f"Unexpected AV response for {ticker}: {list(data.keys())}")
+    rows = []
+    for date_str, v in data["Time Series (Daily)"].items():
+        adj = float(v["5. adjusted close"])
+        rows.append({
+            "ticker": ticker,
+            "date": _dt.strptime(date_str, "%Y-%m-%d").date(),
+            "open": float(v["1. open"]),
+            "high": float(v["2. high"]),
+            "low": float(v["3. low"]),
+            "close": adj,
+            "adj_close": adj,
+            "volume": int(v["6. volume"]),
+        })
+    if not rows:
+        log.warning("%s: no price data returned from AV", ticker)
+        return 0
+    df = pd.DataFrame(rows)
+    table = "etf_prices" if ticker in _ETF_TICKERS else "stock_prices"
+    conn = duckdb.connect(prices_db_path)
+    try:
+        conn.execute(_PRICES_INIT_SQL.format(table=table))
+        conn.register("_batch", df)
+        conn.execute(_PRICES_UPSERT_SQL.format(table=table))
+    finally:
+        conn.close()
+    return len(rows)
 
 
 def _tickers_from_csv(path: str) -> list[str]:
@@ -212,12 +306,34 @@ def main() -> int:
                     log.error("%s %s — dividends failed: %s", prefix, ticker, exc)
                     ticker_ok = False
 
+                # ── Step 4: Company Overview ───────────────────────────────────
+                if not args.force and av_db.has_overview_this_month(ticker):
+                    log.debug("%s %s — overview already fetched this month", prefix, ticker)
+                else:
+                    try:
+                        av_db.import_company_overview(ticker, api_key, limiter)
+                        log.debug("%s %s — overview: ok", prefix, ticker)
+                    except Exception as exc:
+                        log.warning("%s %s — overview failed (non-fatal): %s", prefix, ticker, exc)
+
                 if not ticker_ok:
                     log.error("%s %s — AV import failed; skipping derived metrics", prefix, ticker)
                     failed += 1
                     continue
 
-            # ── Step 4: PE timeseries ──────────────────────────────────────────
+            # ── Step 5: Price history ──────────────────────────────────────────
+            if args.force or not _ticker_has_prices(ticker, prices_conn):
+                try:
+                    n = _import_prices(ticker, prices_db_path, api_key, limiter)
+                    log.debug("%s %s — prices: %d rows", prefix, ticker, n)
+                except Exception as exc:
+                    log.error("%s %s — price import failed: %s", prefix, ticker, exc)
+                    failed += 1
+                    continue
+            else:
+                log.debug("%s %s — prices already in DB", prefix, ticker)
+
+            # ── Step 6: PE timeseries ──────────────────────────────────────────
             try:
                 monthly_pe, stats = process_ticker(ticker, av_db.conn, prices_conn)
                 if monthly_pe.empty:
@@ -232,7 +348,7 @@ def main() -> int:
                 failed += 1
                 continue
 
-            # ── Step 5-6: Estimates + forward PE ──────────────────────────────
+            # ── Step 7-8: Estimates + forward PE ──────────────────────────────
             if not args.skip_estimates:
                 try:
                     raw = fetch_estimates(ticker, api_key, limiter)
