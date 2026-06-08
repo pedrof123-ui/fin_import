@@ -80,16 +80,9 @@ From the trade_systems project you can call the same logic programmatically:
   add_tickers(["AAPL", "MSFT"])
   delete_tickers(["GME", "BB"])
 
-Compared to add_tickers.py
-----------------------------
-manage_tickers.py supersedes add_tickers.py with:
-  - Unified add + delete in one tool
-  - Price backfill included (Step 1, was a separate manual step)
-  - Company overview / sector data imported automatically (Step 5)
-  - enrich_goals and all forward multiples computed (Step 8)
-  - --dry-run to preview without writing
-  - Programmatic API via trade_systems/utilities/ticker_manager.py
-add_tickers.py remains for backward compatibility.
+Note
+----
+add_tickers.py is deprecated and exits with an error pointing here.
 """
 
 import argparse

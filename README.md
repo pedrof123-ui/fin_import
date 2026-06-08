@@ -131,14 +131,14 @@ HF_DB_PATH=data/historic_fundamentals.duckdb      # optional override
 ### Adding new tickers (all-in-one)
 
 ```bash
-# Fetches all AV data + computes PE history + analyst estimates in one pass
-uv run scripts/add_tickers.py AAPL MSFT GOOGL
+# Fetches all AV data + prices + computes PE history + analyst estimates in one pass
+uv run scripts/manage_tickers.py add AAPL MSFT GOOGL
 
 # From a CSV file
-uv run scripts/add_tickers.py --csv tickers.csv
+uv run scripts/manage_tickers.py add --csv tickers.csv
 ```
 
-This is the recommended way to onboard new tickers. It populates both `av_financials.duckdb` and `historic_fundamentals.duckdb` with a single command (6 AV calls/ticker).
+This is the recommended way to onboard new tickers. It populates `av_financials.duckdb`, `prices.duckdb`, and `historic_fundamentals.duckdb` with a single command (~8 AV calls/ticker).
 
 ### Monthly update
 
@@ -368,7 +368,7 @@ historic_fundamentals/         Monthly PE/P/FCF/EV/EBITDA timeseries + sector/in
   sector.py                    compute_sector_stats(): monthly median/p25/p75 aggregates per sector and industry
   query.py                     Notebook-friendly wrappers: get_pe_stats() (with peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
 scripts/
-  add_tickers.py               All-in-one: AV raw data + PE history + estimates for new tickers
+  manage_tickers.py            Add/delete tickers across all three DBs (prices + AV + historic fundamentals)
   av_import.py                 Import AV financials + shares + dividends (single/CSV/prices.duckdb)
   av_import_overview.py        Backfill company overview (name, sector, industry, beta + 41 fields) for all tickers
   av_import_shares.py          Standalone backfill: shares_outstanding for existing tickers

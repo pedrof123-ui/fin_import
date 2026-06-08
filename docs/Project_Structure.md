@@ -168,7 +168,7 @@ fin_import2/
 └── CLAUDE.md                            Coding standards
 
 scripts/ also contains:
-    add_tickers.py                       All-in-one: AV raw data + PE history + estimates for new tickers (recommended)
+    manage_tickers.py                    Add/delete tickers across all three DBs: prices + AV financials + historic fundamentals (recommended)
     av_import.py                         Import income/balance/cashflow from Alpha Vantage (75 calls/min limit enforced)
     av_import_overview.py                Backfill company overview (name, sector, industry, beta + 41 fields) for all tickers
     av_update.py                         Incremental update: refresh statements + overview for existing tickers

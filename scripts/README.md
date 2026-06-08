@@ -77,37 +77,12 @@ delete_tickers(["GME", "BB"])   # all three databases
 
 ---
 
-## add_tickers.py
-
-Legacy onboarding script. Kept for backward compatibility. For new work, prefer `manage_tickers.py`, which additionally backfills price history, imports company overview (sector/industry), enriches goal prices, and computes all forward multiples.
-
-For each ticker it runs:
-
-1. Fetches income / balance / cashflow statements → `av_financials.duckdb`
-2. Fetches shares outstanding → `av_financials.duckdb`
-3. Fetches dividend history → `av_financials.duckdb`
-4. Computes monthly PE + dividend yield timeseries → `historic_fundamentals.duckdb`
-5. Computes revenue growth + earnings EPS growth → `pe_stats`
-6. Fetches analyst earnings estimates → `historic_fundamentals.duckdb`
-7. Computes forward PE, NTM revenue growth estimate, NTM earnings growth estimate → `pe_stats`
-
-```bash
-uv run scripts/add_tickers.py AAPL MSFT GOOGL
-uv run scripts/add_tickers.py --csv data/new_tickers.csv
-uv run scripts/add_tickers.py AAPL --force
-uv run scripts/add_tickers.py AAPL --skip-estimates
-```
-
-Rate: 6 AV calls/ticker (3 statements + shares + dividends + estimates). At 75/min: ~12 tickers/min.
-
----
-
 ## av_import.py
 
 Downloads income statements, balance sheets, cash flow statements, shares outstanding, and
 dividend history from Alpha Vantage and stores them in `data/av_financials.duckdb`.
 
-Use `add_tickers.py` when you also want historic fundamentals computed. Use `av_import.py`
+Use `manage_tickers.py add` when you also want historic fundamentals computed. Use `av_import.py`
 when you only need raw AV data (e.g., before running `hf_import.py` separately).
 
 ### Source (pick one)
@@ -222,7 +197,7 @@ Bulk backfill for `data/historic_fundamentals.duckdb`. For each ticker: computes
 PE + dividend yield history from `av_financials.duckdb` (no AV calls), then fetches
 `EARNINGS_ESTIMATES` from Alpha Vantage (1 call/ticker) to populate analyst estimates and forward PE.
 
-Use `add_tickers.py` when adding new tickers from scratch — it runs both AV import and hf_import
+Use `manage_tickers.py add` when adding new tickers from scratch — it runs both AV import and hf_import
 in a single pass. Use `hf_import.py` standalone when `av_financials.duckdb` is already populated
 and you only need to (re)build the derived metrics.
 

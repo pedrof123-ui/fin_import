@@ -95,7 +95,13 @@ uv run scripts/manage_tickers.py add AAPL --dry-run     # preview without writin
 
 The `add` pipeline runs automatically: price backfill → financials + shares + dividends → company overview → PE timeseries + goal prices → analyst estimates → all forward multiples. The ticker is immediately model-ready.
 
-From `trade_systems`, use the programmatic bridge:
+From the CLI:
+
+```bash
+uv run scripts/manage_tickers.py add AAPL MSFT
+```
+
+Or from `trade_systems` via the programmatic bridge:
 
 ```python
 from utilities.ticker_manager import add_tickers

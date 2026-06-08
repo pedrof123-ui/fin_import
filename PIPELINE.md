@@ -257,14 +257,14 @@ Downloads and refreshes all Alpha Vantage raw data into `data/av_financials.duck
 
 | Script | Purpose | AV calls/ticker |
 |--------|---------|----------------|
-| `scripts/add_tickers.py` | Add new tickers: all AV data + all derived metrics in one pass | 6 (statements + shares + dividends + estimates) |
+| `scripts/manage_tickers.py add` | Add new tickers: prices + all AV data + all derived metrics in one pass | ~8 (statements + shares + dividends + overview + prices + estimates) |
 | `scripts/av_update.py` | Monthly refresh for all tickers in DB (statements + shares + dividends + overview) | 6 |
 | `scripts/av_import_overview.py` | Backfill company overview for all tickers (first-time setup) | 1 |
 
-`add_tickers.py` is the recommended way to onboard new tickers. It fetches all AV raw data and
-immediately computes PE history, dividend yield, and analyst estimates so the ticker is fully
-populated in both `av_financials.duckdb` and `historic_fundamentals.duckdb` after a single command.
-It skips tickers already in the DB unless `--force` is passed.
+`manage_tickers.py add` is the recommended way to onboard new tickers. It populates all three
+databases (`av_financials.duckdb`, `prices.duckdb`, `historic_fundamentals.duckdb`) in a single
+command, including goal prices and all forward multiples. Use `manage_tickers.py delete` to remove
+a ticker cleanly from all three DBs.
 
 `scripts/av_import.py` and `scripts/hf_import.py` remain available as standalone tools for
 targeted raw-data or derived-metrics work respectively.
@@ -534,14 +534,17 @@ Ranks are NULL for stocks with fewer than 5 valid peers in their group.
 Run once per new ticker (or batch of tickers):
 
 ```bash
-# All-in-one: AV raw data + PE history + estimates
-uv run scripts/add_tickers.py AAPL MSFT GOOGL
+# All-in-one: prices + AV raw data + PE history + estimates
+uv run scripts/manage_tickers.py add AAPL MSFT GOOGL
 
 # From a CSV file
-uv run scripts/add_tickers.py --csv data/new_tickers.csv
+uv run scripts/manage_tickers.py add --csv data/new_tickers.csv
 
-# Skip estimates calls (PE + dividends only, no AV rate limit pressure)
-uv run scripts/add_tickers.py AAPL --skip-estimates
+# Skip estimates calls (saves 1 AV call/ticker)
+uv run scripts/manage_tickers.py add AAPL --skip-estimates
+
+# Preview without writing anything
+uv run scripts/manage_tickers.py add AAPL --dry-run
 ```
 
 ---
