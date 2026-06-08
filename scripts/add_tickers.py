@@ -1,32 +1,21 @@
 #!/usr/bin/env python3
 """
-Add new tickers: fetch all AV data and compute all derived metrics in one pass.
+DEPRECATED — use manage_tickers.py instead.
 
-For each ticker this script:
-    1. Fetches income / balance / cashflow statements  -> av_financials.duckdb
-    2. Fetches shares outstanding                      -> av_financials.duckdb
-    3. Fetches dividend history                        -> av_financials.duckdb
-    4. Fetches company overview                        -> av_financials.duckdb
-    5. Backfills complete price history                -> prices.duckdb
-    6. Computes monthly PE timeseries                  -> historic_fundamentals.duckdb
-    7. Fetches analyst earnings estimates              -> historic_fundamentals.duckdb
-    8. Computes forward PE from estimates              -> pe_stats
+    uv run scripts/manage_tickers.py add AAPL MSFT GOOGL
+    uv run scripts/manage_tickers.py add --csv data/new_tickers.csv
 
-Use this script when adding new tickers.  For monthly refreshes of existing
-tickers use av_update.py + hf_update.py instead.
-
-Source (pick one):
-    uv run scripts/add_tickers.py AAPL MSFT GOOGL
-    uv run scripts/add_tickers.py --csv data/new_tickers.csv
-
-Options:
-    --force            Re-import tickers already in the DB (AV side) and
-                       recompute all derived metrics.
-    --skip-estimates   Skip EARNINGS_ESTIMATES API calls.
-    --verbose          Show DEBUG-level output.
-
-Rate: 7-8 AV API calls per ticker (3 statements + shares + dividends + overview + prices + estimates).
+manage_tickers.py supersedes this script with goal prices, more forward
+multiples (P/FCF, EV/EBITDA, P/S), a delete command, and --dry-run support.
 """
+import sys
+
+print(
+    "ERROR: add_tickers.py is deprecated.\n"
+    "Use: uv run scripts/manage_tickers.py add " + " ".join(sys.argv[1:]),
+    file=sys.stderr,
+)
+sys.exit(1)
 
 import argparse
 import logging
