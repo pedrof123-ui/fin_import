@@ -23,6 +23,9 @@ from api.db import list_tickers, get_statements
 from api.importer import import_ticker
 from api.dcf_router import router as dcf_router, set_db as dcf_set_db
 from api.av_router import router as av_router, set_db as av_set_db
+from api.earnings_router import router as earnings_router
+from api.research_router import router as research_router
+from api.screener_router import router as screener_router
 
 DB_PATH = Path(__file__).parent.parent / "data" / "financial_statements.duckdb"
 
@@ -42,6 +45,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Financial Statements API", lifespan=lifespan)
 app.include_router(dcf_router)
 app.include_router(av_router)
+app.include_router(earnings_router)
+app.include_router(research_router)
+app.include_router(screener_router)
 
 app.add_middleware(
     CORSMiddleware,

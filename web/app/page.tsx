@@ -7,11 +7,13 @@ import AvFinancialsViewer from "@/components/AvFinancialsViewer";
 import AvDcfViewer from "@/components/AvDcfViewer";
 import FundamentalsViewer from "@/components/FundamentalsViewer";
 import EquityResearchViewer from "@/components/EquityResearchViewer";
+import EarningsSummaryViewer from "@/components/EarningsSummaryViewer";
+import ScreenerViewer from "@/components/ScreenerViewer";
 import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research";
+type Tab = "screener" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings";
 
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
@@ -28,7 +30,7 @@ function Spinner() {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<Tab>("av_financials");
+  const [activeTab, setActiveTab] = useState<Tab>("screener");
   const [stmtType, setStmtType] = useState<StmtType>("income");
   const [xbrlData, setXbrlData] = useState<Record<string, unknown>[] | null>(null);
   const [loadedTicker, setLoadedTicker] = useState("");
@@ -69,6 +71,10 @@ export default function Home() {
     setError(null);
     setStatus(null);
     setQuartersStatus(null);
+  };
+
+  const handleScreenerSelectTicker = (ticker: string) => {
+    handleLoad(ticker);
   };
 
   const handleXbrlDownload = async () => {
@@ -144,12 +150,22 @@ export default function Home() {
   const showSpinner = importing || !!quartersStatus;
   const displayStatus = quartersStatus ?? status;
 
-  const tabs: Tab[] = ["av_financials", "av_dcf", "fundamentals", "research", ...(xbrlLoaded ? (["financials"] as Tab[]) : [])];
+  const tabs: Tab[] = [
+    "screener",
+    "av_financials",
+    "av_dcf",
+    "fundamentals",
+    "research",
+    "earnings",
+    ...(xbrlLoaded ? (["financials"] as Tab[]) : []),
+  ];
   const TAB_LABELS: Record<Tab, string> = {
+    screener: "Screener",
     av_financials: "AV Data",
     av_dcf: "AV DCF",
     fundamentals: "Fundamentals",
     research: "AI Research",
+    earnings: "Earnings",
     financials: "XBRL",
   };
 
@@ -204,26 +220,29 @@ export default function Home() {
           </div>
         )}
 
-        {/* Tab bar — only shown when a ticker is loaded */}
-        {loadedTicker && (
-          <div className="flex items-center gap-1 mb-5">
-            {tabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-1.5 text-xs font-mono rounded border transition-colors ${
-                  activeTab === tab
-                    ? "border-violet-500/50 bg-violet-950/30 text-violet-300"
-                    : "border-white/[0.07] text-zinc-500 hover:text-zinc-300 hover:border-white/[0.12]"
-                }`}
-              >
-                {TAB_LABELS[tab]}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Tab bar — always shown */}
+        <div className="flex items-center gap-1 mb-5">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-1.5 text-xs font-mono rounded border transition-colors ${
+                activeTab === tab
+                  ? "border-violet-500/50 bg-violet-950/30 text-violet-300"
+                  : "border-white/[0.07] text-zinc-500 hover:text-zinc-300 hover:border-white/[0.12]"
+              }`}
+            >
+              {TAB_LABELS[tab]}
+            </button>
+          ))}
+        </div>
 
-        {/* All tab panels rendered once; hidden when inactive to preserve state */}
+        {/* Screener tab — always rendered */}
+        <div className={activeTab === "screener" ? undefined : "hidden"}>
+          <ScreenerViewer onSelectTicker={handleScreenerSelectTicker} />
+        </div>
+
+        {/* All ticker-specific tab panels */}
         {loadedTicker && (
           <>
             <div className={activeTab === "av_financials" ? undefined : "hidden"}>
@@ -237,6 +256,9 @@ export default function Home() {
             </div>
             <div className={activeTab === "research" ? undefined : "hidden"}>
               <EquityResearchViewer ticker={loadedTicker} />
+            </div>
+            <div className={activeTab === "earnings" ? undefined : "hidden"}>
+              <EarningsSummaryViewer ticker={loadedTicker} />
             </div>
             {xbrlLoaded && (
               <div className={activeTab === "financials" ? undefined : "hidden"}>
@@ -256,8 +278,8 @@ export default function Home() {
           </>
         )}
 
-        {/* Empty state */}
-        {!loadedTicker && !error && (
+        {/* Empty state — only when no ticker and not on screener */}
+        {!loadedTicker && !error && activeTab !== "screener" && (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
               No data loaded
