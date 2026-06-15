@@ -52,7 +52,7 @@ def _get_cached(conn, ticker: str) -> list[dict] | None:
         WHERE ticker = ?
           AND fetched_at = (SELECT MAX(fetched_at) FROM earnings_estimates WHERE ticker = ?)
           AND fetched_at >= ?
-        ORDER BY date DESC
+        ORDER BY fiscal_date DESC
         """,
         [ticker, ticker, cutoff],
     ).df()
@@ -68,7 +68,7 @@ def _store(conn, ticker: str, raw: list[dict]) -> None:
         conn.execute(
             """
             INSERT INTO earnings_estimates (
-                ticker, date, horizon, fetched_at,
+                ticker, fiscal_date, horizon, fetched_at,
                 eps_avg, eps_high, eps_low, eps_count,
                 eps_avg_7d, eps_avg_30d, eps_avg_60d, eps_avg_90d,
                 eps_rev_up_7d, eps_rev_down_7d, eps_rev_up_30d, eps_rev_down_30d,
@@ -121,7 +121,7 @@ def _normalize(e: dict) -> dict:
 
 def _from_db_row(r: dict) -> dict:
     return {
-        "date": str(r["date"])[:10],
+        "date": str(r["fiscal_date"])[:10],
         "horizon": r.get("horizon", ""),
         "eps_avg": r.get("eps_avg"),
         "eps_high": r.get("eps_high"),

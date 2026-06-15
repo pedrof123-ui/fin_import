@@ -13,6 +13,27 @@ from api.dcf_router import RunRequest, _build_overrides, _sanitize
 
 router = APIRouter()
 
+
+def _fiscal_quarter_label(period_end, fy_end_month: int) -> str:
+    """Compute fiscal quarter label (e.g. 'Q1 2027') from a period-end date.
+
+    Uses the company's fiscal year end month so that companies like NVDA (FY ends
+    January) or AAPL (FY ends September) get correct labels instead of calendar ones.
+    """
+    if hasattr(period_end, "month"):
+        m, y = period_end.month, period_end.year
+    else:
+        parts = str(period_end).split("-")
+        y, m = int(parts[0]), int(parts[1])
+    # Fiscal year: if period ends on/before FY-end month it's in that calendar year's
+    # fiscal year; otherwise it belongs to the following fiscal year.
+    fiscal_year = y if m <= fy_end_month else y + 1
+    # Quarter within the fiscal year (FY starts the month after fy_end_month)
+    fy_start_month = (fy_end_month % 12) + 1
+    fiscal_quarter = (m - fy_start_month + 12) % 12 // 3 + 1
+    return f"Q{fiscal_quarter} {fiscal_year}"
+
+
 _AV_DB = Path(os.environ.get(
     "AV_FINANCIALS_DB_PATH",
     str(Path(__file__).parent.parent / "data" / "av_financials.duckdb"),
@@ -53,6 +74,23 @@ async def av_financials(
                 ORDER BY fiscal_date_ending DESC""",
             [ticker.upper(), period_type],
         ).df()
+
+        if period_type == "quarterly" and not df.empty:
+            # Determine fiscal year end month from annual data so that non-December
+            # fiscal years (NVDA=Jan, AAPL=Sep, MSFT=Jun, …) get correct Q labels.
+            annual_row = conn.execute(
+                f"""SELECT fiscal_date_ending FROM {table}
+                    WHERE ticker = ? AND period_type = 'annual'
+                    ORDER BY fiscal_date_ending DESC LIMIT 1""",
+                [ticker.upper()],
+            ).fetchone()
+            if annual_row:
+                fy_end = annual_row[0]
+                fy_end_month = fy_end.month if hasattr(fy_end, "month") else int(str(fy_end).split("-")[1])
+                df["period_label"] = df["fiscal_date_ending"].apply(
+                    lambda d: _fiscal_quarter_label(d, fy_end_month)
+                )
+
         conn.close()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -67,13 +105,15 @@ async def av_financials(
 
 
 def _respond_av(ticker: str, overrides=None) -> JSONResponse:
-    estimates_conn = _db.conn if _db is not None else None
+    estimates_conn = duckdb.connect(str(_HF_DB))
     try:
         result = run_dcf_av(ticker, overrides, estimates_conn=estimates_conn)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        estimates_conn.close()
     return JSONResponse(_sanitize(dataclasses.asdict(result)))
 
 
