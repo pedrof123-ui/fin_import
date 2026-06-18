@@ -92,6 +92,7 @@ class EquityResearchReport(BaseModel):
     financial_performance: list[FinancialRow]
     financial_years: list[str]
     valuation: ValuationSummary
+    peak_earnings_analysis: Optional[str] = None
     company_overview: str
     competitive_analysis: str
     industry_outlook: str
@@ -167,6 +168,16 @@ def render_to_markdown(report: EquityResearchReport) -> str:
     ]
     lines += _md_table(["Metric", "Value", "Metric", "Value"], val_rows)
     lines += ["", "---", ""]
+
+    if report.peak_earnings_analysis:
+        lines += [
+            "## Peak-Earnings Trap Alert",
+            "",
+            f"> **Warning:** {report.peak_earnings_analysis}",
+            "",
+            "---",
+            "",
+        ]
 
     lines += ["## 3. Company Overview", "", report.company_overview, "", "---", ""]
     lines += ["## 4. Competitive Analysis & Market Positioning", "", report.competitive_analysis, "", "---", ""]
@@ -382,6 +393,91 @@ def get_valuation_data(ticker: str) -> str:
     return "\n".join(lines)
 
 
+def get_peak_earnings_data(ticker: str) -> str:
+    if not _HIST_FUND_DB.exists():
+        return f"[ERROR] historic_fundamentals.duckdb not found"
+    ticker = ticker.upper()
+    conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+
+    ps = conn.execute("""
+        SELECT current_ttm_eps, forward_12m_eps, earn_growth_1yr, earn_cagr_3yr,
+               current_operating_margin, operating_margin_5y_median, operating_margin_change_3y,
+               current_pe, normalized_pe_5y, earn_ntm_growth_est
+        FROM pe_stats WHERE ticker = ?
+    """, [ticker]).fetchone()
+
+    hist = conn.execute("""
+        SELECT
+            MAX(ttm_eps)                                                      AS eps_5yr_max,
+            AVG(ttm_eps)                                                      AS eps_5yr_avg,
+            MAX(CASE WHEN month_end_date >= CURRENT_DATE - INTERVAL 2 YEARS
+                     THEN ttm_eps END)                                        AS eps_2yr_max,
+            MIN(CASE WHEN month_end_date <= CURRENT_DATE - INTERVAL 4 YEARS
+                     THEN ttm_eps END)                                        AS eps_5yr_ago
+        FROM monthly_pe
+        WHERE ticker = ?
+          AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
+          AND ttm_eps > 0
+    """, [ticker]).fetchone()
+
+    conn.close()
+
+    if not ps:
+        return f"[ERROR] No pe_stats data for {ticker}"
+
+    def f(v, fmt=".2f"):
+        return f"{float(v):{fmt}}" if v is not None else "n/a"
+
+    def pct(v):
+        return f"{float(v)*100:+.1f}%" if v is not None else "n/a"
+
+    lines = [f"PEAK-EARNINGS TRAP SIGNALS — {ticker}", ""]
+    lines.append(f"Current TTM EPS:             ${f(ps[0])}")
+    lines.append(f"Forward 12M EPS (consensus): ${f(ps[1])}")
+    if ps[0] and ps[1]:
+        try:
+            fwd_vs_ttm = (float(ps[1]) / float(ps[0]) - 1) * 100
+            lines.append(f"Forward vs. TTM EPS change:  {fwd_vs_ttm:+.1f}%")
+        except (TypeError, ZeroDivisionError):
+            pass
+    lines.append(f"Earn Growth 1yr (TTM YoY):   {pct(ps[2])}")
+    lines.append(f"Earn CAGR 3yr:               {pct(ps[3])}")
+    lines.append(f"Earn NTM Growth Est:         {pct(ps[9])}")
+    lines.append("")
+    lines.append(f"Current P/E:                 {f(ps[7], '.1f')}")
+    lines.append(f"Normalized P/E (5yr):        {f(ps[8], '.1f')}")
+    lines.append("")
+    lines.append(f"Operating Margin (current):  {pct(ps[4])}")
+    lines.append(f"Operating Margin (5yr med):  {pct(ps[5])}")
+    lines.append(f"Operating Margin Change 3yr: {pct(ps[6])}")
+    lines.append("")
+
+    if hist:
+        lines.append(f"TTM EPS 5yr max:             ${f(hist[0])}")
+        lines.append(f"TTM EPS 5yr avg:             ${f(hist[1])}")
+        lines.append(f"TTM EPS 2yr max:             ${f(hist[2])}")
+        lines.append(f"TTM EPS ~5yrs ago:           ${f(hist[3])}")
+        if hist[0] and ps[0]:
+            try:
+                pct_of_peak = float(ps[0]) / float(hist[0]) * 100
+                lines.append(f"Current EPS as % of 5yr max: {pct_of_peak:.0f}%")
+            except (TypeError, ZeroDivisionError):
+                pass
+
+    lines += [
+        "",
+        "INTERPRETATION GUIDE:",
+        "Peak-earnings trap is likely if TWO or more of the following hold:",
+        "  1. Current EPS is >=90% of 5yr max (near-peak earnings)",
+        "  2. Forward EPS is meaningfully below current TTM EPS (<-5%)",
+        "  3. Earn growth 1yr is much faster than earn CAGR 3yr (acceleration not sustained)",
+        "  4. Current P/E is below normalized P/E (stock looks cheap on peak earnings)",
+        "  5. Operating margin is well above 5yr median (margin at cyclical high)",
+    ]
+
+    return "\n".join(lines)
+
+
 def _edgar_section(ticker: str, section_key: str, form: str = "10-K") -> str:
     try:
         from edgar import Company, set_identity
@@ -517,6 +613,7 @@ def get_web_search(ticker: str) -> str:
 _RESEARCH_INSTRUCTIONS = """
 You are an institutional equity research analyst. Today is {date}.
 Generate a rigorous, investment-grade research report for {ticker}.
+Respond with valid JSON matching the required schema.
 
 AVAILABLE DATA SOURCES:
 1. Financial statements (5 years, annual): revenue, gross profit, operating income, net income, EBITDA, FCF
@@ -560,9 +657,18 @@ key_highlights: 5-8 bullet strings with specific numbers covering:
   - Upside/downside % to target price range
   - Most important near-term catalyst or risk
 
-financial_performance: FinancialRow list for Revenue, Gross Margin (%), Operating Income,
-  Operating Margin (%), Net Income, EBITDA, Free Cash Flow
-  financial_years: fiscal year labels (e.g. ["FY2020","FY2021","FY2022","FY2023","FY2024"])
+financial_years: top-level list of fiscal year labels, e.g. ["FY2021","FY2022","FY2023","FY2024","FY2025"]
+  NOTE: this is a top-level field on the report, NOT nested inside financial_performance.
+
+financial_performance: list of FinancialRow objects — one object per metric row.
+  Each FinancialRow has exactly: metric (string), values (list of strings, one per year), yoy_latest (string or null).
+  Example:
+    [
+      {{"metric": "Revenue ($B)", "values": ["47.7", "49.6", "62.1", "75.3", "87.6"], "yoy_latest": "+16.3%"}},
+      {{"metric": "Gross Margin %", "values": ["21.7%", "15.2%", "19.0%", "27.7%", "29.5%"], "yoy_latest": "+1.8pp"}}
+    ]
+  Include rows for: Revenue, Gross Margin (%), Operating Income, Operating Margin (%), Net Income, EBITDA, Free Cash Flow.
+  Do NOT return financial_performance as a dict or nested object — it must be a JSON array.
 
 valuation: populate all fields from the valuation section
   upside_pct = (goal_high / current_price - 1) x 100
@@ -600,6 +706,18 @@ near_term_catalysts: 3-5 specific upcoming catalysts (0-12 months)
 
 earnings_highlights: 2-4 sentences covering beat/miss vs. consensus, key management comment,
   guidance change. If data is unavailable: "Earnings call data not available — see MD&A summary."
+
+peak_earnings_analysis: ONLY populate this field (2-4 sentences) if TWO or more of the following
+  conditions are met for {ticker} based on the PEAK-EARNINGS TRAP SIGNALS data:
+  1. Current EPS is >=90% of the 5-year max TTM EPS (earnings near cyclical peak)
+  2. Forward 12M consensus EPS is more than 5% below current TTM EPS (analysts forecast decline)
+  3. The 1-year earnings growth rate is substantially faster than the 3-year CAGR (unsustainable acceleration)
+  4. Current P/E is materially below the normalized 5-year P/E (stock looks optically cheap on peak earnings)
+  5. Current operating margin is materially above the 5-year median (margin at cyclical high)
+  If a peak-earnings trap is detected, explain in plain language: (a) what metric signals the trap,
+  (b) why TTM earnings may not be a reliable baseline for valuation, and (c) what normalized earnings
+  imply for the stock's true forward multiple.
+  If fewer than two conditions are met, leave this field null or an empty string.
 
 investment_thesis: 4-5 paragraphs:
   Para 1 — BULL CASE: conditions making investment compelling, upside scenario + timeline
@@ -647,13 +765,14 @@ async def _run_research_agent(ticker: str, model: str) -> EquityResearchReport:
             log.warning("[%s] %s: timed out after %ds", ticker, label, timeout)
             return f"[ERROR] {label} timed out after {timeout}s"
 
-    financials, valuation, mda, risks, earnings, web = await asyncio.gather(
-        _run(get_financial_summary, "financials",  _DB_TIMEOUT),
-        _run(get_valuation_data,    "valuation",   _DB_TIMEOUT),
-        _run(get_edgar_mda,         "edgar_mda",   _EDGAR_TIMEOUT),
-        _run(get_edgar_risks,       "edgar_risks", _EDGAR_TIMEOUT),
-        _run(get_earnings_summary,  "earnings",    _EARNINGS_TIMEOUT),
-        _run(get_web_search,        "web_search",  _TAVILY_TIMEOUT),
+    financials, valuation, peak_earnings, mda, risks, earnings, web = await asyncio.gather(
+        _run(get_financial_summary,   "financials",    _DB_TIMEOUT),
+        _run(get_valuation_data,      "valuation",     _DB_TIMEOUT),
+        _run(get_peak_earnings_data,  "peak_earnings", _DB_TIMEOUT),
+        _run(get_edgar_mda,           "edgar_mda",     _EDGAR_TIMEOUT),
+        _run(get_edgar_risks,         "edgar_risks",   _EDGAR_TIMEOUT),
+        _run(get_earnings_summary,    "earnings",      _EARNINGS_TIMEOUT),
+        _run(get_web_search,          "web_search",    _TAVILY_TIMEOUT),
     )
 
     log.info("[%s] research: data gathering done in %.1fs — calling LLM", ticker,
@@ -662,6 +781,7 @@ async def _run_research_agent(ticker: str, model: str) -> EquityResearchReport:
     context = (
         f"=== FINANCIAL PERFORMANCE ===\n{financials}\n\n"
         f"=== VALUATION ===\n{valuation}\n\n"
+        f"=== PEAK-EARNINGS TRAP SIGNALS ===\n{peak_earnings}\n\n"
         f"=== MD&A ===\n{mda}\n\n"
         f"=== RISK FACTORS ===\n{risks}\n\n"
         f"=== EARNINGS CALL HIGHLIGHTS ===\n{earnings}\n\n"
