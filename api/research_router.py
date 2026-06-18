@@ -84,6 +84,12 @@ class ValuationSummary(BaseModel):
     upside_pct: Optional[float] = None
     next_q_eps_estimate: Optional[str] = None
     fy_eps_estimate: Optional[str] = None
+    current_price: Optional[float] = None
+    analyst_target_price: Optional[float] = None
+    price_1m_return: Optional[str] = None
+    price_3m_return: Optional[str] = None
+    price_6m_return: Optional[str] = None
+    price_1yr_return: Optional[str] = None
 
 
 class EquityResearchReport(BaseModel):
@@ -101,6 +107,8 @@ class EquityResearchReport(BaseModel):
     near_term_catalysts: list[str]
     earnings_highlights: str
     investment_thesis: str
+    price_vs_fundamentals: str = ""
+    target_price_validation: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +165,10 @@ def render_to_markdown(report: EquityResearchReport) -> str:
         return f"{x:{fmt}}" if x is not None else "n/a"
 
     val_rows = [
+        ["Current Price", f"${v.current_price:.2f}" if v.current_price else "n/a",
+         "Analyst Target", f"${v.analyst_target_price:.2f}" if v.analyst_target_price else "n/a"],
+        ["1M Return", v.price_1m_return or "n/a", "1Y Return", v.price_1yr_return or "n/a"],
+        ["3M Return", v.price_3m_return or "n/a", "6M Return", v.price_6m_return or "n/a"],
         ["Current P/E", _fv(v.current_pe), "Normalized P/E (5yr)", _fv(v.normalized_pe_5y)],
         ["Current P/FCF", _fv(v.current_pfcf), "Normalized P/FCF (5yr)", _fv(v.normalized_pfcf_5y)],
         ["Goal Low", f"${v.goal_low:.2f}" if v.goal_low else "n/a",
@@ -203,9 +215,32 @@ def render_to_markdown(report: EquityResearchReport) -> str:
         "",
         "---",
         "",
-        f"*Report prepared by {h.ai_model} on {h.prepared_date}. "
-        "For informational purposes only. Not investment advice.*",
     ]
+
+    if report.price_vs_fundamentals:
+        lines += [
+            "## 11. Price Performance vs. Fundamentals",
+            "",
+            report.price_vs_fundamentals,
+            "",
+            "---",
+            "",
+        ]
+
+    if report.target_price_validation:
+        lines += [
+            "## 12. Target Price Validation",
+            "",
+            report.target_price_validation,
+            "",
+            "---",
+            "",
+        ]
+
+    lines.append(
+        f"*Report prepared by {h.ai_model} on {h.prepared_date}. "
+        "For informational purposes only. Not investment advice.*"
+    )
 
     return "\n".join(lines)
 
@@ -606,6 +641,88 @@ def get_web_search(ticker: str) -> str:
         return f"[ERROR] Web search failed for {ticker}: {e}"
 
 
+def get_price_and_analyst_data(ticker: str) -> str:
+    ticker = ticker.upper()
+    lines = [f"PRICE PERFORMANCE & ANALYST TARGETS — {ticker}", ""]
+
+    # Price performance from monthly_pe (last 13 months of end-of-month prices)
+    if _HIST_FUND_DB.exists():
+        try:
+            conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+            rows = conn.execute("""
+                SELECT month_end_date, price
+                FROM monthly_pe
+                WHERE ticker = ?
+                ORDER BY month_end_date DESC
+                LIMIT 13
+            """, [ticker]).fetchall()
+            conn.close()
+            if rows:
+                current_price = rows[0][1]
+                rows_sorted = list(reversed(rows))  # oldest first
+                price_map = {r[0]: r[1] for r in rows_sorted if r[1]}
+
+                def _ret(months_back):
+                    idx = min(months_back, len(rows_sorted) - 1)
+                    past = rows_sorted[-(idx + 1)][1] if idx < len(rows_sorted) else None
+                    if past and current_price and float(past) > 0:
+                        return f"{(float(current_price) / float(past) - 1) * 100:+.1f}%"
+                    return "n/a"
+
+                prices_only = [r[1] for r in rows_sorted if r[1] is not None]
+                hi52 = max(prices_only[-12:]) if len(prices_only) >= 2 else None
+                lo52 = min(prices_only[-12:]) if len(prices_only) >= 2 else None
+
+                lines.append(f"Current Price (latest month-end): ${float(current_price):.2f}" if current_price else "Current Price: n/a")
+                lines.append(f"52-Week High: ${hi52:.2f}" if hi52 else "52-Week High: n/a")
+                lines.append(f"52-Week Low:  ${lo52:.2f}" if lo52 else "52-Week Low: n/a")
+                lines.append(f"1-Month Return:  {_ret(1)}")
+                lines.append(f"3-Month Return:  {_ret(3)}")
+                lines.append(f"6-Month Return:  {_ret(6)}")
+                lines.append(f"12-Month Return: {_ret(12)}")
+                lines.append("")
+                lines.append("Monthly price history (newest first):")
+                for r in rows[:7]:
+                    lines.append(f"  {str(r[0])[:7]}: ${float(r[1]):.2f}" if r[1] else f"  {str(r[0])[:7]}: n/a")
+        except Exception as e:
+            lines.append(f"[ERROR] Price history unavailable: {e}")
+    else:
+        lines.append("[ERROR] historic_fundamentals.duckdb not found")
+
+    lines.append("")
+
+    # Analyst consensus target from company_overview
+    if _AV_FIN_DB.exists():
+        try:
+            conn = duckdb.connect(str(_AV_FIN_DB), read_only=True)
+            row = conn.execute("""
+                SELECT analyst_target_price,
+                       analyst_rating_strong_buy, analyst_rating_buy,
+                       analyst_rating_hold,
+                       analyst_rating_sell, analyst_rating_strong_sell
+                FROM company_overview
+                WHERE ticker = ?
+                ORDER BY fetch_date DESC LIMIT 1
+            """, [ticker]).fetchone()
+            conn.close()
+            if row and row[0]:
+                total_analysts = sum(float(x) for x in row[1:] if x) or 0
+                lines.append(f"Analyst Consensus Target Price: ${float(row[0]):.2f}")
+                if total_analysts > 0:
+                    lines.append(f"Analyst Ratings ({int(total_analysts)} analysts):")
+                    if row[1]: lines.append(f"  Strong Buy:  {int(row[1])}")
+                    if row[2]: lines.append(f"  Buy:         {int(row[2])}")
+                    if row[3]: lines.append(f"  Hold:        {int(row[3])}")
+                    if row[4]: lines.append(f"  Sell:        {int(row[4])}")
+                    if row[5]: lines.append(f"  Strong Sell: {int(row[5])}")
+            else:
+                lines.append("Analyst Consensus Target Price: n/a")
+        except Exception as e:
+            lines.append(f"[ERROR] Analyst target unavailable: {e}")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # LLM prompt
 # ---------------------------------------------------------------------------
@@ -622,6 +739,8 @@ AVAILABLE DATA SOURCES:
 4. SEC 10-K Risk Factors: material risks disclosed by management
 5. Recent earnings call: key metrics, beats/misses, management guidance
 6. Web search: recent news, analyst ratings, market developments, competitive events
+7. Price performance: current price, 52-week range, 1M/3M/6M/1Y returns
+8. Analyst consensus: Wall Street target price, rating distribution (strong buy/buy/hold/sell)
 
 RATING GUIDELINES:
 - BUY: upside to goal_high > 15% AND positive business momentum
@@ -670,9 +789,12 @@ financial_performance: list of FinancialRow objects — one object per metric ro
   Include rows for: Revenue, Gross Margin (%), Operating Income, Operating Margin (%), Net Income, EBITDA, Free Cash Flow.
   Do NOT return financial_performance as a dict or nested object — it must be a JSON array.
 
-valuation: populate all fields from the valuation section
+valuation: populate all fields from the valuation and price performance sections
   upside_pct = (goal_high / current_price - 1) x 100
   next_q_eps_estimate and fy_eps_estimate from earnings estimates (as formatted strings)
+  current_price: most recent price from the price performance data
+  analyst_target_price: Wall Street consensus target from the analyst data (null if unavailable)
+  price_1m_return, price_3m_return, price_6m_return, price_1yr_return: as formatted strings, e.g. "+12.3%" or "-4.1%" (null if unavailable)
 
 company_overview: 3-4 paragraphs:
   Para 1 — COMPANY PROFILE: founding, HQ, business model, core mission
@@ -726,6 +848,34 @@ investment_thesis: 4-5 paragraphs:
   Para 4 — WHAT WOULD CHANGE YOUR MIND: specific, observable rating triggers
   Para 5 — RISK/REWARD PROFILE: 12-month horizon, R-Multiple, position sizing comment
 
+price_vs_fundamentals: 3-4 paragraphs analyzing whether the recent stock price performance
+  reflects the company's underlying financial performance. Use the price performance data
+  (1M/3M/6M/1Y returns, 52-week range) alongside the financial performance data (revenue
+  growth, earnings growth, margin trends, ROIC). Address:
+  Para 1 — PRICE PERFORMANCE SUMMARY: recent price action with specific return figures
+    vs. broader context (52-week range, where it sits relative to high/low)
+  Para 2 — ALIGNMENT OR DIVERGENCE: does the price trajectory match financial momentum?
+    If revenue/earnings are accelerating but the stock is down (or vice versa), explain why
+    there is a disconnect. Be specific about which metrics confirm or contradict the price move.
+  Para 3 — VALUATION CONTEXT: is the current price cheap or expensive relative to historical
+    multiples, given the recent financial performance? Reference current vs. normalized P/E,
+    P/FCF, and where the stock sits relative to goal_low and goal_high.
+  Para 4 — SIGNAL OR NOISE: is the price action a leading indicator, a lagging reflection,
+    or potentially mispriced relative to fundamentals? Give a clear directional conclusion.
+
+target_price_validation: 3-4 paragraphs critically assessing the reliability of the target prices.
+  Para 1 — OUR MODEL TARGETS: explain what drives goal_low and goal_high (normalized historical
+    multiples applied to earnings/FCF). State the targets explicitly with the upside % to each.
+  Para 2 — ANALYST CONSENSUS: compare the Wall Street consensus target price to our model
+    targets. Is the analyst target above, below, or in line? How many analysts cover the stock?
+    What does the rating distribution (strong buy/buy/hold/sell) signal about conviction?
+  Para 3 — RECONCILIATION: identify the largest drivers of any gap between our model targets
+    and the analyst consensus. Consider differences in assumed growth rates, multiple expansion,
+    near-term catalysts, or structural changes the model may not fully capture.
+  Para 4 — CONFIDENCE ASSESSMENT: provide a calibrated confidence level (High/Medium/Low) for
+    the target price range, citing specific risks to the upside or downside case. State whether
+    the analyst consensus strengthens or weakens conviction in the model target.
+
 Write with institutional precision. Use specific numbers. No filler language.
 Every claim must trace to the data provided.
 
@@ -765,14 +915,15 @@ async def _run_research_agent(ticker: str, model: str) -> EquityResearchReport:
             log.warning("[%s] %s: timed out after %ds", ticker, label, timeout)
             return f"[ERROR] {label} timed out after {timeout}s"
 
-    financials, valuation, peak_earnings, mda, risks, earnings, web = await asyncio.gather(
-        _run(get_financial_summary,   "financials",    _DB_TIMEOUT),
-        _run(get_valuation_data,      "valuation",     _DB_TIMEOUT),
-        _run(get_peak_earnings_data,  "peak_earnings", _DB_TIMEOUT),
-        _run(get_edgar_mda,           "edgar_mda",     _EDGAR_TIMEOUT),
-        _run(get_edgar_risks,         "edgar_risks",   _EDGAR_TIMEOUT),
-        _run(get_earnings_summary,    "earnings",      _EARNINGS_TIMEOUT),
-        _run(get_web_search,          "web_search",    _TAVILY_TIMEOUT),
+    financials, valuation, peak_earnings, mda, risks, earnings, web, price_analyst = await asyncio.gather(
+        _run(get_financial_summary,         "financials",     _DB_TIMEOUT),
+        _run(get_valuation_data,            "valuation",      _DB_TIMEOUT),
+        _run(get_peak_earnings_data,        "peak_earnings",  _DB_TIMEOUT),
+        _run(get_edgar_mda,                 "edgar_mda",      _EDGAR_TIMEOUT),
+        _run(get_edgar_risks,               "edgar_risks",    _EDGAR_TIMEOUT),
+        _run(get_earnings_summary,          "earnings",       _EARNINGS_TIMEOUT),
+        _run(get_web_search,                "web_search",     _TAVILY_TIMEOUT),
+        _run(get_price_and_analyst_data,    "price_analyst",  _DB_TIMEOUT),
     )
 
     log.info("[%s] research: data gathering done in %.1fs — calling LLM", ticker,
@@ -782,6 +933,7 @@ async def _run_research_agent(ticker: str, model: str) -> EquityResearchReport:
         f"=== FINANCIAL PERFORMANCE ===\n{financials}\n\n"
         f"=== VALUATION ===\n{valuation}\n\n"
         f"=== PEAK-EARNINGS TRAP SIGNALS ===\n{peak_earnings}\n\n"
+        f"=== PRICE PERFORMANCE & ANALYST TARGETS ===\n{price_analyst}\n\n"
         f"=== MD&A ===\n{mda}\n\n"
         f"=== RISK FACTORS ===\n{risks}\n\n"
         f"=== EARNINGS CALL HIGHLIGHTS ===\n{earnings}\n\n"
