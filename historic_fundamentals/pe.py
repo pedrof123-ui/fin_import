@@ -1119,6 +1119,11 @@ def compute_pe_stats(
         "interest_coverage":         _f(last.get("interest_coverage")),
     })
 
+    # Goal prices — pre-computed by enrich_goals() and stored in monthly_pe columns
+    result.update({k: _f(last.get(k)) for k in (
+        "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high"
+    )})
+
     return result
 
 
