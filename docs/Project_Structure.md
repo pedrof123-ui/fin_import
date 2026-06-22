@@ -6,7 +6,11 @@ fin_import2/
 │   ├── main.py                          FastAPI app and route definitions
 │   ├── importer.py                      Import logic: fetch SEC filings, extract, insert
 │   ├── db.py                            DuckDB connection wrapper
-│   └── dcf_router.py                    DCF endpoints: GET /dcf/{ticker}, POST /dcf/{ticker}/run
+│   ├── dcf_router.py                    DCF endpoints: GET /dcf/{ticker}, POST /dcf/{ticker}/run
+│   ├── screener_router.py               Stock screener: POST /screen, GET /screen/metadata
+│   ├── sector_router.py                 Sector dashboard: GET /sector/snapshot, /sector/history, /sector/companies
+│   ├── earnings_router.py               Earnings call transcripts: GET /earnings/report, POST /earnings/import-url, GET /earnings/models
+│   └── research_router.py               AI equity research: GET /research/{ticker}
 │
 ├── dcf/
 │   ├── __init__.py
@@ -22,6 +26,13 @@ fin_import2/
 │   │   └── layout.tsx
 │   ├── components/
 │   │   ├── ImportForm.tsx               Ticker input, period selector (default 10 FY), import button
+│   │   ├── ScreenerViewer.tsx           Stock screener: 18-metric filter panel + sortable results table
+│   │   ├── SectorViewer.tsx             Sector/industry dashboard: VMQ composite rankings, 5yr history chart, company drill-down
+│   │   ├── AvFinancialsViewer.tsx       Alpha Vantage income/balance/cashflow statements viewer
+│   │   ├── AvDcfViewer.tsx              AV-data-powered DCF valuation viewer
+│   │   ├── FundamentalsViewer.tsx       PE/FCF/EV/EBITDA history, goal prices, valuation signals
+│   │   ├── EquityResearchViewer.tsx     AI-generated equity research report
+│   │   ├── EarningsSummaryViewer.tsx    Earnings call transcript summarization: quarter selector, model picker, URL import, LLM-generated report
 │   │   ├── StatementViewer.tsx          Financials table with FY/Q display toggle
 │   │   ├── DcfViewer.tsx                DCF container: state, Reset/Update buttons, layout
 │   │   ├── DcfSummary.tsx               Valuation summary card + editable WACC inputs (rf, mrp, beta, cod, tax)
@@ -68,6 +79,7 @@ fin_import2/
 │   ├── financial_statements.duckdb      SEC EDGAR financial statements (income, balance, cashflow)
 │   ├── av_financials.duckdb             Alpha Vantage financial statements (income, balance, cashflow)
 │   ├── historic_fundamentals.duckdb     Monthly PE timeseries, PE statistics, analyst estimates snapshots
+│   ├── earnings_transcripts.duckdb      Earnings call transcripts: symbol, quarter, transcript_text, fetched_date, earnings_call_date (nullable), source
 │   ├── xbrl_mappings_multi.duckdb       AI-discovered concept mapping store
 │   └── ib_tracker.duckdb               Portfolio tracker: fills, tax lots, daily NAV, score snapshots, backtest benchmarks
 │                                        Created automatically when IB_TRACKER_DB env var is set.
@@ -108,6 +120,8 @@ fin_import2/
 │   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE + NTM revenue calculation
 │   ├── sector.py                        compute_sector_stats(): monthly median/p25/p75 aggregates per sector and industry from monthly_pe + company_overview
 │   ├── query.py                         Notebook-friendly wrappers: get_pe_stats() (peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
+│   ├── earnings_transcripts.py          Shared earnings transcript helpers: open_db(), is_cached(), save_transcript(), fetch_from_av(), fiscal_date_to_quarters()
+│   │                                    Used by earnings_router.py, research_router.py, earnings_backfill.py, earnings_update.py
 │   ├── universe.py                      Investable universe filters: filter_universe(), report_universe_counts(), sensitivity_analysis(), UNIVERSE_DEFAULTS
 │   │                                    Default thresholds: market_cap >= $1B, price >= $5, sector must be known. NaN values fail filters.
 │   ├── baselines.py                     Rank-based single-factor and composite baseline models.
@@ -168,6 +182,12 @@ fin_import2/
 └── CLAUDE.md                            Coding standards
 
 scripts/ also contains:
+    earnings_backfill.py                 One-time backfill: fetch latest 4 quarters of earnings call transcripts for all ~2,655 AV tickers
+                                         Resume-safe; skips already-cached (symbol, quarter) pairs. --ticker, --quarters N, --dry-run flags.
+    earnings_update.py                   Weekly update: check latest 1-2 quarters per ticker for new transcripts; designed for cron scheduling
+                                         --ticker flag for single-ticker runs.
+    rebuild_sector_stats.py              Full rebuild of sector_stats table in historic_fundamentals.duckdb (all months, ~43K rows)
+                                         Run after schema changes to sector_stats or after adding new tickers in bulk.
     manage_tickers.py                    Add/delete tickers across all three DBs: prices + AV financials + historic fundamentals (recommended)
     av_import.py                         Import income/balance/cashflow from Alpha Vantage (75 calls/min limit enforced)
     av_import_overview.py                Backfill company overview (name, sector, industry, beta + 41 fields) for all tickers
@@ -454,7 +474,7 @@ All three statement tables use `INSERT OR REPLACE INTO` keyed on `(ticker, filin
 | `monthly_pe` | ticker, month_end_date (last calendar day), price (adj_close), ttm_eps, pe_ratio (NULL when ttm_eps ≤ 0), pe_rolling_5yr_median (trailing 60-month window), ttm_source ('quarterly'/'annual'), shares, ttm_dividend, dividend_yield, ttm_revenue, ttm_fcf, pfcf_ratio, pfcf_rolling_5yr_median, fcf_yield, ttm_ebitda, ev_ebitda, ev_ebitda_rolling_5yr_median, ps_ratio, ps_rolling_5yr_median, roa, roa_rolling_5yr_median, roe (NULL when equity ≤ 0), roe_rolling_5yr_median, roic (NULL when IC ≤ 0), roic_rolling_5yr_median, pbv (NULL when equity ≤ 0), pbv_rolling_5yr_median, ptbv (NULL when TBV ≤ 0), ptbv_rolling_5yr_median, earnings_quality ((OCF−NI)/avg_assets), asset_growth (YoY total_assets growth, quarterly), momentum_12_1 (12-1 month price return), updated_at |
 | `pe_stats` | ticker (PK), market_cap_b, current/lt_median/p25/p75/p10/p90/rolling_5yr_median for PE + forward_pe/12m_eps; current/lt_median/p25/p75/rolling_5yr_median for P/FCF, EV/EBITDA, P/S, ROA, ROE, ROIC, P/BV, P/TBV; forward_pfcf, forward_evebitda, forward_ps; fcf/ebitda margins; rev/earn/fcf growth CAGRs and NTM estimates; ttm_dividend, dividend_yield, months_available, updated_at |
 | `earnings_estimates` | ticker, fiscal_date, horizon ('fiscal quarter'/'fiscal year'), fetched_at (PK together), eps_avg/high/low/count, eps_avg_7d/30d/60d/90d, eps_rev_up/down_7d/30d, rev_avg/high/low/count |
-| `sector_stats` | group_type ('sector'/'industry'), group_name, month_end_date (PK together), ticker_count, pe/pfcf/evebitda/ps median/p25/p75, pbv_median, earnings_yield/fcf_yield/ebitda_ev_yield/dividend_yield medians, roa/roe/roic median/p25/p75, rev_growth_1yr_median, earn_growth_1yr_median |
+| `sector_stats` | group_type ('sector'/'industry'), group_name, month_end_date (PK together), ticker_count, pe/pfcf/evebitda/ps median/p25/p75, pbv_median, earnings_yield/fcf_yield/ebitda_ev_yield/dividend_yield medians, roa/roe/roic median/p25/p75, rev_growth_1yr_median, earn_growth_1yr_median, gross_margin_median, operating_margin_median, fcf_margin_median, debt_to_ebitda_median, interest_coverage_median |
 
 Primary data sources:
 - `av_financials.duckdb / income_statements` — net_income, total_revenue, ebitda, ebit, income_tax_expense, income_before_tax
@@ -482,6 +502,20 @@ Created automatically when `IB_TRACKER_DB` env var is set. Schema is initialized
 `fills.reference_price` stores the CSV closing price at time of scoring. Slippage = `(fill_price - reference_price) / reference_price * 10000` bps (sign-flipped for SELL).
 
 `tax_lots.qty_remaining` decreases as SELL fills close lots FIFO. Open positions: `WHERE qty_remaining > 0`. Closed lots: `WHERE close_date IS NOT NULL`.
+
+### `data/earnings_transcripts.duckdb`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `symbol` | VARCHAR | Ticker symbol (PK with `quarter`) |
+| `quarter` | VARCHAR | Calendar quarter string, e.g. `2026Q2` (PK with `symbol`) |
+| `transcript_text` | TEXT | Full formatted transcript (speaker/title/content blocks) |
+| `fetched_date` | DATE | Date the transcript was downloaded into the DB |
+| `api_response_json` | TEXT | Raw Alpha Vantage JSON response (nullable) |
+| `source` | VARCHAR | `'av'` (Alpha Vantage) or `'url'` (manual URL import) |
+| `earnings_call_date` | DATE | Date of the earnings call (nullable; AV does not return this field) |
+
+Quarter strings use calendar quarters derived from `fiscal_date_ending` via `(month - 1) // 3 + 1`. Populated by `earnings_backfill.py`, `earnings_update.py`, and on-demand by the Finview Earnings tab.
 
 ### `data/xbrl_mappings_multi.duckdb`
 

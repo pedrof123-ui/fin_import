@@ -4,10 +4,12 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 
 ## Architecture
 
-- **FastAPI backend** (`api/`) — REST API for importing, querying statements, and running DCF valuations
-- **Next.js frontend** (`web/`) — UI to import a ticker, view all 3 statements, switch FY/Q, DCF valuation tab
+- **FastAPI backend** (`api/`) — REST API for importing, querying statements, DCF valuations, stock screener, sector/industry dashboard, equity research, and earnings call transcripts
+- **Next.js frontend** (`web/`) — FinView UI with tabs: Screener, Sector Dashboard, AV Data, AV DCF, Fundamentals, AI Research, Earnings, XBRL Statements
 - **DuckDB** (`data/financial_statements.duckdb`) — stores income, balance sheet, and cash flow tables from SEC EDGAR
-- **DuckDB** (`data/av_financials.duckdb`) — stores income, balance sheet, and cash flow tables from Alpha Vantage API
+- **DuckDB** (`data/av_financials.duckdb`) — stores income, balance sheet, and cash flow tables from Alpha Vantage API, plus company overview (sector/industry/name/beta)
+- **DuckDB** (`data/historic_fundamentals.duckdb`) — monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates (43K rows), analyst estimates
+- **DuckDB** (`data/earnings_transcripts.duckdb`) — earnings call transcripts for all AV tickers, fetched from Alpha Vantage and cached; used by the Earnings tab and AI Research
 - **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 - **IB Trader** (`ib_trader/`) — Interactive Brokers execution layer: connects to TWS, computes target positions from live scores, diffs current holdings, and submits MOC/MKT/LMT orders; includes a CLI rebalancer and an interactive REPL for ad-hoc orders
@@ -55,6 +57,17 @@ CSV format — any of these column names work: `ticker`, `symbol`, `stock`. Firs
 | `GET` | `/statements/{ticker}/{type}` | Query statements (type: `income`, `balance`, `cashflow`) |
 | `GET` | `/dcf/{ticker}` | Run DCF with model defaults |
 | `POST` | `/dcf/{ticker}/run` | Re-run DCF with user-supplied overrides |
+| `GET` | `/screen/metadata` | Sector/industry lists for screener dropdowns |
+| `POST` | `/screen` | Stock screener — filter by 18 fundamental metrics |
+| `GET` | `/sector/snapshot` | Current sector or industry fundamentals + VMQ composite score |
+| `GET` | `/sector/history` | Monthly timeseries for one sector/industry (for charts) |
+| `GET` | `/sector/companies` | Company fundamentals filtered to one sector/industry |
+| `GET` | `/av/{ticker}/financials` | Alpha Vantage income/balance/cashflow statements |
+| `GET` | `/av/{ticker}/overview` | Company overview (sector, industry, name, beta, market cap) |
+| `GET` | `/earnings/report` | Earnings call transcript summary (params: `ticker`, `quarter`, `model`) |
+| `POST` | `/earnings/import-url` | Import transcript from a PDF/HTML URL and summarize |
+| `GET` | `/earnings/models` | List available LLM models for transcript summarization |
+| `POST` | `/research/{ticker}` | AI-generated equity research summary |
 
 Import request body:
 ```json
@@ -176,6 +189,32 @@ uv run scripts/hf_query.py --view sector-history --name TECHNOLOGY  # monthly se
 ```
 
 The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker costs 6 AV calls for raw data (3 statements + shares + dividends + overview); bulk throughput is ~12 tickers/minute.
+
+## Earnings Call Transcript Pipeline
+
+Transcripts are fetched from Alpha Vantage (`EARNINGS_CALL_TRANSCRIPT`) and cached in `data/earnings_transcripts.duckdb`. The shared module `historic_fundamentals/earnings_transcripts.py` handles all DB and AV-fetch logic.
+
+### One-time backfill (latest 4 quarters per ticker)
+
+```bash
+uv run scripts/earnings_backfill.py              # all ~2,655 tickers, ~2.5 hrs
+uv run scripts/earnings_backfill.py --ticker AAPL
+uv run scripts/earnings_backfill.py --dry-run    # preview without API calls
+uv run scripts/earnings_backfill.py --quarters 8 # extend to 8 quarters
+```
+
+### Weekly update (check for new transcripts)
+
+```bash
+uv run scripts/earnings_update.py               # all tickers, ~71 min worst-case
+uv run scripts/earnings_update.py --ticker MSFT
+```
+
+Both scripts are resume-safe — already-cached `(symbol, quarter)` pairs are skipped. Quarter format is `YYYYQN` (e.g. `2026Q2`). A 60-day lookahead rule automatically probes the quarter after the latest one in `av_financials.duckdb` when it may have already reported.
+
+The Finview Earnings tab also fetches and caches transcripts on demand when a requested quarter is not in the database.
+
+---
 
 ## Fundamentals Alpha — Operational Flow
 
@@ -338,18 +377,25 @@ dcf/
   wacc.py              WACC, CAPM, cost of debt, Hamada beta re-levering
   data.py              Reads from financial_statements.duckdb, prices.duckdb, fred.duckdb
 web/                   Next.js frontend (port 3000)
-  app/page.tsx         Main page: import form, Financials + DCF tabs
+  app/page.tsx         Main page: tab manager, ticker loader, all tab panels
   components/
-    ImportForm.tsx       Ticker input, period selector, import button
-    StatementViewer.tsx  Financials table with FY/Q toggle
-    DcfViewer.tsx        DCF container: state management, Reset/Update actions
-    DcfSummary.tsx       Valuation summary + editable WACC inputs
-    DcfStatements.tsx    Historical & proforma table with editable forecast ratios
-    DcfQuarterly.tsx     Y1 quarterly detail: actuals + seasonality estimates
-    DcfNwcCapex.tsx      DSO/DPO/DIO inputs + projected NWC and CapEx per year
-    DcfFcffTable.tsx     FCFF build-up table + EV bridge
-    DcfTerminalValue.tsx Terminal value decomposition card
-    DcfSensitivity.tsx   2D sensitivity table (WACC × terminal growth)
+    ImportForm.tsx           Ticker input, period selector, import button
+    ScreenerViewer.tsx       Stock screener: 18-metric filter panel + results table
+    SectorViewer.tsx         Sector/industry dashboard: VMQ rankings, 5yr chart, company drill-down
+    AvFinancialsViewer.tsx   Alpha Vantage income/balance/cashflow statements
+    AvDcfViewer.tsx          AV-data-powered DCF valuation
+    FundamentalsViewer.tsx   PE/FCF/EV/EBITDA history, goal prices, valuation signals
+    EquityResearchViewer.tsx AI-generated equity research report
+    EarningsSummaryViewer.tsx Analyst earnings estimates + revenue consensus
+    StatementViewer.tsx      SEC XBRL financials table with FY/Q toggle
+    DcfViewer.tsx            DCF container: state management, Reset/Update actions
+    DcfSummary.tsx           Valuation summary + editable WACC inputs
+    DcfStatements.tsx        Historical & proforma table with editable forecast ratios
+    DcfQuarterly.tsx         Y1 quarterly detail: actuals + seasonality estimates
+    DcfNwcCapex.tsx          DSO/DPO/DIO inputs + projected NWC and CapEx per year
+    DcfFcffTable.tsx         FCFF build-up table + EV bridge
+    DcfTerminalValue.tsx     Terminal value decomposition card
+    DcfSensitivity.tsx       2D sensitivity table (WACC × terminal growth)
   lib/
     dcf-types.ts         TypeScript interfaces for all DCF data
     formatField.ts       blurFormat / focusStrip / parsePct utilities
@@ -379,6 +425,8 @@ scripts/
   hf_update.py                 Monthly update: recompute PE/yield + refresh estimates + sector stats (--skip-sector, --full-sector-rebuild)
   hf_query.py                  CLI query: stats, timeseries, estimates, sector, sector-history views; CSV export
   update_alpha_vantage_estimates.py  Update analyst EPS/revenue estimates from AV
+  earnings_backfill.py         One-time backfill: latest 4 quarters of earnings call transcripts for all AV tickers
+  earnings_update.py           Weekly update: check for new earnings call transcripts across all tickers
   score_live.py                Live scoring: ranked investable portfolio with alloc_pct; writes docs/live_scores_YYYYMMDD.csv
   rebalance.py                 IB portfolio rebalancer CLI (dry run by default); reads latest live_scores CSV
   ib_repl.py                   Interactive REPL for IB: status, buy/sell, quote, cancel, rebalance
@@ -399,5 +447,6 @@ data/
   financial_statements.duckdb       SEC EDGAR financial statements
   av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends, company overview
   historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates, analyst estimates
+  earnings_transcripts.duckdb       Earnings call transcripts: text, fetched_date, earnings_call_date (nullable), source
   xbrl_mappings_multi.duckdb        AI-discovered XBRL concept mapping store
 ```

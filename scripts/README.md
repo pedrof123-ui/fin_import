@@ -288,6 +288,61 @@ uv run scripts/hf_query.py --all --view stats --out output.csv # export all to C
 
 ---
 
+## earnings_backfill.py
+
+One-time backfill: fetch the latest N quarters of earnings call transcripts for every ticker in `av_financials.duckdb` and store them in `data/earnings_transcripts.duckdb`. Resume-safe — already-cached `(symbol, quarter)` pairs are always skipped.
+
+```bash
+uv run scripts/earnings_backfill.py                    # all tickers, last 4 quarters (~2.5 hrs)
+uv run scripts/earnings_backfill.py --ticker AAPL      # single ticker
+uv run scripts/earnings_backfill.py --dry-run          # print plan without making API calls
+uv run scripts/earnings_backfill.py --quarters 8       # extend to 8 quarters per ticker
+uv run scripts/earnings_backfill.py --db PATH          # override DB path
+uv run scripts/earnings_backfill.py --verbose          # DEBUG logging
+```
+
+Rate: up to `--quarters` AV calls per ticker at 75 calls/min. The 60-day lookahead rule applies: if a ticker's latest `fiscal_date_ending` in `av_financials.duckdb` is more than 60 days ago, the following quarter is also probed (in case the company has already reported but the financials have not been imported yet).
+
+Required: `ALPHA_VANTAGE_API_KEY`.
+
+---
+
+## earnings_update.py
+
+Weekly update: check the latest 1–2 quarters per ticker for new earnings call transcripts. Intended to run once per week (e.g. Sunday night via cron). Skips quarters already cached.
+
+```bash
+uv run scripts/earnings_update.py                      # all tickers
+uv run scripts/earnings_update.py --ticker MSFT        # single ticker
+uv run scripts/earnings_update.py --db PATH            # override DB path
+uv run scripts/earnings_update.py --verbose            # DEBUG logging
+```
+
+Rate: up to 2 AV calls per ticker at 75 calls/min. Typically faster since most quarters are already cached. Applies the same 60-day lookahead rule as `earnings_backfill.py`.
+
+Required: `ALPHA_VANTAGE_API_KEY`.
+
+---
+
+## rebuild_sector_stats.py
+
+Full rebuild of the `sector_stats` table in `data/historic_fundamentals.duckdb`. Drops and recomputes all sector and industry aggregate rows across all available months (~43K rows covering 11 sectors + ~100 industries).
+
+Run this after:
+- Schema changes to `sector_stats` (e.g. adding new columns via `ALTER TABLE`)
+- Adding a large batch of new tickers
+- Any change to the aggregation SQL in `historic_fundamentals/sector.py`
+
+```bash
+uv run scripts/rebuild_sector_stats.py
+```
+
+No flags. Uses `HF_DB_PATH` and `AV_FINANCIALS_DB_PATH` from `.env` (defaults to `data/historic_fundamentals.duckdb` and `data/av_financials.duckdb`).
+
+Runtime: ~1-2 minutes for full rebuild. The monthly update script `hf_update.py` also updates sector stats incrementally (latest 3 months) after each ticker refresh.
+
+---
+
 ## run_baselines.py
 
 Computes IC, ICIR, Newey-West ICIR, hit rate, and quintile spreads for six single-factor baselines and the composite score. Writes `docs/baseline_results.md`.
