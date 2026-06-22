@@ -54,19 +54,29 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def get_ticker_latest_quarters(av_conn: duckdb.DuckDBPyConnection, ticker: str | None) -> list[tuple[str, date]]:
-    if ticker:
-        rows = av_conn.execute(
-            "SELECT ticker, MAX(fiscal_date_ending) FROM income_statements "
-            "WHERE period_type = 'quarterly' AND ticker = ? GROUP BY ticker",
-            [ticker.upper()],
-        ).fetchall()
-    else:
-        rows = av_conn.execute(
-            "SELECT ticker, MAX(fiscal_date_ending) FROM income_statements "
-            "WHERE period_type = 'quarterly' GROUP BY ticker ORDER BY ticker"
-        ).fetchall()
-    return [(row[0], row[1]) for row in rows if row[1] is not None]
+def get_ticker_latest_quarters(av_conn: duckdb.DuckDBPyConnection, ticker: str | None) -> list[tuple[str, date, int]]:
+    where = "AND ticker = ?" if ticker else ""
+    t = ticker.upper() if ticker else None
+    params = [t, t] if t else []
+    rows = av_conn.execute(
+        f"""
+        WITH q AS (
+            SELECT ticker, MAX(fiscal_date_ending) AS latest_date
+            FROM income_statements WHERE period_type = 'quarterly' {where}
+            GROUP BY ticker
+        ),
+        a AS (
+            SELECT ticker, MONTH(MAX(fiscal_date_ending)) AS fy_end_month
+            FROM income_statements WHERE period_type = 'annual' {where}
+            GROUP BY ticker
+        )
+        SELECT q.ticker, q.latest_date, COALESCE(a.fy_end_month, 12)
+        FROM q LEFT JOIN a ON q.ticker = a.ticker
+        ORDER BY q.ticker
+        """,
+        params,
+    ).fetchall()
+    return [(row[0], row[1], row[2]) for row in rows if row[1] is not None]
 
 
 def main() -> int:
@@ -101,9 +111,9 @@ def main() -> int:
 
     fetched = skipped = not_found = errors = 0
 
-    for symbol, latest_date in tqdm(ticker_dates, desc="Update", unit="ticker"):
+    for symbol, latest_date, fy_end_month in tqdm(ticker_dates, desc="Update", unit="ticker"):
         # Check only the 2 most recent quarters — the lookahead + the latest in av_financials
-        quarters = fiscal_date_to_quarters(latest_date, today, n_quarters=2)
+        quarters = fiscal_date_to_quarters(latest_date, today, n_quarters=2, fy_end_month=fy_end_month)
         for quarter in quarters:
             if is_cached(earnings_conn, symbol, quarter):
                 skipped += 1

@@ -177,6 +177,9 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earnings_quality        DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS asset_growth            DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS feature_available_date DATE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_growth_1yr          DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earn_growth_1yr         DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS rev_growth_1yr          DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -341,6 +344,25 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_peg  DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_bv   DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_2x   DOUBLE")
+        # 5yr P25/P75 variants
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pe_p25_5yr       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pe_p75_5yr       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pfcf_p25_5yr     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pfcf_p75_5yr     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_p25_5yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS evebitda_p75_5yr DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ps_p25_5yr       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ps_p75_5yr       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_p25_5yr      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_p75_5yr      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roe_p25_5yr      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roe_p75_5yr      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roic_p25_5yr     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roic_p75_5yr     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pbv_p25_5yr      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS pbv_p75_5yr      DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ptbv_p25_5yr     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS ptbv_p75_5yr     DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_low  DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS goal_high DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_gross_margin       DOUBLE")
@@ -417,9 +439,19 @@ class HistoricFundamentalsDB:
                 roic_p75                DOUBLE,
                 rev_growth_1yr_median   DOUBLE,
                 earn_growth_1yr_median  DOUBLE,
+                gross_margin_median     DOUBLE,
+                operating_margin_median DOUBLE,
+                fcf_margin_median       DOUBLE,
+                debt_to_ebitda_median   DOUBLE,
+                interest_coverage_median DOUBLE,
                 PRIMARY KEY (group_type, group_name, month_end_date)
             )
         """)
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS gross_margin_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS operating_margin_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS fcf_margin_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS debt_to_ebitda_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS interest_coverage_median DOUBLE")
 
     # ── Upsert ───────────────────────────────────────────────────────────────
 
@@ -455,6 +487,7 @@ class HistoricFundamentalsDB:
             "earnings_yield_norm", "fcf_yield_norm", "ev_ebitda_norm", "ps_ratio_norm",
             "momentum_12_1", "earnings_quality", "asset_growth",
             "feature_available_date",
+            "fcf_growth_1yr", "earn_growth_1yr", "rev_growth_1yr",
             "updated_at",
         ]
         for col in cols:
@@ -488,6 +521,7 @@ class HistoricFundamentalsDB:
                  earnings_yield_norm, fcf_yield_norm, ev_ebitda_norm, ps_ratio_norm,
                  momentum_12_1, earnings_quality, asset_growth,
                  feature_available_date,
+                 fcf_growth_1yr, earn_growth_1yr, rev_growth_1yr,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -513,6 +547,7 @@ class HistoricFundamentalsDB:
                        earnings_yield_norm, fcf_yield_norm, ev_ebitda_norm, ps_ratio_norm,
                        momentum_12_1, earnings_quality, asset_growth,
                        feature_available_date,
+                       fcf_growth_1yr, earn_growth_1yr, rev_growth_1yr,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -553,7 +588,16 @@ class HistoricFundamentalsDB:
              current_operating_margin, operating_margin_5y_median,
              operating_margin_change_3y, operating_margin_slope_5y,
              current_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
-             roa_stability_5y, debt_to_ebitda, interest_coverage)
+             roa_stability_5y, debt_to_ebitda, interest_coverage,
+             pe_p25_5yr, pe_p75_5yr,
+             pfcf_p25_5yr, pfcf_p75_5yr,
+             evebitda_p25_5yr, evebitda_p75_5yr,
+             ps_p25_5yr, ps_p75_5yr,
+             roa_p25_5yr, roa_p75_5yr,
+             roe_p25_5yr, roe_p75_5yr,
+             roic_p25_5yr, roic_p75_5yr,
+             pbv_p25_5yr, pbv_p75_5yr,
+             ptbv_p25_5yr, ptbv_p75_5yr)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
@@ -566,7 +610,8 @@ class HistoricFundamentalsDB:
                     ?, ?, ?, ?, ?,
                     ?, ?, ?,
                     ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 updated_at                 = excluded.updated_at,
                 current_price              = excluded.current_price,
@@ -673,7 +718,25 @@ class HistoricFundamentalsDB:
                 fcf_margin_change_3y       = excluded.fcf_margin_change_3y,
                 roa_stability_5y           = excluded.roa_stability_5y,
                 debt_to_ebitda             = excluded.debt_to_ebitda,
-                interest_coverage          = excluded.interest_coverage
+                interest_coverage          = excluded.interest_coverage,
+                pe_p25_5yr                 = excluded.pe_p25_5yr,
+                pe_p75_5yr                 = excluded.pe_p75_5yr,
+                pfcf_p25_5yr               = excluded.pfcf_p25_5yr,
+                pfcf_p75_5yr               = excluded.pfcf_p75_5yr,
+                evebitda_p25_5yr           = excluded.evebitda_p25_5yr,
+                evebitda_p75_5yr           = excluded.evebitda_p75_5yr,
+                ps_p25_5yr                 = excluded.ps_p25_5yr,
+                ps_p75_5yr                 = excluded.ps_p75_5yr,
+                roa_p25_5yr                = excluded.roa_p25_5yr,
+                roa_p75_5yr                = excluded.roa_p75_5yr,
+                roe_p25_5yr                = excluded.roe_p25_5yr,
+                roe_p75_5yr                = excluded.roe_p75_5yr,
+                roic_p25_5yr               = excluded.roic_p25_5yr,
+                roic_p75_5yr               = excluded.roic_p75_5yr,
+                pbv_p25_5yr                = excluded.pbv_p25_5yr,
+                pbv_p75_5yr                = excluded.pbv_p75_5yr,
+                ptbv_p25_5yr               = excluded.ptbv_p25_5yr,
+                ptbv_p75_5yr               = excluded.ptbv_p75_5yr
         """, [
             stats["ticker"],
             stats.get("updated_at", datetime.now(UTC)),
@@ -782,6 +845,24 @@ class HistoricFundamentalsDB:
             stats.get("roa_stability_5y"),
             stats.get("debt_to_ebitda"),
             stats.get("interest_coverage"),
+            stats.get("pe_p25_5yr"),
+            stats.get("pe_p75_5yr"),
+            stats.get("pfcf_p25_5yr"),
+            stats.get("pfcf_p75_5yr"),
+            stats.get("evebitda_p25_5yr"),
+            stats.get("evebitda_p75_5yr"),
+            stats.get("ps_p25_5yr"),
+            stats.get("ps_p75_5yr"),
+            stats.get("roa_p25_5yr"),
+            stats.get("roa_p75_5yr"),
+            stats.get("roe_p25_5yr"),
+            stats.get("roe_p75_5yr"),
+            stats.get("roic_p25_5yr"),
+            stats.get("roic_p75_5yr"),
+            stats.get("pbv_p25_5yr"),
+            stats.get("pbv_p75_5yr"),
+            stats.get("ptbv_p25_5yr"),
+            stats.get("ptbv_p75_5yr"),
         ])
 
     def upsert_estimates(self, ticker: str, rows: list[dict]) -> int:
@@ -820,6 +901,8 @@ class HistoricFundamentalsDB:
             "roe_median", "roe_p25", "roe_p75",
             "roic_median", "roic_p25", "roic_p75",
             "rev_growth_1yr_median", "earn_growth_1yr_median",
+            "gross_margin_median", "operating_margin_median", "fcf_margin_median",
+            "debt_to_ebitda_median", "interest_coverage_median",
         ]
         data = df.copy()
         for col in cols:

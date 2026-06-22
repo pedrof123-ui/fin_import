@@ -136,11 +136,11 @@ def _sdiv(v, d: float) -> float | None:
 
 
 _STAT_FIELDS = [
-    "current_pe", "forward_pe", "pe_lt_median", "pe_p25", "pe_p75", "pe_rolling_5yr_median",
-    "current_pfcf", "forward_pfcf", "pfcf_lt_median", "pfcf_p25", "pfcf_p75", "pfcf_rolling_5yr_median",
-    "current_evebitda", "forward_evebitda", "evebitda_lt_median", "evebitda_p25", "evebitda_p75",
+    "current_pe", "forward_pe", "pe_lt_median", "pe_p25", "pe_p75", "pe_p25_5yr", "pe_p75_5yr", "pe_rolling_5yr_median",
+    "current_pfcf", "forward_pfcf", "pfcf_lt_median", "pfcf_p25", "pfcf_p75", "pfcf_p25_5yr", "pfcf_p75_5yr", "pfcf_rolling_5yr_median",
+    "current_evebitda", "forward_evebitda", "evebitda_lt_median", "evebitda_p25", "evebitda_p75", "evebitda_p25_5yr", "evebitda_p75_5yr",
     "evebitda_rolling_5yr_median",
-    "current_ps", "forward_ps", "ps_lt_median", "ps_p25", "ps_p75", "ps_rolling_5yr_median",
+    "current_ps", "forward_ps", "ps_lt_median", "ps_p25", "ps_p75", "ps_p25_5yr", "ps_p75_5yr", "ps_rolling_5yr_median",
     "current_pbv", "pbv_lt_median", "pbv_rolling_5yr_median",
     "current_roa", "roa_lt_median", "roa_rolling_5yr_median",
     "current_roe", "roe_lt_median", "roe_rolling_5yr_median",

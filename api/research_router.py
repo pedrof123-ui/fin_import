@@ -43,9 +43,9 @@ _DB_TIMEOUT       = 10
 _TAVILY_TIMEOUT   = 20
 
 _MODEL_OPTIONS = [
-    {"label": "Claude Sonnet 4.6 (Default)", "value": "anthropic/claude-sonnet-4-6"},
+    {"label": "Claude Sonnet 4.6",           "value": "anthropic/claude-sonnet-4-6"},
     {"label": "Qwen3 235B",                  "value": "qwen/qwen3-235b-a22b-2507"},
-    {"label": "Gemini 3.5 Flash",            "value": "google/gemini-3.5-flash"},
+    {"label": "Gemini 3.5 Flash (Default)",  "value": "google/gemini-3.5-flash"},
     {"label": "Gemini 3.1 Pro",              "value": "google/gemini-3.1-pro-preview"},
     {"label": "Qwen3.7 Max",                 "value": "qwen/qwen3.7-max"},
     {"label": "MiniMax M3",                  "value": "minimax/minimax-m3"},

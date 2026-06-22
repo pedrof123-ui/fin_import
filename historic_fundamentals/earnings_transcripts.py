@@ -156,17 +156,29 @@ def fiscal_date_to_quarters(
     latest_fiscal_date: date,
     today: date,
     n_quarters: int,
+    fy_end_month: int = 12,
 ) -> list[str]:
     """
-    Return up to n_quarters calendar quarter strings (newest first) to probe
+    Return up to n_quarters fiscal quarter strings (newest first) to probe
     for a ticker whose latest av_financials entry has the given fiscal_date_ending.
+
+    Uses the company's fiscal year end month so that AV's fiscal quarter labels
+    are matched correctly for non-December fiscal year companies.
 
     Applies the 60-day lookahead rule: if more than 60 days have passed since
     latest_fiscal_date, includes the following quarter as a potential new transcript
     not yet reflected in av_financials.
     """
-    q = (latest_fiscal_date.month - 1) // 3 + 1
-    base_idx = latest_fiscal_date.year * 4 + (q - 1)
+    # Fiscal year = the calendar year in which the fiscal year ends
+    if latest_fiscal_date.month <= fy_end_month:
+        fy = latest_fiscal_date.year
+    else:
+        fy = latest_fiscal_date.year + 1
+
+    # Fiscal quarter number 1-4 within that fiscal year
+    fq = ((latest_fiscal_date.month - fy_end_month - 1) % 12) // 3 + 1
+
+    base_idx = fy * 4 + (fq - 1)
 
     if (today - latest_fiscal_date).days > 60:
         start_idx = base_idx + 1

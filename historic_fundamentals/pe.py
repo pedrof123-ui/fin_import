@@ -925,6 +925,17 @@ def build_monthly_pe(
     df["fcf_margin_change_3y"]       = df["ttm_fcf_margin"] - df["ttm_fcf_margin"].shift(36)
     df["roa_stability_5y"]           = df["roa"].rolling(60, min_periods=36).std()
 
+    # TTM-based YoY growth rates (point-in-time: shift(12) uses only past observations per ticker)
+    # NaN when base is zero or negative — sign-change makes the direction ambiguous.
+    base_fcf = df["ttm_fcf"].shift(12)
+    df["fcf_growth_1yr"] = (df["ttm_fcf"] / base_fcf - 1).where(base_fcf > 0)
+
+    base_eps = df["ttm_eps"].shift(12)
+    df["earn_growth_1yr"] = (df["ttm_eps"] / base_eps - 1).where(base_eps > 0)
+
+    base_rev = df["ttm_revenue"].shift(12)
+    df["rev_growth_1yr"] = (df["ttm_revenue"] / base_rev - 1).where(base_rev > 0)
+
     return df
 
 
@@ -940,19 +951,32 @@ def compute_pe_stats(
     if monthly_pe.empty:
         return None
 
-    pe_series = monthly_pe["pe_ratio"].dropna()
+    monthly_pe_10y = monthly_pe.tail(120)
+    monthly_pe_5y  = monthly_pe.tail(60)
+    pe_series      = monthly_pe["pe_ratio"].dropna()
+    pe_series_10y  = monthly_pe_10y["pe_ratio"].dropna()
+    pe_series_5y   = monthly_pe_5y["pe_ratio"].dropna()
     last = monthly_pe.iloc[-1]
 
     def _f(v) -> float | None:
         return float(v) if pd.notna(v) else None
 
-    def _stats(series: pd.Series, prefix: str) -> dict:
+    def _stats(
+        series: pd.Series,
+        prefix: str,
+        pct_series_10y: pd.Series | None = None,
+        pct_series_5y:  pd.Series | None = None,
+    ) -> dict:
         if series.empty:
             return {}
+        p10 = pct_series_10y if pct_series_10y is not None and not pct_series_10y.empty else series
+        p5  = pct_series_5y  if pct_series_5y  is not None and not pct_series_5y.empty  else series
         return {
             f"{prefix}_lt_median": _f(series.median()),
-            f"{prefix}_p25":       _f(series.quantile(0.25)),
-            f"{prefix}_p75":       _f(series.quantile(0.75)),
+            f"{prefix}_p25":       _f(p10.quantile(0.25)),
+            f"{prefix}_p75":       _f(p10.quantile(0.75)),
+            f"{prefix}_p25_5yr":   _f(p5.quantile(0.25)),
+            f"{prefix}_p75_5yr":   _f(p5.quantile(0.75)),
         }
 
     current_price = _f(last.get("price"))
@@ -966,10 +990,12 @@ def compute_pe_stats(
         "current_price":          current_price,
         # PE
         "pe_lt_median":           _f(pe_series.median()),
-        "pe_p10":                 _f(pe_series.quantile(0.10)),
-        "pe_p25":                 _f(pe_series.quantile(0.25)),
-        "pe_p75":                 _f(pe_series.quantile(0.75)),
-        "pe_p90":                 _f(pe_series.quantile(0.90)),
+        "pe_p10":                 _f(pe_series_10y.quantile(0.10)) if not pe_series_10y.empty else None,
+        "pe_p25":                 _f(pe_series_10y.quantile(0.25)) if not pe_series_10y.empty else None,
+        "pe_p75":                 _f(pe_series_10y.quantile(0.75)) if not pe_series_10y.empty else None,
+        "pe_p90":                 _f(pe_series_10y.quantile(0.90)) if not pe_series_10y.empty else None,
+        "pe_p25_5yr":             _f(pe_series_5y.quantile(0.25))  if not pe_series_5y.empty  else None,
+        "pe_p75_5yr":             _f(pe_series_5y.quantile(0.75))  if not pe_series_5y.empty  else None,
         "months_available":       int(len(pe_series)),
         "pe_rolling_5yr_median":  _f(last.get("pe_rolling_5yr_median")),
         "current_pe":             _f(last.get("pe_ratio")),
@@ -988,8 +1014,10 @@ def compute_pe_stats(
     }
 
     # FCF
-    pfcf_series = monthly_pe["pfcf_ratio"].dropna() if "pfcf_ratio" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(pfcf_series, "pfcf"))
+    pfcf_series     = monthly_pe["pfcf_ratio"].dropna()     if "pfcf_ratio" in monthly_pe.columns     else pd.Series(dtype=float)
+    pfcf_series_10y = monthly_pe_10y["pfcf_ratio"].dropna() if "pfcf_ratio" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    pfcf_series_5y  = monthly_pe_5y["pfcf_ratio"].dropna()  if "pfcf_ratio" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(pfcf_series, "pfcf", pfcf_series_10y, pfcf_series_5y))
     result.update({
         "current_pfcf":            _f(last.get("pfcf_ratio")),
         "pfcf_rolling_5yr_median": _f(last.get("pfcf_rolling_5yr_median")),
@@ -1000,8 +1028,10 @@ def compute_pe_stats(
     })
 
     # EV/EBITDA
-    ev_series = monthly_pe["ev_ebitda"].dropna() if "ev_ebitda" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(ev_series, "evebitda"))
+    ev_series     = monthly_pe["ev_ebitda"].dropna()     if "ev_ebitda" in monthly_pe.columns     else pd.Series(dtype=float)
+    ev_series_10y = monthly_pe_10y["ev_ebitda"].dropna() if "ev_ebitda" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    ev_series_5y  = monthly_pe_5y["ev_ebitda"].dropna()  if "ev_ebitda" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(ev_series, "evebitda", ev_series_10y, ev_series_5y))
     result.update({
         "current_evebitda":            _f(last.get("ev_ebitda")),
         "evebitda_rolling_5yr_median": _f(last.get("ev_ebitda_rolling_5yr_median")),
@@ -1012,8 +1042,10 @@ def compute_pe_stats(
     })
 
     # P/S
-    ps_series = monthly_pe["ps_ratio"].dropna() if "ps_ratio" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(ps_series, "ps"))
+    ps_series     = monthly_pe["ps_ratio"].dropna()     if "ps_ratio" in monthly_pe.columns     else pd.Series(dtype=float)
+    ps_series_10y = monthly_pe_10y["ps_ratio"].dropna() if "ps_ratio" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    ps_series_5y  = monthly_pe_5y["ps_ratio"].dropna()  if "ps_ratio" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(ps_series, "ps", ps_series_10y, ps_series_5y))
     result.update({
         "current_ps":            _f(last.get("ps_ratio")),
         "ps_rolling_5yr_median": _f(last.get("ps_rolling_5yr_median")),
@@ -1021,40 +1053,50 @@ def compute_pe_stats(
     })
 
     # ROA
-    roa_series = monthly_pe["roa"].dropna() if "roa" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(roa_series, "roa"))
+    roa_series     = monthly_pe["roa"].dropna()     if "roa" in monthly_pe.columns     else pd.Series(dtype=float)
+    roa_series_10y = monthly_pe_10y["roa"].dropna() if "roa" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    roa_series_5y  = monthly_pe_5y["roa"].dropna()  if "roa" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(roa_series, "roa", roa_series_10y, roa_series_5y))
     result.update({
         "current_roa":            _f(last.get("roa")),
         "roa_rolling_5yr_median": _f(last.get("roa_rolling_5yr_median")),
     })
 
     # ROE
-    roe_series = monthly_pe["roe"].dropna() if "roe" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(roe_series, "roe"))
+    roe_series     = monthly_pe["roe"].dropna()     if "roe" in monthly_pe.columns     else pd.Series(dtype=float)
+    roe_series_10y = monthly_pe_10y["roe"].dropna() if "roe" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    roe_series_5y  = monthly_pe_5y["roe"].dropna()  if "roe" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(roe_series, "roe", roe_series_10y, roe_series_5y))
     result.update({
         "current_roe":            _f(last.get("roe")),
         "roe_rolling_5yr_median": _f(last.get("roe_rolling_5yr_median")),
     })
 
     # ROIC
-    roic_series = monthly_pe["roic"].dropna() if "roic" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(roic_series, "roic"))
+    roic_series     = monthly_pe["roic"].dropna()     if "roic" in monthly_pe.columns     else pd.Series(dtype=float)
+    roic_series_10y = monthly_pe_10y["roic"].dropna() if "roic" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    roic_series_5y  = monthly_pe_5y["roic"].dropna()  if "roic" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(roic_series, "roic", roic_series_10y, roic_series_5y))
     result.update({
         "current_roic":            _f(last.get("roic")),
         "roic_rolling_5yr_median": _f(last.get("roic_rolling_5yr_median")),
     })
 
     # P/BV
-    pbv_series = monthly_pe["pbv"].dropna() if "pbv" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(pbv_series, "pbv"))
+    pbv_series     = monthly_pe["pbv"].dropna()     if "pbv" in monthly_pe.columns     else pd.Series(dtype=float)
+    pbv_series_10y = monthly_pe_10y["pbv"].dropna() if "pbv" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    pbv_series_5y  = monthly_pe_5y["pbv"].dropna()  if "pbv" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(pbv_series, "pbv", pbv_series_10y, pbv_series_5y))
     result.update({
         "current_pbv":            _f(last.get("pbv")),
         "pbv_rolling_5yr_median": _f(last.get("pbv_rolling_5yr_median")),
     })
 
     # P/TBV
-    ptbv_series = monthly_pe["ptbv"].dropna() if "ptbv" in monthly_pe.columns else pd.Series(dtype=float)
-    result.update(_stats(ptbv_series, "ptbv"))
+    ptbv_series     = monthly_pe["ptbv"].dropna()     if "ptbv" in monthly_pe.columns     else pd.Series(dtype=float)
+    ptbv_series_10y = monthly_pe_10y["ptbv"].dropna() if "ptbv" in monthly_pe_10y.columns else pd.Series(dtype=float)
+    ptbv_series_5y  = monthly_pe_5y["ptbv"].dropna()  if "ptbv" in monthly_pe_5y.columns  else pd.Series(dtype=float)
+    result.update(_stats(ptbv_series, "ptbv", ptbv_series_10y, ptbv_series_5y))
     result.update({
         "current_ptbv":            _f(last.get("ptbv")),
         "ptbv_rolling_5yr_median": _f(last.get("ptbv_rolling_5yr_median")),

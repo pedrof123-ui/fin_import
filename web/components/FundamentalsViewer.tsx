@@ -519,14 +519,14 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
         <SectionHeading>Valuation Multiples</SectionHeading>
         <div className="overflow-x-auto rounded border border-white/[0.07]">
           <table className="w-full text-xs font-mono border-collapse">
-            <TableHeader cols={["Multiple", "Current", "Forward", "5yr Median", "LT Median", "Range P25–P75", "Signal"]} />
+            <TableHeader cols={["Multiple", "Current", "Forward", "5yr Median", "LT Median", "Range P25–P75 (5yr)", "Range P25–P75 (10yr)", "Signal"]} />
             <tbody>
               {[
-                { label: "P/E",       cur: data.current_pe,       fwd: data.forward_pe,       med5: data.pe_rolling_5yr_median,       medLt: data.pe_lt_median,       p25: data.pe_p25,       p75: data.pe_p75       },
-                { label: "EV/EBITDA", cur: data.current_evebitda, fwd: data.forward_evebitda, med5: data.evebitda_rolling_5yr_median, medLt: data.evebitda_lt_median, p25: data.evebitda_p25, p75: data.evebitda_p75 },
-                { label: "P/FCF",     cur: data.current_pfcf,     fwd: data.forward_pfcf,     med5: data.pfcf_rolling_5yr_median,     medLt: data.pfcf_lt_median,     p25: data.pfcf_p25,     p75: data.pfcf_p75     },
-                { label: "P/Sales",   cur: data.current_ps,       fwd: data.forward_ps,       med5: data.ps_rolling_5yr_median,       medLt: data.ps_lt_median,       p25: data.ps_p25,       p75: data.ps_p75       },
-                { label: "P/BV",      cur: data.current_pbv,      fwd: null,                  med5: data.pbv_rolling_5yr_median,      medLt: data.pbv_lt_median,      p25: null,              p75: null              },
+                { label: "P/E",       cur: data.current_pe,       fwd: data.forward_pe,       med5: data.pe_rolling_5yr_median,       medLt: data.pe_lt_median,       p25: data.pe_p25,       p75: data.pe_p75,       p25_5yr: data.pe_p25_5yr,       p75_5yr: data.pe_p75_5yr       },
+                { label: "EV/EBITDA", cur: data.current_evebitda, fwd: data.forward_evebitda, med5: data.evebitda_rolling_5yr_median, medLt: data.evebitda_lt_median, p25: data.evebitda_p25, p75: data.evebitda_p75, p25_5yr: data.evebitda_p25_5yr, p75_5yr: data.evebitda_p75_5yr },
+                { label: "P/FCF",     cur: data.current_pfcf,     fwd: data.forward_pfcf,     med5: data.pfcf_rolling_5yr_median,     medLt: data.pfcf_lt_median,     p25: data.pfcf_p25,     p75: data.pfcf_p75,     p25_5yr: data.pfcf_p25_5yr,     p75_5yr: data.pfcf_p75_5yr     },
+                { label: "P/Sales",   cur: data.current_ps,       fwd: data.forward_ps,       med5: data.ps_rolling_5yr_median,       medLt: data.ps_lt_median,       p25: data.ps_p25,       p75: data.ps_p75,       p25_5yr: data.ps_p25_5yr,       p75_5yr: data.ps_p75_5yr       },
+                { label: "P/BV",      cur: data.current_pbv,      fwd: null,                  med5: data.pbv_rolling_5yr_median,      medLt: data.pbv_lt_median,      p25: null,              p75: null,              p25_5yr: null,                  p75_5yr: null                  },
               ].map((r, i) => {
                 const sig = valSig(r.cur, r.med5);
                 const bg  = i % 2 === 0 ? "oklch(0.09 0.006 265)" : "oklch(0.105 0.008 265)";
@@ -537,6 +537,9 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
                     <td className="px-4 py-2 text-right tabular-nums text-zinc-400">{fmtX(r.fwd)}</td>
                     <td className="px-4 py-2 text-right tabular-nums text-zinc-400">{fmtX(r.med5)}</td>
                     <td className="px-4 py-2 text-right tabular-nums text-zinc-500">{fmtX(r.medLt)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-zinc-500 text-[10px]">
+                      {r.p25_5yr != null && r.p75_5yr != null ? `${fmtX(r.p25_5yr, 0)} – ${fmtX(r.p75_5yr, 0)}` : "—"}
+                    </td>
                     <td className="px-4 py-2 text-right tabular-nums text-zinc-600 text-[10px]">
                       {r.p25 != null && r.p75 != null ? `${fmtX(r.p25, 0)} – ${fmtX(r.p75, 0)}` : "—"}
                     </td>

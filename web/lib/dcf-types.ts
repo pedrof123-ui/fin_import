@@ -211,6 +211,8 @@ export interface FundamentalsData {
   pe_lt_median: number | null;
   pe_p25: number | null;
   pe_p75: number | null;
+  pe_p25_5yr: number | null;
+  pe_p75_5yr: number | null;
   pe_rolling_5yr_median: number | null;
 
   current_pfcf: number | null;
@@ -218,6 +220,8 @@ export interface FundamentalsData {
   pfcf_lt_median: number | null;
   pfcf_p25: number | null;
   pfcf_p75: number | null;
+  pfcf_p25_5yr: number | null;
+  pfcf_p75_5yr: number | null;
   pfcf_rolling_5yr_median: number | null;
 
   current_evebitda: number | null;
@@ -225,6 +229,8 @@ export interface FundamentalsData {
   evebitda_lt_median: number | null;
   evebitda_p25: number | null;
   evebitda_p75: number | null;
+  evebitda_p25_5yr: number | null;
+  evebitda_p75_5yr: number | null;
   evebitda_rolling_5yr_median: number | null;
 
   current_ps: number | null;
@@ -232,6 +238,8 @@ export interface FundamentalsData {
   ps_lt_median: number | null;
   ps_p25: number | null;
   ps_p75: number | null;
+  ps_p25_5yr: number | null;
+  ps_p75_5yr: number | null;
   ps_rolling_5yr_median: number | null;
 
   current_pbv: number | null;

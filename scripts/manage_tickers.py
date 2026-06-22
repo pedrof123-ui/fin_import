@@ -102,7 +102,7 @@ sys.path.insert(0, str(ROOT))
 
 from av_financials_db import DEFAULT_DB_PATH as AV_DB_PATH, AVFinancialsDB, RateLimiter  # noqa: E402
 from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB_PATH, HistoricFundamentalsDB  # noqa: E402
-from historic_fundamentals.pe import process_ticker, enrich_goals, extract_goal_stats  # noqa: E402
+from historic_fundamentals.pe import process_ticker, enrich_goals, extract_goal_stats, compute_pe_stats  # noqa: E402
 from historic_fundamentals.estimates import (  # noqa: E402
     fetch_estimates,
     normalize_estimates,
@@ -621,6 +621,52 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
 # delete command
 # ---------------------------------------------------------------------------
 
+def cmd_refresh_stats(args: argparse.Namespace) -> int:
+    """Recompute pe_stats for all tickers from the existing monthly_pe table (no API calls)."""
+    hf_db_path = os.getenv("HF_DB_PATH") or HF_DB_PATH
+    hf_db = HistoricFundamentalsDB(hf_db_path)
+
+    if args.ticker:
+        tickers = [t.upper() for t in args.ticker]
+    else:
+        tickers = [r[0] for r in hf_db.conn.execute(
+            "SELECT DISTINCT ticker FROM monthly_pe ORDER BY ticker"
+        ).fetchall()]
+
+    log.info("Refreshing pe_stats for %d tickers", len(tickers))
+    ok = failed = 0
+
+    for i, ticker in enumerate(tickers, 1):
+        try:
+            monthly_pe = hf_db.conn.execute(
+                "SELECT * FROM monthly_pe WHERE ticker = ? ORDER BY month_end_date",
+                [ticker],
+            ).df()
+
+            if monthly_pe.empty:
+                log.warning("[%d/%d] %s — no monthly_pe rows, skipping", i, len(tickers), ticker)
+                failed += 1
+                continue
+
+            stats = compute_pe_stats(ticker, monthly_pe)
+            if stats is None:
+                log.warning("[%d/%d] %s — compute_pe_stats returned None", i, len(tickers), ticker)
+                failed += 1
+                continue
+
+            hf_db.upsert_pe_stats(stats)
+            ok += 1
+            if i % 100 == 0 or args.verbose:
+                log.info("[%d/%d] %s — done", i, len(tickers), ticker)
+        except Exception as exc:
+            log.error("[%d/%d] %s — %s", i, len(tickers), ticker, exc)
+            failed += 1
+
+    hf_db.close()
+    log.info("refresh-stats complete: %d ok, %d failed", ok, failed)
+    return 0 if failed == 0 else 1
+
+
 def cmd_delete(args: argparse.Namespace, tickers: list[str]) -> int:
     prices_db_path = os.getenv("PRICES_DB_PATH")
     if not prices_db_path:
@@ -733,6 +779,14 @@ def parse_args() -> argparse.Namespace:
     del_p.add_argument("--dry-run", action="store_true", help="Print plan without modifying any database")
     del_p.add_argument("--verbose", action="store_true", help="Show DEBUG-level output")
 
+    # -- refresh-stats subcommand
+    rs_p = sub.add_parser(
+        "refresh-stats",
+        help="Recompute pe_stats for all tickers from existing monthly_pe data (no API calls)",
+    )
+    rs_p.add_argument("--ticker", nargs="*", metavar="TICKER", help="Limit to specific tickers")
+    rs_p.add_argument("--verbose", action="store_true", help="Show per-ticker progress")
+
     return parser.parse_args()
 
 
@@ -745,6 +799,9 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    if args.command == "refresh-stats":
+        return cmd_refresh_stats(args)
 
     if args.csv:
         tickers = _tickers_from_csv(args.csv)
