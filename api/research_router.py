@@ -551,13 +551,16 @@ def get_edgar_risks(ticker: str) -> str:
 
 
 def get_earnings_summary(ticker: str) -> str:
-    """Fetch earnings transcript synchronously — safe from thread pool executor."""
+    """Fetch the latest earnings transcript synchronously — safe from thread pool executor.
+
+    Always probes AV for quarters newer than the local cache, mirroring the logic in
+    earnings_router.py so the research report reflects the most recent available call.
+    """
     ticker = ticker.upper()
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not api_key:
-        return "[ERROR] ALPHA_VANTAGE_API_KEY not configured"
 
-    # Check earnings_transcripts.duckdb cache first
+    # Determine the most recently cached quarter (if any)
+    best_cached: Optional[tuple[str, str]] = None  # (quarter, transcript_text)
     if _EARNINGS_DB.exists():
         try:
             conn = duckdb.connect(str(_EARNINGS_DB), read_only=True)
@@ -568,22 +571,33 @@ def get_earnings_summary(ticker: str) -> str:
             ).fetchone()
             conn.close()
             if row:
-                quarter, transcript = row[0], row[1]
-                return f"EARNINGS TRANSCRIPT — {ticker} {quarter}\n\n{transcript[:4000]}"
+                best_cached = (row[0], row[1])
         except Exception:
             pass
 
-    # Cache miss — probe quarters from AV
-    today = date.today()
-    year = today.year
-    quarters_to_try = [
-        f"{y}Q{q}"
-        for y in [year + 1, year, year - 1]
-        for q in [4, 3, 2, 1]
-    ]
+    best_quarter = best_cached[0] if best_cached else None
 
-    try:
-        for q_str in quarters_to_try:
+    if not api_key:
+        # No AV key — return whatever is cached, or error
+        if best_cached:
+            q, txt = best_cached
+            return f"EARNINGS TRANSCRIPT — {ticker} {q}\n\n{txt[:4000]}"
+        return "[ERROR] ALPHA_VANTAGE_API_KEY not configured and no cached transcript available"
+
+    # Build probe list (newest first), only quarters strictly newer than the cache
+    today = date.today()
+    # Use the same smarter quarter list as earnings_router: 4 ahead → 6 behind today's
+    # calendar quarter. Reduces wasted AV calls from 7+ to ≤3 for typical companies.
+    base = today.year * 4 + (today.month - 1) // 3
+    all_quarters = []
+    for offset in range(4, -7, -1):
+        total = base + offset
+        y, q = divmod(total, 4)
+        all_quarters.append(f"{y}Q{q + 1}")
+    to_probe = [q for q in all_quarters if q > best_quarter] if best_quarter else all_quarters
+
+    def _fetch_av(q_str: str) -> Optional[str]:
+        try:
             resp = requests.get(
                 "https://www.alphavantage.co/query",
                 params={
@@ -597,23 +611,70 @@ def get_earnings_summary(ticker: str) -> str:
             resp.raise_for_status()
             data = resp.json()
             if any(k in data for k in ("Error Message", "Note", "Information")):
-                continue
+                return None
             if not data.get("transcript"):
-                continue
+                return None
             parts = []
             for entry in data["transcript"]:
                 speaker = entry.get("speaker", "Unknown")
-                title = entry.get("title", "")
+                title   = entry.get("title", "")
                 content = entry.get("content", "")
-                header = f"## {speaker}"
+                header  = f"## {speaker}"
                 if title:
                     header += f"\n**{title}**"
                 parts.append(f"{header}\n\n{content}")
             transcript = "\n\n---\n\n".join(parts)
+            # Persist to the shared cache so the Earnings tab benefits too
+            try:
+                _EARNINGS_DB.parent.mkdir(parents=True, exist_ok=True)
+                wconn = duckdb.connect(str(_EARNINGS_DB))
+                wconn.execute("""
+                    CREATE TABLE IF NOT EXISTS earnings_transcripts (
+                        symbol VARCHAR NOT NULL, quarter VARCHAR NOT NULL,
+                        transcript_text TEXT NOT NULL, fetched_date DATE NOT NULL,
+                        api_response_json TEXT, source VARCHAR DEFAULT 'av',
+                        earnings_call_date DATE,
+                        PRIMARY KEY (symbol, quarter)
+                    )
+                """)
+                cols = [r[0] for r in wconn.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'earnings_transcripts'"
+                ).fetchall()]
+                if "source" not in cols:
+                    wconn.execute("ALTER TABLE earnings_transcripts ADD COLUMN source VARCHAR DEFAULT 'av'")
+                if "earnings_call_date" not in cols:
+                    wconn.execute("ALTER TABLE earnings_transcripts ADD COLUMN earnings_call_date DATE")
+                wconn.execute("""
+                    INSERT INTO earnings_transcripts
+                        (symbol, quarter, transcript_text, fetched_date, api_response_json, source, earnings_call_date)
+                    VALUES (?, ?, ?, ?, ?, 'av', NULL)
+                    ON CONFLICT (symbol, quarter) DO UPDATE SET
+                        transcript_text    = EXCLUDED.transcript_text,
+                        fetched_date       = EXCLUDED.fetched_date,
+                        api_response_json  = EXCLUDED.api_response_json,
+                        source             = 'av',
+                        earnings_call_date = EXCLUDED.earnings_call_date
+                """, [ticker, q_str, transcript, date.today(), json.dumps(data)])
+                wconn.commit()
+                wconn.close()
+            except Exception:
+                pass
+            return transcript
+        except Exception:
+            return None
+
+    for q_str in to_probe:
+        transcript = _fetch_av(q_str)
+        if transcript is not None:
             return f"EARNINGS TRANSCRIPT — {ticker} {q_str}\n\n{transcript[:4000]}"
-        return f"[ERROR] No earnings transcript found for {ticker}"
-    except Exception as e:
-        return f"[ERROR] Earnings summary unavailable for {ticker}: {e}"
+
+    # Nothing newer on AV — fall back to cached
+    if best_cached:
+        q, txt = best_cached
+        return f"EARNINGS TRANSCRIPT — {ticker} {q}\n\n{txt[:4000]}"
+
+    return f"[ERROR] No earnings transcript found for {ticker}"
 
 
 def get_web_search(ticker: str) -> str:
