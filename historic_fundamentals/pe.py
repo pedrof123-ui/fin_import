@@ -1119,6 +1119,15 @@ def compute_pe_stats(
         "interest_coverage":         _f(last.get("interest_coverage")),
     })
 
+    # TTM-based 1yr growth rates — computed in build_monthly_pe from shift(12) of TTM series.
+    # process_ticker() overwrites these with annual-based values from compute_revenue_stats etc.;
+    # refresh-stats uses only monthly_pe so these are the only source available there.
+    result.update({
+        "rev_growth_1yr":  _f(last.get("rev_growth_1yr")),
+        "earn_growth_1yr": _f(last.get("earn_growth_1yr")),
+        "fcf_growth_1yr":  _f(last.get("fcf_growth_1yr")),
+    })
+
     # Goal prices — pre-computed by enrich_goals() and stored in monthly_pe columns
     result.update({k: _f(last.get(k)) for k in (
         "goal_pe", "goal_pcf", "goal_peg", "goal_bv", "goal_2x", "goal_low", "goal_high"
