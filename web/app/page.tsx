@@ -8,12 +8,15 @@ import AvDcfViewer from "@/components/AvDcfViewer";
 import FundamentalsViewer from "@/components/FundamentalsViewer";
 import EquityResearchViewer from "@/components/EquityResearchViewer";
 import EarningsSummaryViewer from "@/components/EarningsSummaryViewer";
+import EarningsCalendarViewer from "@/components/EarningsCalendarViewer";
 import ScreenerViewer from "@/components/ScreenerViewer";
+import SectorViewer from "@/components/SectorViewer";
+import EstimatesViewer from "@/components/EstimatesViewer";
 import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "screener" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings";
+type Tab = "screener" | "sector" | "calendar" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings" | "estimates";
 
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
@@ -152,18 +155,24 @@ export default function Home() {
 
   const tabs: Tab[] = [
     "screener",
+    "sector",
+    "calendar",
     "av_financials",
     "av_dcf",
     "fundamentals",
+    "estimates",
     "research",
     "earnings",
     ...(xbrlLoaded ? (["financials"] as Tab[]) : []),
   ];
   const TAB_LABELS: Record<Tab, string> = {
     screener: "Screener",
+    sector: "Sector",
+    calendar: "Calendar",
     av_financials: "AV Data",
     av_dcf: "AV DCF",
     fundamentals: "Fundamentals",
+    estimates: "Estimates",
     research: "AI Research",
     earnings: "Earnings",
     financials: "XBRL",
@@ -210,18 +219,12 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Content */}
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-5">
-        {/* Error bar */}
-        {error && (
-          <div className="mb-3 flex items-center gap-2 text-xs font-mono px-3 py-2 rounded border border-rose-900/50 bg-rose-950/20 text-rose-400">
-            <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-rose-500" />
-            {error}
-          </div>
-        )}
-
-        {/* Tab bar — always shown */}
-        <div className="flex items-center gap-1 mb-5">
+      {/* Tab bar — sticky below header */}
+      <div
+        className="sticky top-[57px] z-10 border-b border-white/[0.07] backdrop-blur-md"
+        style={{ background: "oklch(0.08 0.008 265 / 85%)" }}
+      >
+        <div className="max-w-[1600px] mx-auto px-6 py-2 flex items-center gap-1">
           {tabs.map((tab) => (
             <button
               key={tab}
@@ -236,10 +239,31 @@ export default function Home() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Content */}
+      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-5">
+        {/* Error bar */}
+        {error && (
+          <div className="mb-3 flex items-center gap-2 text-xs font-mono px-3 py-2 rounded border border-rose-900/50 bg-rose-950/20 text-rose-400">
+            <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-rose-500" />
+            {error}
+          </div>
+        )}
 
         {/* Screener tab — always rendered */}
         <div className={activeTab === "screener" ? undefined : "hidden"}>
           <ScreenerViewer onSelectTicker={handleScreenerSelectTicker} />
+        </div>
+
+        {/* Sector dashboard — always rendered */}
+        <div className={activeTab === "sector" ? undefined : "hidden"}>
+          <SectorViewer onSelectTicker={handleScreenerSelectTicker} />
+        </div>
+
+        {/* Earnings calendar — always rendered */}
+        <div className={activeTab === "calendar" ? undefined : "hidden"}>
+          <EarningsCalendarViewer onSelectTicker={handleScreenerSelectTicker} />
         </div>
 
         {/* All ticker-specific tab panels */}
@@ -253,6 +277,9 @@ export default function Home() {
             </div>
             <div className={activeTab === "fundamentals" ? undefined : "hidden"}>
               <FundamentalsViewer ticker={loadedTicker} />
+            </div>
+            <div className={activeTab === "estimates" ? undefined : "hidden"}>
+              <EstimatesViewer ticker={loadedTicker} />
             </div>
             <div className={activeTab === "research" ? undefined : "hidden"}>
               <EquityResearchViewer ticker={loadedTicker} />
@@ -278,8 +305,8 @@ export default function Home() {
           </>
         )}
 
-        {/* Empty state — only when no ticker and not on screener */}
-        {!loadedTicker && !error && activeTab !== "screener" && (
+        {/* Empty state — only when no ticker and not on screener/sector */}
+        {!loadedTicker && !error && activeTab !== "screener" && activeTab !== "sector" && activeTab !== "calendar" && (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
               No data loaded

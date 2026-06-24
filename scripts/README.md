@@ -307,6 +307,30 @@ Required: `ALPHA_VANTAGE_API_KEY`.
 
 ---
 
+## earnings_calendar_update.py
+
+Weekly refresh of the Earnings Calendar for all tracked tickers. Fetches the AV
+`EARNINGS_CALENDAR` endpoint (3-month horizon, single API call), filters to symbols
+present in `av_financials.duckdb`, and upserts into the `earnings_calendar` table.
+Entries with `report_date` older than 30 days are purged each run.
+
+```bash
+uv run scripts/earnings_calendar_update.py
+uv run scripts/earnings_calendar_update.py --verbose
+uv run scripts/earnings_calendar_update.py --db PATH
+```
+
+Rate: 1 AV API call per run. Results appear in the Calendar tab of FinView.
+
+Cron (weekly, Monday 6 AM — run alongside `earnings_update.py`):
+```
+0 6 * * 1 cd /home/pedro/projects/fin_import2 && uv run scripts/earnings_calendar_update.py >> logs/earnings_calendar.log 2>&1
+```
+
+Required: `ALPHA_VANTAGE_API_KEY`.
+
+---
+
 ## earnings_update.py
 
 Weekly update: check the latest 1–2 quarters per ticker for new earnings call transcripts. Intended to run once per week (e.g. Sunday night via cron). Skips quarters already cached.

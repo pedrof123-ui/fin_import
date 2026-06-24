@@ -1,182 +1,139 @@
-# Earnings Call Transcript Database — Implementation Plan
+# Earnings Calendar Feature Plan
 
-## Overview
+## Goal
 
-Populate and maintain `data/earnings_transcripts.duckdb` with earnings call transcripts
-for all tickers in `av_financials.duckdb`, sourced from the Alpha Vantage
-`EARNINGS_CALL_TRANSCRIPT` API.
+Add an Earnings Calendar tab to FinView showing upcoming earnings releases for all
+tickers tracked in av_financials.duckdb. Data is sourced from the AV
+`EARNINGS_CALENDAR` API endpoint (3-month horizon, CSV response).
 
-**Scope agreed:**
-- Ticker universe: all ~2,655 tickers in `av_financials.duckdb`
-- History depth: latest 4 quarters per ticker (backfill)
-- Weekly update: check latest 1-2 quarters for all tickers
-- `earnings_call_date`: add as nullable column (AV does not return this field)
+## Decisions
 
----
-
-## Phase 1: Schema Enhancement
-
-**Files:** `api/earnings_router.py`, `api/research_router.py`
-
-### Steps
-
-1. Add `earnings_call_date DATE` (nullable) to `CREATE TABLE IF NOT EXISTS` in
-   `earnings_router._open_db()`.
-2. Add the corresponding `ADD COLUMN` migration guard (same pattern as existing
-   `source` column migration).
-3. Update `_save_transcript()` signature to accept `earnings_call_date: Optional[date] = None`
-   and include it in the `INSERT ... ON CONFLICT DO UPDATE`.
-4. Mirror the same schema change + migration guard in `research_router.py`'s inline
-   `CREATE TABLE IF NOT EXISTS` block (lines ~631–644).
-
-**Test:** Run `uv run python3 -c "from api.earnings_router import _open_db; c = _open_db(); print(c.execute('DESCRIBE earnings_transcripts').fetchall()); c.close()"` and confirm `earnings_call_date` column appears.
-
-**Status:** [x] Complete
+- **Horizon**: 3 months fixed
+- **Tab**: Standalone (always visible, like Screener/Sector)
+- **Update frequency**: Weekly (alongside `earnings_update.py`)
+- **Storage**: `av_financials.duckdb` — new `earnings_calendar` table
 
 ---
 
-## Phase 2: Shared Transcript Helper Module
+## Phase 1: Database Table + Download Script
 
-**Files:** `historic_fundamentals/earnings_transcripts.py` (new)
+**Goal**: Create the schema and a runnable script that populates it.
 
-Extract the AV fetch + DB write logic into a shared module so both the backfill
-script and weekly update script can reuse it without duplicating code.
+### 1.1 — Add `earnings_calendar` table to av_financials.duckdb
 
-### Steps
+Schema (create-if-not-exists, upsert on `(symbol, report_date)`):
 
-1. Create `historic_fundamentals/earnings_transcripts.py` with:
-   - `open_db(db_path) -> duckdb.DuckDBPyConnection` — opens DB with full schema
-     (same as `_open_db()` in earnings_router, including migration guards)
-   - `get_latest_cached_quarter(conn, symbol) -> Optional[str]`
-   - `is_cached(conn, symbol, quarter) -> bool`
-   - `save_transcript(conn, symbol, quarter, transcript_text, api_json, source, earnings_call_date)` — upsert
-   - `fetch_from_av(symbol, quarter, api_key) -> Optional[str]` — returns transcript
-     text or `None` (no raise on 404/missing); also returns raw `api_json`
-   - `fiscal_date_to_quarters(latest_fiscal_date, today, n_quarters) -> list[str]` —
-     converts the ticker's latest `fiscal_date_ending` to an ordered list of calendar
-     quarter strings to probe, applying the 60-day lookahead rule
-
-2. Update `api/earnings_router.py` to import and use this module (replace duplicated
-   code). `_fetch_from_av()` can wrap the helper; `_open_db()` can delegate to it.
-
-3. Update `api/research_router.py` `get_earnings_summary()` to use the shared module
-   for schema creation and save, removing ~25 lines of duplicated code.
-
-**Test:** `uv run python3 -c "from historic_fundamentals.earnings_transcripts import fiscal_date_to_quarters; from datetime import date; print(fiscal_date_to_quarters(date(2026,3,31), date(2026,6,22), 4))"` should return `['2026Q2', '2026Q1', '2025Q4', '2025Q3']`.
-
-**Status:** [x] Complete
-
----
-
-## Phase 3: Backfill Script
-
-**File:** `scripts/earnings_backfill.py`
-
-One-time script: fetch the latest 4 quarters of earnings call transcripts for all
-tickers in `av_financials.duckdb`. Resume-safe (skips already-cached entries).
-
-### Steps
-
-1. Create `scripts/earnings_backfill.py`:
-   - Load all tickers from `av_financials.duckdb` (`SELECT DISTINCT ticker FROM income_statements`)
-   - For each ticker, get `MAX(fiscal_date_ending)` where `period_type = 'quarterly'`
-   - Call `fiscal_date_to_quarters(latest_fiscal_date, today, n=4)` to get the 4 quarters to attempt
-   - For each quarter, skip if `is_cached(conn, symbol, quarter)`
-   - Fetch via `fetch_from_av()`, save via `save_transcript()`
-   - Rate-limit at 75 calls/min using `RateLimiter` from `av_financials_db.py`
-   - Progress bar via `tqdm`; print summary (fetched, skipped, not_found, errors) at end
-   - `--ticker TICKER` flag for single-ticker runs
-   - `--dry-run` flag that prints what would be fetched without making API calls
-
-**Rate estimate:** 2,655 tickers × up to 4 calls = up to 10,620 calls → ~142 min at 75/min.
-In practice much faster: most "not found" responses return quickly and many recent
-quarters will already be in the DB.
-
-**Usage:**
-```
-uv run scripts/earnings_backfill.py
-uv run scripts/earnings_backfill.py --ticker AAPL
-uv run scripts/earnings_backfill.py --dry-run
+```sql
+CREATE TABLE IF NOT EXISTS earnings_calendar (
+    symbol             VARCHAR  NOT NULL,
+    name               VARCHAR,
+    report_date        DATE     NOT NULL,
+    fiscal_date_ending DATE,
+    estimate           DOUBLE,
+    currency           VARCHAR,
+    fetched_at         TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (symbol, report_date)
+);
 ```
 
-**Test:** Run `uv run scripts/earnings_backfill.py --ticker AAPL` and verify AAPL has
-up to 4 quarters in the DB after completion.
+### 1.2 — Script `scripts/earnings_calendar_update.py`
 
-**Status:** [x] Complete
+- Fetch `EARNINGS_CALENDAR&horizon=3month` from AV API — response is a CSV stream
+- Parse CSV in-memory (no file written to disk)
+- Filter rows to symbols present in `companies` table of av_financials.duckdb
+- Upsert into `earnings_calendar` (INSERT OR REPLACE)
+- Purge rows where `report_date < today() - INTERVAL 30 DAYS` (keep a 30-day lookback)
+- Obey 75-call/min rate limit (this is a single API call, no loop needed)
+- CLI: `uv run scripts/earnings_calendar_update.py [--verbose]`
+
+**Testable**: Run the script and verify rows appear in the table via a quick
+`SELECT COUNT(*), MIN(report_date), MAX(report_date) FROM earnings_calendar`.
+
+### Status: [x] Complete
 
 ---
 
-## Phase 4: Weekly Update Script
+## Phase 2: API Endpoint
 
-**File:** `scripts/earnings_update.py`
+**Goal**: Expose the calendar data via FastAPI.
 
-Weekly script: for each ticker in `av_financials.duckdb`, check if there is a newer
-transcript than what is currently cached (1–2 AV calls per ticker).
+### 2.1 — `api/earnings_calendar_router.py`
 
-### Steps
-
-1. Create `scripts/earnings_update.py`:
-   - Load all tickers + their `MAX(fiscal_date_ending)` from `av_financials.duckdb`
-   - For each ticker, call `fiscal_date_to_quarters(latest_fiscal_date, today, n=2)`
-     to get the 1–2 quarters most likely to be new
-   - For each quarter, skip if `is_cached(conn, symbol, quarter)`
-   - Fetch, save, rate-limit (same pattern as backfill)
-   - Print summary: checked, new_fetched, already_cached, not_found, errors
-   - `--ticker TICKER` flag for single-ticker runs
-
-**Rate estimate:** 2,655 tickers × up to 2 calls = up to 5,310 calls → ~71 min worst
-case, typically much less (most quarters already cached).
-
-**Usage:**
 ```
-uv run scripts/earnings_update.py
-uv run scripts/earnings_update.py --ticker MSFT
+GET /earnings-calendar
 ```
 
-**Test:** Run `uv run scripts/earnings_update.py --ticker MSFT` and confirm the latest
-quarter is in the DB.
+Returns JSON list sorted by `report_date ASC`:
 
-**Status:** [x] Complete
+```json
+[
+  {
+    "symbol": "AAPL",
+    "name": "Apple Inc",
+    "sector": "Technology",
+    "report_date": "2026-07-31",
+    "fiscal_date_ending": "2026-06-30",
+    "estimate": 1.43,
+    "currency": "USD",
+    "status": "upcoming"   // "upcoming" | "reported"
+  }
+]
+```
 
----
+- `status` derived at query time: `"reported"` if `report_date < today()`, else `"upcoming"`
+- JOIN with `company_overview` (latest row per ticker) for `name` and `sector`
+- Only return rows where `report_date >= today() - INTERVAL 30 DAYS`
 
-## Phase 5: On-demand Fetch Alignment
+### 2.2 — Register router in `api/main.py`
 
-**File:** `api/earnings_router.py`
+Import and `app.include_router(earnings_calendar_router)`.
 
-Ensure the on-demand flow (Finview Earnings Summary tab) properly uses the shared
-helper from Phase 2 and passes `earnings_call_date=None` to align with the updated
-schema. No functional change to user-facing behavior — this phase cleans up the
-router after the Phase 2 refactor.
+**Testable**: `curl http://localhost:8000/earnings-calendar` returns a valid JSON array.
 
-### Steps
-
-1. Verify `earnings_router.py` after Phase 2 refactor: confirm `_save_transcript()`,
-   `_fetch_from_av()`, `_open_db()` all delegate to `historic_fundamentals.earnings_transcripts`.
-2. Remove any remaining duplicated schema creation code.
-
-**Test:** Make a request to `/earnings/report?ticker=AAPL&quarter=latest` and confirm
-the response is generated and the transcript is in the DB with `earnings_call_date = NULL`.
-
-**Status:** [x] Complete
-
----
-
-## Implementation Order
-
-1. Phase 1 (Schema) — prerequisite for all phases
-2. Phase 2 (Shared module) — prerequisite for 3, 4, 5
-3. Phase 3 (Backfill) and Phase 4 (Weekly update) — can be done in parallel after Phase 2
-4. Phase 5 (Router alignment) — after Phase 2
+### Status: [x] Complete
 
 ---
 
-## Notes
+## Phase 3: Frontend Component + Tab Wiring
 
-- AV rate limit is 75 calls/min. Both scripts use `RateLimiter` from `av_financials_db.py`.
-- The backfill is idempotent: re-running skips already-cached (symbol, quarter) pairs.
-- The weekly update script is meant to run as a scheduled task (e.g., cron on Sunday night).
-- `earnings_call_date` will be NULL for all AV-sourced transcripts until AV adds it to
-  their API response. The column is kept for future use and potential manual updates.
-- Quarter format used throughout: `YYYYQN` (e.g., `2026Q2`), matching calendar quarters
-  derived from `fiscal_date_ending` via `(month - 1) // 3 + 1`.
+**Goal**: Display the calendar as a new standalone tab.
+
+### 3.1 — `web/components/EarningsCalendarViewer.tsx`
+
+- Table grouped by week (Mon–Sun) with a subtle week-header row
+- Columns: Symbol, Company, Sector, Report Date, Fiscal Period End, EPS Estimate
+- "Upcoming" rows normal; "Reported" rows dimmed (opacity-40 or similar)
+- Show count of upcoming events in a header line
+- Refresh button (re-fetches from API)
+- Empty state if no data: hint to run `uv run scripts/earnings_calendar_update.py`
+
+### 3.2 — Wire tab in `web/app/page.tsx`
+
+- Add `"earnings_calendar"` to the `Tab` type union
+- Add to `tabs` array (always visible, between `sector` and `av_financials`)
+- Label: `"Calendar"`
+- Import and render `<EarningsCalendarViewer />`
+
+**Testable**: Tab appears in FinView, clicking it renders the table with real data.
+
+### Status: [x] Complete
+
+---
+
+## Phase 4: Integration + Documentation
+
+### 4.1 — Add to `scripts/README.md`
+
+Document `earnings_calendar_update.py` with usage and scheduling note
+(run weekly alongside `earnings_update.py`).
+
+### Status: [x] Complete
+
+---
+
+## Test Plan (end-to-end)
+
+1. `uv run scripts/earnings_calendar_update.py --verbose` — no errors, rows in DB
+2. `uv run uvicorn api.main:app --reload` — `GET /earnings-calendar` returns data
+3. `cd web && npm run dev` — Calendar tab visible, table renders correctly
+4. Re-run script a second time — no duplicate rows, old rows purged
