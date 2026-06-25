@@ -5,6 +5,7 @@ Transcripts are fetched from Alpha Vantage or imported from a URL and cached in 
 Summaries are generated via OpenRouter using the openai-agents SDK.
 """
 
+import asyncio
 import io
 import os
 import re
@@ -24,6 +25,7 @@ from historic_fundamentals.earnings_transcripts import (
     save_transcript,
     fetch_from_av as _av_fetch,
 )
+from historic_fundamentals.audio_transcriber import convert_to_mp3, transcribe_audio
 
 router = APIRouter()
 
@@ -39,6 +41,8 @@ _DB_PATH = Path(os.environ.get(
     "EARNINGS_DB_PATH",
     str(Path(__file__).parent.parent / "data" / "earnings_transcripts.duckdb"),
 ))
+
+_AUDIO_DIR = Path(__file__).parent.parent / "data" / "earnings_calls_audio"
 
 _SUMMARY_TEMPLATE = """
 You are an equity financial analyst assistant.
@@ -248,6 +252,49 @@ async def import_transcript_from_url(
     transcript = _extract_from_url(url)
     conn = open_db(_DB_PATH)
     save_transcript(conn, ticker, quarter, transcript, api_json=None, source="url")
+    conn.close()
+
+    return await _run_llm(transcript, ticker, quarter, model)
+
+
+@router.post("/earnings/import-audio")
+async def import_transcript_from_audio(
+    ticker: str,
+    quarter: str,
+    filename: str,
+    model: str = OPENROUTER_MODELS[0],
+):
+    ticker = ticker.upper()
+
+    if not re.match(r"^\d{4}Q[1-4]$", quarter):
+        raise HTTPException(
+            status_code=400,
+            detail="Quarter must be in YYYYQN format (e.g. 2025Q1)",
+        )
+
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="filename must not contain path separators")
+
+    audio_path = _AUDIO_DIR / filename
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail=f"{filename} not found in audio directory")
+
+    existing_source = _get_cached_source(ticker, quarter)
+    if existing_source == "av":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Transcript for {ticker} {quarter} already exists from Alpha Vantage. Use 'Go' to generate a report.",
+        )
+
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not configured")
+
+    mp3_path = await asyncio.to_thread(convert_to_mp3, audio_path, _AUDIO_DIR)
+    transcript = await asyncio.to_thread(transcribe_audio, mp3_path, openrouter_key)
+
+    conn = open_db(_DB_PATH)
+    save_transcript(conn, ticker, quarter, transcript, api_json=None, source="audio")
     conn.close()
 
     return await _run_llm(transcript, ticker, quarter, model)

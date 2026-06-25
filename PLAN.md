@@ -1,139 +1,66 @@
-# Earnings Calendar Feature Plan
+# PLAN: Earnings Call Audio Transcription
 
-## Goal
+## Overview
 
-Add an Earnings Calendar tab to FinView showing upcoming earnings releases for all
-tickers tracked in av_financials.duckdb. Data is sourced from the AV
-`EARNINGS_CALENDAR` API endpoint (3-month horizon, CSV response).
+Add an "Import Audio" workflow to the Earnings Summary feature in Finview. The user places an mp4 (or mp3) file in `data/earnings_calls_audio/`, then enters the filename, ticker, and quarter in the UI. The backend converts to mp3, chunks if > 25MB, transcribes via OpenRouter Whisper, saves to `earnings_transcripts.duckdb`, and returns an LLM-generated summary.
 
-## Decisions
-
-- **Horizon**: 3 months fixed
-- **Tab**: Standalone (always visible, like Screener/Sector)
-- **Update frequency**: Weekly (alongside `earnings_update.py`)
-- **Storage**: `av_financials.duckdb` — new `earnings_calendar` table
+**API model**: `openai/whisper-large-v3-turbo` via OpenRouter  
+**Transcription source tag**: `'audio'` (alongside existing `'av'` and `'url'`)
 
 ---
 
-## Phase 1: Database Table + Download Script
+## Phase 1: Audio Transcription Module [Complete]
 
-**Goal**: Create the schema and a runnable script that populates it.
+**File**: `historic_fundamentals/audio_transcriber.py` (new)
 
-### 1.1 — Add `earnings_calendar` table to av_financials.duckdb
+**Goal**: Self-contained module for mp4→mp3 conversion, chunking, and Whisper transcription. No FastAPI dependency — fully testable in isolation.
 
-Schema (create-if-not-exists, upsert on `(symbol, report_date)`):
+**Steps**:
+- [x] 1.1 Implement `convert_to_mp3(src: Path, out_dir: Path) -> Path`
+- [x] 1.2 Implement `get_duration_seconds(mp3: Path) -> float`
+- [x] 1.3 Implement `chunk_mp3(mp3: Path, chunk_dir: Path, max_mb: float = 24.0) -> list[Path]`
+- [x] 1.4 Implement `transcribe_chunk(chunk: Path, api_key: str, session: requests.Session) -> str`
+- [x] 1.5 Implement `transcribe_audio(mp3: Path, api_key: str) -> str`
 
-```sql
-CREATE TABLE IF NOT EXISTS earnings_calendar (
-    symbol             VARCHAR  NOT NULL,
-    name               VARCHAR,
-    report_date        DATE     NOT NULL,
-    fiscal_date_ending DATE,
-    estimate           DOUBLE,
-    currency           VARCHAR,
-    fetched_at         TIMESTAMP DEFAULT current_timestamp,
-    PRIMARY KEY (symbol, report_date)
-);
-```
-
-### 1.2 — Script `scripts/earnings_calendar_update.py`
-
-- Fetch `EARNINGS_CALENDAR&horizon=3month` from AV API — response is a CSV stream
-- Parse CSV in-memory (no file written to disk)
-- Filter rows to symbols present in `companies` table of av_financials.duckdb
-- Upsert into `earnings_calendar` (INSERT OR REPLACE)
-- Purge rows where `report_date < today() - INTERVAL 30 DAYS` (keep a 30-day lookback)
-- Obey 75-call/min rate limit (this is a single API call, no loop needed)
-- CLI: `uv run scripts/earnings_calendar_update.py [--verbose]`
-
-**Testable**: Run the script and verify rows appear in the table via a quick
-`SELECT COUNT(*), MIN(report_date), MAX(report_date) FROM earnings_calendar`.
-
-### Status: [x] Complete
+**Test**: Manually run on the existing Cerebras mp3 (`data/earnings_calls_audio/cerebras_earnings_call_2026-06-23.mp3`) and verify non-empty text output.
 
 ---
 
-## Phase 2: API Endpoint
+## Phase 2: API Endpoint [Complete]
 
-**Goal**: Expose the calendar data via FastAPI.
+**File**: `api/earnings_router.py` (extend existing)
 
-### 2.1 — `api/earnings_calendar_router.py`
+**Goal**: Add `POST /earnings/import-audio` endpoint that orchestrates transcription, DB save, and LLM summary.
 
-```
-GET /earnings-calendar
-```
+**Steps**:
+- [x] 2.1 Add `_AUDIO_DIR` constant pointing to `data/earnings_calls_audio/`
+- [x] 2.2 Implement `POST /earnings/import-audio` endpoint
+- [x] 2.3 Import `audio_transcriber` module at top of `earnings_router.py`
 
-Returns JSON list sorted by `report_date ASC`:
-
-```json
-[
-  {
-    "symbol": "AAPL",
-    "name": "Apple Inc",
-    "sector": "Technology",
-    "report_date": "2026-07-31",
-    "fiscal_date_ending": "2026-06-30",
-    "estimate": 1.43,
-    "currency": "USD",
-    "status": "upcoming"   // "upcoming" | "reported"
-  }
-]
-```
-
-- `status` derived at query time: `"reported"` if `report_date < today()`, else `"upcoming"`
-- JOIN with `company_overview` (latest row per ticker) for `name` and `sector`
-- Only return rows where `report_date >= today() - INTERVAL 30 DAYS`
-
-### 2.2 — Register router in `api/main.py`
-
-Import and `app.include_router(earnings_calendar_router)`.
-
-**Testable**: `curl http://localhost:8000/earnings-calendar` returns a valid JSON array.
-
-### Status: [x] Complete
+**Test**: `curl -X POST "http://localhost:8000/earnings/import-audio?ticker=CRBE&quarter=2026Q2&filename=cerebras_earnings_call_2026-06-23.mp3&model=google/gemini-3.5-flash"` and verify 200 response with summary text.
 
 ---
 
-## Phase 3: Frontend Component + Tab Wiring
+## Phase 3: UI [Complete]
 
-**Goal**: Display the calendar as a new standalone tab.
+**File**: `web/components/EarningsSummaryViewer.tsx` (extend existing)
 
-### 3.1 — `web/components/EarningsCalendarViewer.tsx`
+**Goal**: Add "Import Audio" section below the URL import row.
 
-- Table grouped by week (Mon–Sun) with a subtle week-header row
-- Columns: Symbol, Company, Sector, Report Date, Fiscal Period End, EPS Estimate
-- "Upcoming" rows normal; "Reported" rows dimmed (opacity-40 or similar)
-- Show count of upcoming events in a header line
-- Refresh button (re-fetches from API)
-- Empty state if no data: hint to run `uv run scripts/earnings_calendar_update.py`
+**Steps**:
+- [x] 3.1 Add state: `audioFile`, `audioQuarter`, `transcribing`, `audioInfo`
+- [x] 3.2 Implement `handleImportAudio()`
+- [x] 3.3 Add UI row with filename input, quarter input, Transcribe button, status text
+- [x] 3.4 Reset audio state on ticker change
 
-### 3.2 — Wire tab in `web/app/page.tsx`
-
-- Add `"earnings_calendar"` to the `Tab` type union
-- Add to `tabs` array (always visible, between `sector` and `av_financials`)
-- Label: `"Calendar"`
-- Import and render `<EarningsCalendarViewer />`
-
-**Testable**: Tab appears in FinView, clicking it renders the table with real data.
-
-### Status: [x] Complete
+**Test**: Open Finview, navigate to a ticker, enter the Cerebras filename and quarter, click Transcribe, verify the summary report loads.
 
 ---
 
-## Phase 4: Integration + Documentation
+## Notes
 
-### 4.1 — Add to `scripts/README.md`
-
-Document `earnings_calendar_update.py` with usage and scheduling note
-(run weekly alongside `earnings_update.py`).
-
-### Status: [x] Complete
-
----
-
-## Test Plan (end-to-end)
-
-1. `uv run scripts/earnings_calendar_update.py --verbose` — no errors, rows in DB
-2. `uv run uvicorn api.main:app --reload` — `GET /earnings-calendar` returns data
-3. `cd web && npm run dev` — Calendar tab visible, table renders correctly
-4. Re-run script a second time — no duplicate rows, old rows purged
+- `ffmpeg` is confirmed available at `/usr/bin/ffmpeg`
+- `OPENROUTER_API_KEY` env var already used by existing earnings summarization — no new config needed
+- Existing `save_transcript()` in `historic_fundamentals/earnings_transcripts.py` handles upsert — reused as-is
+- Chunks stored temporarily in `data/earnings_calls_audio/chunks/` and deleted after transcription
+- mp3 conversion output goes into `data/earnings_calls_audio/` alongside the source file
