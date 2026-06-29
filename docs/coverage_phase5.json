@@ -1,0 +1,310 @@
+{
+  "generated": "2026-06-01T06:19:21.200887",
+  "ai_discovery_queue": {
+    "total_entries": 193,
+    "by_statement": [
+      {
+        "statement": "balance",
+        "entries": 72,
+        "tickers": 5
+      },
+      {
+        "statement": "cashflow",
+        "entries": 86,
+        "tickers": 9
+      },
+      {
+        "statement": "income",
+        "entries": 35,
+        "tickers": 8
+      }
+    ],
+    "top_discovered_fields": [
+      {
+        "statement": "balance",
+        "field": "long_term_investments",
+        "count": 10
+      },
+      {
+        "statement": "cashflow",
+        "field": "purchase_investments",
+        "count": 10
+      },
+      {
+        "statement": "balance",
+        "field": "short_term_investments",
+        "count": 10
+      },
+      {
+        "statement": "income",
+        "field": "other_nonoperating_income",
+        "count": 10
+      },
+      {
+        "statement": "balance",
+        "field": "other_noncurrent_liabilities",
+        "count": 9
+      },
+      {
+        "statement": "cashflow",
+        "field": "debt_issuance",
+        "count": 9
+      },
+      {
+        "statement": "cashflow",
+        "field": "other_operating_activities",
+        "count": 8
+      },
+      {
+        "statement": "cashflow",
+        "field": "sale_investments",
+        "count": 8
+      },
+      {
+        "statement": "income",
+        "field": "restructuring_charges",
+        "count": 7
+      },
+      {
+        "statement": "cashflow",
+        "field": "debt_repayment",
+        "count": 7
+      },
+      {
+        "statement": "balance",
+        "field": "other_current_assets",
+        "count": 7
+      },
+      {
+        "statement": "cashflow",
+        "field": "acquisitions",
+        "count": 7
+      },
+      {
+        "statement": "balance",
+        "field": "short_term_debt",
+        "count": 6
+      },
+      {
+        "statement": "cashflow",
+        "field": "depreciation_amortization",
+        "count": 5
+      },
+      {
+        "statement": "balance",
+        "field": "deferred_tax_assets",
+        "count": 4
+      },
+      {
+        "statement": "balance",
+        "field": "accounts_receivable",
+        "count": 4
+      },
+      {
+        "statement": "cashflow",
+        "field": "effect_of_exchange_rate",
+        "count": 4
+      },
+      {
+        "statement": "income",
+        "field": "other_operating_expenses",
+        "count": 4
+      },
+      {
+        "statement": "income",
+        "field": "investment_gains_losses",
+        "count": 4
+      },
+      {
+        "statement": "cashflow",
+        "field": "change_accounts_receivable",
+        "count": 4
+      }
+    ]
+  },
+  "permanent_misses": {
+    "total_unique_field_period_combinations": 6265,
+    "top_missed_fields": [
+      {
+        "statement": "income",
+        "field": "investment_gains_losses",
+        "distinct_tickers": 10,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "cashflow",
+        "field": "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+        "distinct_tickers": 10,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "income",
+        "field": "comprehensive_income",
+        "distinct_tickers": 10,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "income",
+        "field": "other_comprehensive_income",
+        "distinct_tickers": 10,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "cashflow",
+        "field": "cash_beginning_of_period",
+        "distinct_tickers": 10,
+        "distinct_periods": 93
+      },
+      {
+        "statement": "cashflow",
+        "field": "non_cash_stock_based_comp",
+        "distinct_tickers": 10,
+        "distinct_periods": 55
+      },
+      {
+        "statement": "income",
+        "field": "antidilutive_securities",
+        "distinct_tickers": 9,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "income",
+        "field": "equity_method_investments",
+        "distinct_tickers": 9,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "income",
+        "field": "net_income_continuing_ops",
+        "distinct_tickers": 9,
+        "distinct_periods": 100
+      },
+      {
+        "statement": "income",
+        "field": "discontinued_operations",
+        "distinct_tickers": 9,
+        "distinct_periods": 100
+      },
+      {
+        "statement": "income",
+        "field": "restructuring_charges",
+        "distinct_tickers": 9,
+        "distinct_periods": 100
+      },
+      {
+        "statement": "income",
+        "field": "dividends_per_share",
+        "distinct_tickers": 9,
+        "distinct_periods": 79
+      },
+      {
+        "statement": "income",
+        "field": "gross_profit",
+        "distinct_tickers": 9,
+        "distinct_periods": 70
+      },
+      {
+        "statement": "cashflow",
+        "field": "change_accrued_expenses",
+        "distinct_tickers": 8,
+        "distinct_periods": 93
+      },
+      {
+        "statement": "cashflow",
+        "field": "change_deferred_revenue",
+        "distinct_tickers": 8,
+        "distinct_periods": 80
+      },
+      {
+        "statement": "income",
+        "field": "net_income_attributable_to_parent",
+        "distinct_tickers": 7,
+        "distinct_periods": 144
+      },
+      {
+        "statement": "balance",
+        "field": "total_noncurrent_assets",
+        "distinct_tickers": 7,
+        "distinct_periods": 106
+      },
+      {
+        "statement": "balance",
+        "field": "total_noncurrent_liabilities",
+        "distinct_tickers": 7,
+        "distinct_periods": 106
+      },
+      {
+        "statement": "balance",
+        "field": "deferred_tax_assets",
+        "distinct_tickers": 7,
+        "distinct_periods": 100
+      },
+      {
+        "statement": "cashflow",
+        "field": "change_inventory",
+        "distinct_tickers": 7,
+        "distinct_periods": 51
+      },
+      {
+        "statement": "cashflow",
+        "field": "acquisitions",
+        "distinct_tickers": 7,
+        "distinct_periods": 35
+      },
+      {
+        "statement": "income",
+        "field": "other_operating_expenses",
+        "distinct_tickers": 6,
+        "distinct_periods": 139
+      },
+      {
+        "statement": "balance",
+        "field": "ppe_gross",
+        "distinct_tickers": 6,
+        "distinct_periods": 127
+      },
+      {
+        "statement": "balance",
+        "field": "accumulated_depreciation",
+        "distinct_tickers": 6,
+        "distinct_periods": 127
+      },
+      {
+        "statement": "income",
+        "field": "depreciation_amortization",
+        "distinct_tickers": 6,
+        "distinct_periods": 108
+      },
+      {
+        "statement": "income",
+        "field": "total_operating_expenses",
+        "distinct_tickers": 6,
+        "distinct_periods": 89
+      },
+      {
+        "statement": "income",
+        "field": "research_development",
+        "distinct_tickers": 6,
+        "distinct_periods": 27
+      },
+      {
+        "statement": "balance",
+        "field": "prepaid_expenses",
+        "distinct_tickers": 5,
+        "distinct_periods": 127
+      },
+      {
+        "statement": "income",
+        "field": "net_income_attributable_to_nci",
+        "distinct_tickers": 5,
+        "distinct_periods": 91
+      },
+      {
+        "statement": "balance",
+        "field": "deferred_revenue_noncurrent",
+        "distinct_tickers": 5,
+        "distinct_periods": 85
+      }
+    ]
+  }
+}

@@ -29,6 +29,7 @@ from api.screener_router import router as screener_router
 from api.sector_router import router as sector_router
 from api.estimates_router import router as estimates_router
 from api.earnings_calendar_router import router as earnings_calendar_router
+from api.news_router import router as news_router
 
 DB_PATH = Path(__file__).parent.parent / "data" / "financial_statements.duckdb"
 
@@ -54,6 +55,7 @@ app.include_router(screener_router)
 app.include_router(sector_router)
 app.include_router(estimates_router)
 app.include_router(earnings_calendar_router)
+app.include_router(news_router)
 
 app.add_middleware(
     CORSMiddleware,

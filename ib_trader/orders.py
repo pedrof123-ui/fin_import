@@ -17,11 +17,17 @@ def make_order(
     limit_price: float | None = None,
     strategy: str = "fundamentals_alpha",
 ) -> Order:
-    """Create an IB Order. action='BUY'|'SELL', order_type='MKT'|'LMT'|'MOC'."""
+    """Create an IB Order. action='BUY'|'SELL', order_type='MKT'|'LMT'|'MOO'|'MOC'."""
     action = action.upper()
     order_type = order_type.upper()
 
-    if order_type == "MOC":
+    if order_type == "MOO":
+        order = Order()
+        order.action = action
+        order.totalQuantity = qty
+        order.orderType = "MKT"
+        order.tif = "OPG"
+    elif order_type == "MOC":
         order = Order()
         order.action = action
         order.totalQuantity = qty
@@ -33,8 +39,9 @@ def make_order(
         order = LimitOrder(action, qty, round(limit_price, 2))
     elif order_type == "MKT":
         order = MarketOrder(action, qty)
+        order.tif = "DAY"
     else:
-        raise ValueError(f"Unknown order_type: {order_type!r}. Use MKT, LMT, or MOC.")
+        raise ValueError(f"Unknown order_type: {order_type!r}. Use MKT, LMT, MOO, or MOC.")
 
     order.orderRef = strategy
     return order

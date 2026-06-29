@@ -32,6 +32,12 @@ const RANGE_FIELD_META: Record<string, { label: string; fmt: FmtType }> = {
   interest_coverage: { label: "Int Coverage",     fmt: "x"   },
   dividend_yield:    { label: "Div Yield",        fmt: "pct" },
   momentum_12_1:     { label: "Momentum 12-1",    fmt: "pct" },
+  goal_low_upside:   { label: "PT Low Upside",    fmt: "pct" },
+  goal_high_upside:  { label: "PT High Upside",   fmt: "pct" },
+  goal_pe_upside:    { label: "PT P/E Upside",    fmt: "pct" },
+  goal_pcf_upside:   { label: "PT P/FCF Upside",  fmt: "pct" },
+  goal_peg_upside:   { label: "PT PEG Upside",    fmt: "pct" },
+  goal_bv_upside:    { label: "PT P/BV Upside",   fmt: "pct" },
 };
 
 const FILTER_SECTIONS: { label: string; fields: string[] }[] = [
@@ -41,6 +47,7 @@ const FILTER_SECTIONS: { label: string; fields: string[] }[] = [
   { label: "Quality",           fields: ["gross_margin", "ebit_margin", "fcf_margin", "roe", "roic"] },
   { label: "Leverage",          fields: ["debt_to_ebitda", "interest_coverage"] },
   { label: "Income & Momentum", fields: ["dividend_yield", "momentum_12_1"] },
+  { label: "Price Targets",    fields: ["goal_low_upside", "goal_high_upside", "goal_pe_upside", "goal_pcf_upside", "goal_peg_upside", "goal_bv_upside"] },
 ];
 
 const RESULT_COLS: { key: string; label: string; fmt: FmtType }[] = [
@@ -60,18 +67,53 @@ const RESULT_COLS: { key: string; label: string; fmt: FmtType }[] = [
   { key: "debt_to_ebitda",           label: "D/EBITDA",  fmt: "x"   },
   { key: "dividend_yield",           label: "Div Yield", fmt: "pct" },
   { key: "momentum_12_1",            label: "Mom 12-1",  fmt: "pct" },
+  { key: "goal_low_upside",          label: "PT Low Up", fmt: "pct" },
+  { key: "goal_high_upside",         label: "PT Hi Up",  fmt: "pct" },
 ];
 
-const UNDERVALUED_QUALITY_PRESET: Record<string, string> = {
-  market_cap_b_min: "0.5",
-  pe_min: "5",
-  pe_max: "30",
-  ev_ebitda_max: "15",
-  rev_growth_1yr_min: "5",
-  ebit_margin_min: "10",
-  roic_min: "10",
-  debt_to_ebitda_max: "3",
-  interest_coverage_min: "3",
+type Preset = {
+  label: string;
+  filters: Record<string, string>;
+  tooltip: [string, string][];
+};
+
+const PRESETS: Record<string, Preset> = {
+  undervalued_quality: {
+    label: "Undervalued Quality",
+    filters: {
+      market_cap_b_min: "0.5",
+      pe_min: "5",
+      pe_max: "30",
+      ev_ebitda_max: "15",
+      rev_growth_1yr_min: "5",
+      ebit_margin_min: "10",
+      roic_min: "10",
+      debt_to_ebitda_max: "3",
+      interest_coverage_min: "3",
+    },
+    tooltip: [
+      ["Mkt Cap",      "> $0.5B"],
+      ["P/E",          "5 – 30x"],
+      ["EV/EBITDA",    "< 15x"],
+      ["Rev Growth",   "> 5%"],
+      ["EBIT Margin",  "> 10%"],
+      ["ROIC",         "> 10%"],
+      ["Debt/EBITDA",  "< 3x"],
+      ["Int Coverage", "> 3x"],
+    ],
+  },
+  fundamental_upside: {
+    label: "Fundamental Upside",
+    filters: {
+      goal_low_upside_min: "0",
+    },
+    tooltip: [
+      ["PT Low Upside", "> 0%"],
+      ["", "All fundamental price targets"],
+      ["", "(P/E, P/FCF, PEG, P/BV)"],
+      ["", "above current price"],
+    ],
+  },
 };
 
 const DISPLAY_LIMIT = 500;
@@ -218,6 +260,54 @@ function MultiSelectDropdown({
   );
 }
 
+// ── PresetDropdown ────────────────────────────────────────────────────────────
+
+function PresetDropdown({ onSelect }: { onSelect: (key: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="h-8 px-3 rounded border border-white/[0.07] font-mono text-xs text-zinc-400 hover:text-zinc-200 hover:border-white/[0.2] transition-colors flex items-center gap-1.5"
+      >
+        Presets
+        <span className="text-zinc-600 text-[9px]">▾</span>
+      </button>
+
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 z-50 w-56 rounded border border-white/[0.1] shadow-xl py-1"
+          style={{ background: "oklch(0.12 0.008 265)" }}
+        >
+          {Object.entries(PRESETS).map(([key, preset]) => (
+            <button
+              key={key}
+              onClick={() => { onSelect(key); setOpen(false); }}
+              className="w-full text-left px-3 py-2 font-mono text-[11px] text-zinc-300 hover:bg-white/[0.05] hover:text-zinc-100 transition-colors"
+            >
+              <div className="font-medium">{preset.label}</div>
+              <div className="text-zinc-600 text-[10px] mt-0.5">
+                {preset.tooltip.filter(([l]) => l).map(([l, v]) => `${l} ${v}`).slice(0, 2).join(" · ")}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -317,8 +407,10 @@ export default function ScreenerViewer({ onSelectTicker }: ScreenerViewerProps) 
     setError(null);
   };
 
-  const applyPreset = () => {
-    setFilters({ ...makeEmptyFilters(), ...UNDERVALUED_QUALITY_PRESET });
+  const applyPreset = (key: string) => {
+    const preset = PRESETS[key];
+    if (!preset) return;
+    setFilters({ ...makeEmptyFilters(), ...preset.filters });
     setSelectedSectors([]);
     setSelectedIndustries([]);
     setResults(null);
@@ -453,34 +545,7 @@ export default function ScreenerViewer({ onSelectTicker }: ScreenerViewerProps) 
           >
             {loading ? "Running…" : "Run Screen"}
           </button>
-          <div className="relative group">
-            <button
-              onClick={applyPreset}
-              className="h-8 px-3 rounded border border-white/[0.07] font-mono text-xs text-zinc-400 hover:text-zinc-200 hover:border-white/[0.2] transition-colors"
-            >
-              Undervalued Quality
-            </button>
-            <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 w-56 rounded border border-white/[0.1] bg-zinc-900 p-3 shadow-xl pointer-events-none">
-              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500 mb-2">Preset criteria</p>
-              <div className="space-y-1">
-                {[
-                  ["Mkt Cap",      "> $0.5B"],
-                  ["P/E",          "5 – 30x"],
-                  ["EV/EBITDA",    "< 15x"],
-                  ["Rev Growth",   "> 5%"],
-                  ["EBIT Margin",  "> 10%"],
-                  ["ROIC",         "> 10%"],
-                  ["Debt/EBITDA",  "< 3x"],
-                  ["Int Coverage", "> 3x"],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex justify-between gap-4 font-mono text-[11px]">
-                    <span className="text-zinc-500">{label}</span>
-                    <span className="text-zinc-300">{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <PresetDropdown onSelect={applyPreset} />
           <button
             onClick={handleReset}
             className="h-8 px-3 rounded border border-white/[0.07] font-mono text-xs text-zinc-500 hover:text-zinc-300 hover:border-white/[0.15] transition-colors"
@@ -519,7 +584,7 @@ export default function ScreenerViewer({ onSelectTicker }: ScreenerViewerProps) 
         <div className="flex flex-col items-center justify-center h-40 gap-2">
           <p className="font-mono text-xs text-zinc-600">Set filters above and click Run Screen</p>
           <p className="font-mono text-[10px] text-zinc-700">
-            Or use the Undervalued Quality preset to get started
+            Or use Presets to get started
           </p>
         </div>
       )}

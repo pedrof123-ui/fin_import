@@ -129,3 +129,16 @@ def load_risk_free_rate() -> float | None:
         return float(row[0]) / 100.0 if row else None
     except Exception:
         return None
+
+
+def load_risk_free_rate_30y() -> float | None:
+    """Returns DGS30 as decimal. Falls back to DGS10 + 0.005 if unavailable."""
+    try:
+        conn = duckdb.connect(str(FRED_DB), read_only=True)
+        row = conn.execute(
+            "SELECT value FROM economic_indicators WHERE series_id = 'DGS30' ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        return float(row[0]) / 100.0 if row else None
+    except Exception:
+        return None

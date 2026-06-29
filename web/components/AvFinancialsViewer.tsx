@@ -13,9 +13,6 @@ import { API } from "@/lib/config";
 type StmtType = "income" | "balance" | "cashflow";
 type PeriodType = "annual" | "quarterly";
 
-const FY_PERIODS = 20;
-const Q_PERIODS = 8;
-
 const AV_SKIP_COLS = new Set([
   "ticker",
   "fiscal_date_ending",
@@ -217,6 +214,9 @@ const AV_INCOME_SUB_ROWS: Record<string, SubRowDef[]> = {
 };
 
 function formatAvPeriod(record: Record<string, unknown>, periodType: PeriodType): string {
+  if (periodType === "quarterly" && record.period_label) {
+    return record.period_label as string;
+  }
   const date = record.fiscal_date_ending as string | null;
   if (!date) return "";
   const year = date.slice(0, 4);
@@ -273,9 +273,8 @@ export default function AvFinancialsViewer({ ticker }: { ticker: string }) {
     if (!ticker) return;
     setLoading(true);
     setError(null);
-    const periods = periodType === "annual" ? FY_PERIODS : Q_PERIODS;
     fetch(
-      `${API}/av-financials/${ticker}/${stmtType}?period_type=${periodType}&periods=${periods}`
+      `${API}/av-financials/${ticker}/${stmtType}?period_type=${periodType}`
     )
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {

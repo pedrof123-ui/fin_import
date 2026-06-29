@@ -96,19 +96,19 @@ def load_av_annual_financials(ticker: str) -> dict[str, pd.DataFrame]:
         inc = conn.execute(
             """SELECT * FROM income_statements
                WHERE ticker = ? AND period_type = 'annual'
-               ORDER BY fiscal_date_ending DESC LIMIT 10""",
+               ORDER BY fiscal_date_ending DESC""",
             [ticker],
         ).df()
         bs = conn.execute(
             """SELECT * FROM balance_sheets
                WHERE ticker = ? AND period_type = 'annual'
-               ORDER BY fiscal_date_ending DESC LIMIT 10""",
+               ORDER BY fiscal_date_ending DESC""",
             [ticker],
         ).df()
         cf = conn.execute(
             """SELECT * FROM cash_flow_statements
                WHERE ticker = ? AND period_type = 'annual'
-               ORDER BY fiscal_date_ending DESC LIMIT 10""",
+               ORDER BY fiscal_date_ending DESC""",
             [ticker],
         ).df()
     finally:

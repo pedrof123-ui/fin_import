@@ -12,11 +12,12 @@ import EarningsCalendarViewer from "@/components/EarningsCalendarViewer";
 import ScreenerViewer from "@/components/ScreenerViewer";
 import SectorViewer from "@/components/SectorViewer";
 import EstimatesViewer from "@/components/EstimatesViewer";
+import NewsViewer from "@/components/NewsViewer";
 import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "screener" | "sector" | "calendar" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings" | "estimates";
+type Tab = "screener" | "sector" | "calendar" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings" | "estimates" | "news";
 
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
@@ -163,6 +164,7 @@ export default function Home() {
     "estimates",
     "research",
     "earnings",
+    "news",
     ...(xbrlLoaded ? (["financials"] as Tab[]) : []),
   ];
   const TAB_LABELS: Record<Tab, string> = {
@@ -175,6 +177,7 @@ export default function Home() {
     estimates: "Estimates",
     research: "AI Research",
     earnings: "Earnings",
+    news: "News",
     financials: "XBRL",
   };
 
@@ -287,6 +290,9 @@ export default function Home() {
             <div className={activeTab === "earnings" ? undefined : "hidden"}>
               <EarningsSummaryViewer ticker={loadedTicker} />
             </div>
+            <div className={activeTab === "news" ? undefined : "hidden"}>
+              <NewsViewer ticker={loadedTicker} />
+            </div>
             {xbrlLoaded && (
               <div className={activeTab === "financials" ? undefined : "hidden"}>
                 {xbrlData && (
@@ -306,7 +312,7 @@ export default function Home() {
         )}
 
         {/* Empty state — only when no ticker and not on screener/sector */}
-        {!loadedTicker && !error && activeTab !== "screener" && activeTab !== "sector" && activeTab !== "calendar" && (
+        {!loadedTicker && !error && activeTab !== "screener" && activeTab !== "sector" && activeTab !== "calendar" && activeTab !== "news" && (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
               No data loaded

@@ -60,3 +60,12 @@ Financial Quant Development_files/
 
 # Archived / unused agent definitions
 docs/agents - not used/
+
+# MCP server config (contains API keys)
+.mcp.json
+
+# Large audio/video files
+data/earnings_calls_audio/
+
+# Claude Code runtime files
+.claude/scheduled_tasks.lock

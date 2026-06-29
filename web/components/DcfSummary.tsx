@@ -153,7 +153,7 @@ export default function DcfSummary({
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(1, e); }}
             />
           </div>
-          <div className="text-zinc-500">Beta (raw / re-levered)</div>
+          <div className="text-zinc-500">Beta 5yr (raw / re-lev)</div>
           <div className="text-zinc-300 text-right flex items-center justify-end gap-1.5">
             <input
               className={`${inputCls} w-10`}
@@ -164,6 +164,10 @@ export default function DcfSummary({
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else waccKeyDown(2, e); }}
             />
             <span className="text-zinc-600">/ {w.beta_relevered.toFixed(2)}</span>
+          </div>
+          <div className="text-zinc-500">Beta 2yr (ref)</div>
+          <div className="text-zinc-400 text-right font-mono text-xs tabular-nums">
+            {w.beta_2yr != null ? w.beta_2yr.toFixed(2) : "—"}
           </div>
           <div className="text-zinc-500">Cost of Equity</div>
           <div className="text-zinc-300 text-right">{fmtPct(w.cost_of_equity)}</div>

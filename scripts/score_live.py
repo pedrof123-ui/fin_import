@@ -463,6 +463,17 @@ def _select_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[cols]
 
 
+def _apply_bcd_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove stocks where bcd_misp > 0 or NULL (BCD hard filter: require structural underpricing)."""
+    if "bcd_misp" not in df.columns:
+        log.warning("bcd_misp column not found — BCD filter skipped")
+        return df
+    mask = df["bcd_misp"].notna() & (df["bcd_misp"] <= 0.0)
+    n_removed = int((~mask).sum())
+    log.info("BCD filter: removed %d stocks (bcd_misp > 0 or NULL) → %d remain", n_removed, int(mask.sum()))
+    return df[mask].copy()
+
+
 def _validate_feature_dates(df: pd.DataFrame, today: date) -> None:
     """Warn (do not crash) if any feature_available_date > today."""
     if "feature_available_date" not in df.columns:
@@ -704,6 +715,12 @@ def main() -> None:
     if args.min_rank_pct < 1.0:
         cutoff = max(1, int(len(ranked) * args.min_rank_pct))
         ranked = ranked[ranked["rank"] <= cutoff].copy()
+
+    # Apply BCD hard filter before column selection (bcd_misp is dropped by _select_output_columns)
+    if args.guardrails:
+        ranked = _apply_bcd_filter(ranked)
+        ranked = ranked.reset_index(drop=True)
+        ranked["rank"] = range(1, len(ranked) + 1)
 
     out_df = _select_output_columns(ranked)
 

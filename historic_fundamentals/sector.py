@@ -27,6 +27,8 @@ base AS (
            m.pe_ratio, m.pfcf_ratio, m.ev_ebitda, m.ps_ratio, m.pbv,
            m.earnings_yield, m.fcf_yield, m.ebitda_ev_yield, m.dividend_yield,
            m.roa, m.roe, m.roic,
+           m.ttm_gross_margin, m.ttm_operating_margin, m.ttm_fcf_margin,
+           m.debt_to_ebitda, m.interest_coverage,
            CASE WHEN p.ttm_revenue > 0 AND m.ttm_revenue > 0
                 THEN m.ttm_revenue / p.ttm_revenue - 1 END AS rev_growth_1yr,
            CASE WHEN p.ttm_eps > 0 AND m.ttm_eps > 0
@@ -67,7 +69,12 @@ SELECT '{group_type}' AS group_type, group_name, month_end_date,
        QUANTILE_CONT(roic, 0.25) FILTER (WHERE roic IS NOT NULL) AS roic_p25,
        QUANTILE_CONT(roic, 0.75) FILTER (WHERE roic IS NOT NULL) AS roic_p75,
        QUANTILE_CONT(rev_growth_1yr, 0.50) FILTER (WHERE rev_growth_1yr IS NOT NULL) AS rev_growth_1yr_median,
-       QUANTILE_CONT(earn_growth_1yr, 0.50) FILTER (WHERE earn_growth_1yr IS NOT NULL) AS earn_growth_1yr_median
+       QUANTILE_CONT(earn_growth_1yr, 0.50) FILTER (WHERE earn_growth_1yr IS NOT NULL) AS earn_growth_1yr_median,
+       QUANTILE_CONT(ttm_gross_margin, 0.50) FILTER (WHERE ttm_gross_margin IS NOT NULL) AS gross_margin_median,
+       QUANTILE_CONT(ttm_operating_margin, 0.50) FILTER (WHERE ttm_operating_margin IS NOT NULL) AS operating_margin_median,
+       QUANTILE_CONT(ttm_fcf_margin, 0.50) FILTER (WHERE ttm_fcf_margin IS NOT NULL) AS fcf_margin_median,
+       QUANTILE_CONT(debt_to_ebitda, 0.50) FILTER (WHERE debt_to_ebitda IS NOT NULL AND debt_to_ebitda >= 0) AS debt_to_ebitda_median,
+       QUANTILE_CONT(interest_coverage, 0.50) FILTER (WHERE interest_coverage IS NOT NULL) AS interest_coverage_median
 FROM base
 GROUP BY group_name, month_end_date
 HAVING COUNT(DISTINCT ticker) >= {min_peers}

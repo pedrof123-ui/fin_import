@@ -60,6 +60,13 @@ class IBClient:
                 return float(v.value)
         raise RuntimeError("NetLiquidation not found in accountSummary")
 
+    def get_available_funds(self) -> float:
+        """Return AvailableFunds (USD) — cash available to place new orders."""
+        for v in self.ib.accountSummary(self.account):
+            if v.tag == "AvailableFunds" and v.currency == "USD":
+                return float(v.value)
+        raise RuntimeError("AvailableFunds not found in accountSummary")
+
     def get_positions(self) -> dict[str, float]:
         """Return {ticker: shares} for all current positions."""
         return {

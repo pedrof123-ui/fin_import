@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import duckdb
+import requests
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -156,6 +157,24 @@ _STAT_FIELDS = [
 ]
 
 
+def _fetch_live_price(ticker: str) -> float | None:
+    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    if not api_key:
+        return None
+    try:
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        quote = resp.json().get("Global Quote", {})
+        price_str = quote.get("05. price")
+        return float(price_str) if price_str else None
+    except Exception:
+        return None
+
+
 @router.get("/av-fundamentals/{ticker}")
 async def av_fundamentals_snapshot(ticker: str):
     t = ticker.upper()
@@ -222,13 +241,15 @@ async def av_fundamentals_snapshot(ticker: str):
     row = stats_df.iloc[0].to_dict()
     ov = ov_df.iloc[0].to_dict() if not ov_df.empty else {}
 
+    current_price = _fetch_live_price(t) or row.get("current_price")
+
     payload = {
         "ticker": t,
         "company_name": ov.get("name"),
         "sector": ov.get("sector"),
         "industry": ov.get("industry"),
         "market_cap_b": _sdiv(ov.get("market_cap"), 1e9),
-        "current_price": row.get("current_price"),
+        "current_price": current_price,
         "analyst_target_price": _sf(ov.get("analyst_target_price")),
         "analyst_strong_buy": _si(ov.get("analyst_rating_strong_buy")),
         "analyst_buy": _si(ov.get("analyst_rating_buy")),

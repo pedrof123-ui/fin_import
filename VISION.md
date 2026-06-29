@@ -1,24 +1,96 @@
-GOAL:
+GOAL: The goal is to create an enhancement to Earnings Calls Summary feature in Finview to transcribe a user provided mp4 file in data folder and save the transcription in the earnings call transcripts database
 
-The goal is to update the existing database with the latest and historical earnings call transcripts of the stocks in av_financials using the AV API.
+Use the Openrouter transcribe API with model openai/whisper-large-v3-turbo
 
-Currently, the database is used by the Finview AI Researcher and Earnings summary feature. 
+First convert mp4 to mp3. If mp3 greater than 25MB, it needs to be chunked before submitting to the API. Then the transcript chunks need to be combined before saving in the database and creating the agent summary.
 
-To find out the latest earnings call transcript available, you can use the latest reported quarter in av_financials. However if the latest quarter in av_financials is older than 60 days in the event that there has been a earnings call after the last financial quarter in av_financials, we should also check if there is a earnings call transcript for the quarter following the latest quarter in av_financials. For example, if the latest quarter in av_financials is 2026Q1 and the quarter ended on 3/31/2026 and today is 7/1/2026, we should check whether the AV API as a earnings call transcript for 2026Q2. We should use this method only to initially backfill the earnings call transcript database.
+The following code is sample code for reference only. You are welcome to make changes to fit guidelines, improve and fit the project structure and features:
 
-Going forward, we can test whether there is a new earnings call transcript by looking at the date of previous earnings call transcript.
+import base64
+import os
+from pathlib import Path
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-If possible the earnings call transcript should track the earnings call date and the date that the earningls call transcript was downloaded
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-We would like to backfill with all the earnings call transcripts available in AV. AV claims that provides up to 15 years of earnings call transcripts. However the history of earnings calls transcripts will significantly vary by stock.
+if not OPENROUTER_API_KEY:
+    raise RuntimeError("OPENROUTER_API_KEY is not set")
 
-Before doing any planing or implementation, review the existing code for the Earnings summary feature in Finview.
+chunk_dir = Path("../data/earnings_calls_audio/chunks")
+chunk_paths = sorted(chunk_dir.glob("chunk_*.mp3"))
 
-Also create a script to update the earnings call transcript on a weekly basis.
+if not chunk_paths:
+    raise RuntimeError(f"No chunks found in {chunk_dir}")
 
-If the user runs Earnings summary feature in Finview and the earnings call transcript is not in the database, the Earnings summary code will download the earnings call transcipt into the database
+session = requests.Session()
 
-Please create a PLAN.md with testable phases. As each phase is implemented, it should be marked complete in the PLAN.md.
+retries = Retry(
+    total=3,
+    backoff_factor=2,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["POST"],
+)
+
+session.mount("https://", HTTPAdapter(max_retries=retries))
+
+headers = {
+    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+    "Content-Type": "application/json",
+}
+
+def transcribe_chunk(path: Path) -> str:
+    size_mb = path.stat().st_size / 1024 / 1024
+    print(f"Transcribing {path.name} ({size_mb:.2f} MB)")
+
+    with open(path, "rb") as f:
+        audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    response = session.post(
+        "https://openrouter.ai/api/v1/audio/transcriptions",
+        headers=headers,
+        json={
+            "model": "openai/whisper-large-v3-turbo",
+            "input_audio": {
+                "data": audio_b64,
+                "format": "mp3",
+            },
+            "language": "en",
+        },
+        timeout=(20, 300),
+    )
+
+    print("Status:", response.status_code)
+
+    if not response.ok:
+        print(response.text[:2000])
+        response.raise_for_status()
+
+    try:
+        data = response.json()
+    except requests.exceptions.JSONDecodeError:
+        raise RuntimeError(
+            f"Non-JSON response for {path.name}: "
+            f"{response.text[:1000]}"
+        )
+
+    return data.get("text", "")
+
+all_text = []
+
+for chunk_path in chunk_paths:
+    text = transcribe_chunk(chunk_path)
+    all_text.append(f"\n\n## {chunk_path.name}\n\n{text}")
+
+output_path = Path("../data/earnings_calls_audio/cerebras_earnings_call_2026-06-23_transcript.md")
+output_path.write_text("\n".join(all_text), encoding="utf-8")
+
+print(f"Saved transcript to: {output_path}")
+
+
+
+Create a PLAN.md with testable phases before implementing and mark PLAN.md as phases are completed.
 
 Please fell free to ask questions and make recommendations to improve.
 

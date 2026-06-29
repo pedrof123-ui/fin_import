@@ -180,6 +180,12 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_growth_1yr          DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earn_growth_1yr         DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS rev_growth_1yr          DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS rev_cagr_3yr            DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS rev_cagr_5yr            DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earn_cagr_3yr           DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earn_cagr_5yr           DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_cagr_3yr            DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_cagr_5yr            DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -488,6 +494,9 @@ class HistoricFundamentalsDB:
             "momentum_12_1", "earnings_quality", "asset_growth",
             "feature_available_date",
             "fcf_growth_1yr", "earn_growth_1yr", "rev_growth_1yr",
+            "rev_cagr_3yr", "rev_cagr_5yr",
+            "earn_cagr_3yr", "earn_cagr_5yr",
+            "fcf_cagr_3yr", "fcf_cagr_5yr",
             "updated_at",
         ]
         for col in cols:
@@ -522,6 +531,9 @@ class HistoricFundamentalsDB:
                  momentum_12_1, earnings_quality, asset_growth,
                  feature_available_date,
                  fcf_growth_1yr, earn_growth_1yr, rev_growth_1yr,
+                 rev_cagr_3yr, rev_cagr_5yr,
+                 earn_cagr_3yr, earn_cagr_5yr,
+                 fcf_cagr_3yr, fcf_cagr_5yr,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -548,6 +560,9 @@ class HistoricFundamentalsDB:
                        momentum_12_1, earnings_quality, asset_growth,
                        feature_available_date,
                        fcf_growth_1yr, earn_growth_1yr, rev_growth_1yr,
+                       rev_cagr_3yr, rev_cagr_5yr,
+                       earn_cagr_3yr, earn_cagr_5yr,
+                       fcf_cagr_3yr, fcf_cagr_5yr,
                        updated_at
                 FROM _tmp_pe
             """)

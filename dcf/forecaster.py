@@ -55,7 +55,7 @@ def _quarterly_momentum_signal(quarterly_income: pd.DataFrame) -> float | None:
     year (reset at each big drop) and compares like-for-like positions across years.
     If no YTD pattern is detected (standalone quarters), direct i vs i-4 is used.
     """
-    rev_q = quarterly_income["revenue"].dropna()
+    rev_q = quarterly_income["revenue"].dropna().iloc[-24:]
     if len(rev_q) < 8:
         return None
 
@@ -200,8 +200,13 @@ def compute_nwc_days(
         dpo_series = np.where(cogs_v > 0, ap_v / cogs_v * 365, np.nan)
         dio_series = np.where(cogs_v > 0, inv_v / cogs_v * 365, np.nan)
 
+    # Cap at 180 days — values above this signal financial-company balance sheets
+    # (loan portfolios mapped to receivables, deposits to payables, securities to inventory)
+    # where DSO/DPO/DIO are operationally meaningless.
+    _MAX_DAYS = 180.0
+
     def _mean_pos(arr):
-        valid = arr[~np.isnan(arr) & (arr >= 0)]
+        valid = arr[~np.isnan(arr) & (arr >= 0) & (arr <= _MAX_DAYS)]
         return float(np.median(valid)) if len(valid) > 0 else 0.0
 
     return NwcAssumptions(

@@ -223,7 +223,7 @@ def apply_to_forecasts(
             d = date.fromisoformat(e["date"][:10])
         except ValueError:
             continue
-        if d <= today or d > y1_end:
+        if d < today - timedelta(days=60) or d > y1_end:
             continue
         q_idx = _quarter_index(d, fy_start)
         if 1 <= q_idx <= 4:

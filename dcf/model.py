@@ -527,9 +527,10 @@ def _default_terminal_growth(income_df: pd.DataFrame) -> float:
 
 
 def _median_ebit_margin(income_df: pd.DataFrame) -> float:
-    """Median EBIT margin from all available annual data. Clamped [1%, 50%]."""
-    rev = income_df["revenue"].replace(0, np.nan)
-    ebit = income_df["operating_income"] if "operating_income" in income_df.columns else pd.Series(dtype=float)
+    """Median EBIT margin from the 3 most recent annual periods. Clamped [1%, 50%]."""
+    df = income_df.head(3)
+    rev = df["revenue"].replace(0, np.nan)
+    ebit = df["operating_income"] if "operating_income" in df.columns else pd.Series(dtype=float)
     margins = (ebit / rev).dropna()
     margins = margins[np.isfinite(margins)]
     if margins.empty:
@@ -581,12 +582,12 @@ def _run_dcf_core(
     estimates_conn=None,
 ) -> "DcfResult":
     from dcf.assumptions import DcfResult
-    from dcf.data import load_current_price, load_risk_free_rate
+    from dcf.data import load_current_price, load_risk_free_rate, load_risk_free_rate_30y
     from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
     from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, extend_growth_years
 
     price = load_current_price(ticker)
-    rf = load_risk_free_rate()
+    rf = load_risk_free_rate_30y() or load_risk_free_rate()
 
     if overrides and overrides.risk_free_rate is not None:
         rf = overrides.risk_free_rate
@@ -734,7 +735,12 @@ def _run_dcf_core(
     # estimate anchors Y1, preserve it and skip the cascade entirely.
     # For years with analyst estimates in the cascade, preserve the absolute analyst
     # revenue and only recalculate the implied growth rate; for other years, cascade normally.
-    if y1_quarters and y1_revised_rev != year_forecasts[0].revenue and 1 not in _analyst_years:
+    _user_set_y1_rev = (
+        overrides is not None
+        and (yo1 := overrides.years.get(1)) is not None
+        and (yo1.revenue is not None or yo1.revenue_growth is not None)
+    )
+    if y1_quarters and y1_revised_rev != year_forecasts[0].revenue and 1 not in _analyst_years and not _user_set_y1_rev:
         year_forecasts[0].revenue = y1_revised_rev
         year_forecasts[0].revenue_growth = (y1_revised_rev - last_rev) / last_rev if last_rev != 0 else 0.0
         prev = y1_revised_rev
@@ -749,8 +755,10 @@ def _run_dcf_core(
     # Y3-Y10: carry forward Y2 growth (applied after all Y1/Y2 are settled)
     year_forecasts = extend_growth_years(year_forecasts, overrides)
 
-    # AV DCF: apply EBIT margin control (overrides other_opex_pct so that
-    # EBIT = revenue × ebit_margin exactly). Per-year user value wins over default.
+    # AV DCF: apply EBIT margin control (EBIT = revenue × ebit_margin exactly).
+    # Per-year user value wins over default.
+    # First try to absorb via other_opex_pct; if cogs+sga+rd already exceed 1-ebit_m
+    # (other_opex would go negative), reduce sga_pct instead so numbers stay consistent.
     _default_ebit_m = overrides.default_ebit_margin_pct if overrides else None
     if _default_ebit_m is not None or (
         overrides and any(yo.ebit_margin_pct is not None for yo in overrides.years.values())
@@ -759,10 +767,16 @@ def _run_dcf_core(
             yo = overrides.years.get(yf.year) if overrides else None
             ebit_m = yo.ebit_margin_pct if (yo and yo.ebit_margin_pct is not None) else _default_ebit_m
             if ebit_m is not None:
-                yf.other_opex_pct = max(
-                    0.0,
-                    1.0 - yf.cogs_pct - yf.sga_pct - (yf.rd_pct or 0.0) - ebit_m,
-                )
+                rd = yf.rd_pct or 0.0
+                slack = 1.0 - yf.cogs_pct - yf.sga_pct - rd - ebit_m
+                if slack >= 0.0:
+                    yf.other_opex_pct = slack
+                else:
+                    # Zero other_opex; reduce sga then rd in order to hit target
+                    yf.other_opex_pct = 0.0
+                    remaining = max(0.0, 1.0 - yf.cogs_pct - ebit_m)
+                    yf.sga_pct = min(yf.sga_pct, remaining)
+                    yf.rd_pct = min(rd, remaining - yf.sga_pct)
 
     fcff_series = _build_fcff_series(
         year_forecasts=year_forecasts,
@@ -827,8 +841,8 @@ def _run_dcf_core(
     historical = _build_historical_rows(annual_display)
     proforma = _build_proforma_rows(year_forecasts, fcff_series, wacc_detail.tax_rate, last_annual_year, shares)
 
-    _today = str(pd.Timestamp.today().date())
-    analyst_estimates = _to_dc([e for e in raw_estimates if e.get("date", "") >= _today])
+    _cutoff = str((pd.Timestamp.today() - pd.Timedelta(days=60)).date())
+    analyst_estimates = _to_dc([e for e in raw_estimates if e.get("date", "") >= _cutoff])
 
     return DcfResult(
         ticker=ticker,

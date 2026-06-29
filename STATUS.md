@@ -1,4 +1,78 @@
-# Project Status — Fundamentals Alpha
+# Project Status — Fundamentals Alpha + FinView
+
+## BCD Mispricing Filter (complete, 2026-06-29)
+
+Hard portfolio filter applied in `scripts/score_live.py` based on Bakshi-Chen 2001 structural valuation model.
+
+### Formula (BCD-lite)
+
+```
+P_model = ttm_eps × (1 + earn_growth_1yr) / (DGS30 + 5.5% ERP - 3% terminal_growth)
+Misp    = (price - P_model) / P_model   [clipped to ±3]
+```
+
+Require `bcd_misp ≤ 0` (structurally underpriced only). NULL = excluded.
+
+### Backtest impact (post-2010, vw_gr_top_n_25)
+
+| Variant | CAGR | Sharpe | MaxDD | PF | R-Exp |
+|---------|------|--------|-------|-----|-------|
+| baseline | 12.66% | 0.754 | -35.5% | 1.63 | 0.91% |
+| bcd_hard | **15.66%** | **0.919** | **-28.0%** | **1.97** | **1.35%** |
+
+### Infrastructure added
+
+- `features/bcd/signal.py` — `compute_bcd_lite_misp()` function
+- `monthly_pe.bcd_misp` — 433,133 rows populated (84.8% of ttm_eps>0 rows)
+- `market_signals` table — monthly punder (420 months; avg=61.9%)
+- DGS30 in `trade_systems/data/fred.duckdb`; `dcf/data.py load_risk_free_rate_30y()`
+- DCF model now uses DGS30 as risk-free rate (was DGS10)
+- `scripts/score_live.py _apply_bcd_filter()` — runs when `--guardrails` is on (default)
+- `scripts/backfill_bcd_misp.py` — backfill + punder computation
+- `scripts/backtest_bcd_filter.py` — comparison script (baseline vs bcd_hard vs bcd_soft)
+- `scripts/validate_bcd_signal.py` — Phase 3 IC/ICIR/autocorr/punder validation
+
+### Key finding: use as filter, not ML feature
+
+Standalone NW-ICIR=-3.67 (strong signal) but 0.82 Spearman correlation with pe_ratio makes it redundant in XGBoost (NW-ICIR drops 2.26→0.95). Used as a pre-scoring hard filter instead.
+
+---
+
+
+## FinView — Sector & Industry Dashboard (complete, 2026-06)
+
+Web analytics platform at `web/` (Next.js, port 3000) with 8 tabs:
+
+| Tab | Description |
+|-----|-------------|
+| Screener | 18-metric stock filter with sortable results |
+| Sector | Sector/industry rankings, VMQ composite score, 5yr history chart, company drill-down |
+| AV Data | Alpha Vantage income/balance/cashflow viewer |
+| AV DCF | DCF valuation from AV data |
+| Fundamentals | PE/FCF/EV history, goal prices, valuation signals |
+| AI Research | AI-generated equity research report |
+| Earnings | Analyst EPS + revenue consensus estimates |
+| XBRL | SEC XBRL financial statements (appears after download) |
+
+### Sector dashboard — VMQ composite score methodology
+
+Cross-sectional z-scores (capped ±2.5) of three factors, weighted:
+
+- 35% Value: EV/EBITDA vs own 5yr historical median (avoids cross-sector PE comparison distortions)
+- 35% Momentum: trailing 1yr revenue growth median
+- 30% Quality: ROIC median
+
+Score > 0.2 = undervalued/improving (emerald), < -0.2 = expensive/deteriorating (rose).
+
+### sector_stats table (historic_fundamentals.duckdb)
+
+43,611 rows (5,231 sector rows + 38,380 industry rows). Columns added in this session:
+`gross_margin_median`, `operating_margin_median`, `fcf_margin_median`, `debt_to_ebitda_median`, `interest_coverage_median`
+
+Rebuild: `uv run scripts/rebuild_sector_stats.py`
+
+---
+
 
 ## Goal
 

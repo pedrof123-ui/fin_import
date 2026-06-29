@@ -13,13 +13,10 @@ DEFAULT_MRP = 0.055  # 5.5% Damodaran estimate
 DEFAULT_RF = 0.045   # fallback if fred.duckdb unavailable
 
 
-def get_beta(ticker: str) -> float | None:
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info
-        return info.get("beta")
-    except Exception:
-        return None
+def get_betas(ticker: str) -> tuple[float | None, float | None]:
+    """Return (beta_5yr, beta_2yr) from stored weekly betas."""
+    from features.beta.beta import get_beta as _get_beta, WINDOW_5YR, WINDOW_2YR
+    return _get_beta(ticker, window_days=WINDOW_5YR), _get_beta(ticker, window_days=WINDOW_2YR)
 
 
 def compute_effective_tax_rate(income_df: pd.DataFrame) -> float:
@@ -68,7 +65,8 @@ def compute_wacc(
 ) -> "WaccDetail":
     from dcf.assumptions import WaccDetail
 
-    beta_raw = beta_override if beta_override is not None else (get_beta(ticker) or 1.0)
+    beta_5yr_stored, beta_2yr_stored = get_betas(ticker)
+    beta_raw = beta_override if beta_override is not None else (beta_5yr_stored or 1.0)
     tax_rate = tax_rate_override if tax_rate_override is not None else compute_effective_tax_rate(income_df)
 
     # Annual income gives a full-year interest expense, yielding the correct annual kd.
@@ -129,4 +127,5 @@ def compute_wacc(
         wacc=wacc,
         total_debt=total_debt,
         market_cap=market_cap,
+        beta_2yr=beta_2yr_stored,
     )

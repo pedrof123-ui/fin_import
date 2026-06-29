@@ -936,6 +936,16 @@ def build_monthly_pe(
     base_rev = df["ttm_revenue"].shift(12)
     df["rev_growth_1yr"] = (df["ttm_revenue"] / base_rev - 1).where(base_rev > 0)
 
+    for series, col3, col5 in [
+        ("ttm_revenue", "rev_cagr_3yr",  "rev_cagr_5yr"),
+        ("ttm_eps",     "earn_cagr_3yr", "earn_cagr_5yr"),
+        ("ttm_fcf",     "fcf_cagr_3yr",  "fcf_cagr_5yr"),
+    ]:
+        b36 = df[series].shift(36)
+        b60 = df[series].shift(60)
+        df[col3] = ((df[series] / b36).where(b36 > 0) ** (1 / 3) - 1)
+        df[col5] = ((df[series] / b60).where(b60 > 0) ** (1 / 5) - 1)
+
     return df
 
 
@@ -1119,13 +1129,31 @@ def compute_pe_stats(
         "interest_coverage":         _f(last.get("interest_coverage")),
     })
 
-    # TTM-based 1yr growth rates — computed in build_monthly_pe from shift(12) of TTM series.
-    # process_ticker() overwrites these with annual-based values from compute_revenue_stats etc.;
-    # refresh-stats uses only monthly_pe so these are the only source available there.
+    # TTM-based growth rates — computed directly from the TTM series so that refresh-stats
+    # (which reads only monthly_pe) produces correct values even for existing rows.
+    # process_ticker() overwrites the 1yr values with annual-based values afterwards.
+    def _cagr(series: pd.Series, lag: int, years: int) -> float | None:
+        if len(series) <= lag:
+            return None
+        cur = series.iloc[-1]
+        base = series.iloc[-1 - lag]
+        if base > 0 and cur == cur and base == base:
+            return float((cur / base) ** (1.0 / years) - 1)
+        return None
+
+    rev  = monthly_pe["ttm_revenue"]
+    eps  = monthly_pe["ttm_eps"]
+    fcf  = monthly_pe["ttm_fcf"]
     result.update({
         "rev_growth_1yr":  _f(last.get("rev_growth_1yr")),
+        "rev_cagr_3yr":    _cagr(rev, 36, 3),
+        "rev_cagr_5yr":    _cagr(rev, 60, 5),
         "earn_growth_1yr": _f(last.get("earn_growth_1yr")),
+        "earn_cagr_3yr":   _cagr(eps, 36, 3),
+        "earn_cagr_5yr":   _cagr(eps, 60, 5),
         "fcf_growth_1yr":  _f(last.get("fcf_growth_1yr")),
+        "fcf_cagr_3yr":    _cagr(fcf, 36, 3),
+        "fcf_cagr_5yr":    _cagr(fcf, 60, 5),
     })
 
     # Goal prices — pre-computed by enrich_goals() and stored in monthly_pe columns

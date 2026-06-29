@@ -61,6 +61,8 @@ def main() -> None:
     parser.add_argument("--output", default=None, help="Output path for model.joblib")
     parser.add_argument("--min-cap", type=float, default=None)
     parser.add_argument("--min-price", type=float, default=None)
+    parser.add_argument("--rolling-years", type=int, default=5,
+                        help="Train on most recent N years only (default 5). Set 0 for all history.")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -116,6 +118,15 @@ def main() -> None:
     df = df[df[TARGET_COL].notna()].copy()
     log.info("After dropping rows without ret_1y: %d rows", len(df))
 
+    # Apply rolling window cutoff
+    if args.rolling_years:
+        cutoff = df["month_end_date"].max() - pd.DateOffset(years=args.rolling_years)
+        df = df[df["month_end_date"] >= cutoff].copy()
+        log.info(
+            "Rolling window (%dyr): keeping %s onward — %d rows remain",
+            args.rolling_years, str(cutoff)[:10], len(df),
+        )
+
     if len(df) < 1000:
         log.error("Too few labeled rows (%d) to train. Aborting.", len(df))
         sys.exit(1)
@@ -162,8 +173,10 @@ def main() -> None:
         print(f"  {feat:<40} {imp:.4f}")
 
     print(f"\nModel saved to {model_path}")
-    print(f"Training rows: {len(df_train):,} | Tickers: {df_train['ticker'].nunique():,}")
-    print(f"Date range: {str(df_train['month_end_date'].min())[:10]} to {str(df_train['month_end_date'].max())[:10]}")
+    print(f"Training rows : {len(df_train):,} | Tickers: {df_train['ticker'].nunique():,}")
+    print(f"Date range    : {str(df_train['month_end_date'].min())[:10]} to {str(df_train['month_end_date'].max())[:10]}")
+    window_label = f"{args.rolling_years}yr rolling" if args.rolling_years else "full history (expanding)"
+    print(f"Training window: {window_label}")
 
 
 if __name__ == "__main__":

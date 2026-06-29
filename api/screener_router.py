@@ -46,6 +46,12 @@ RANGE_FIELDS: list[tuple[str, str]] = [
     ("interest_coverage", "ps.interest_coverage"),
     ("dividend_yield",    "ps.dividend_yield"),
     ("momentum_12_1",     "mp.momentum_12_1"),
+    ("goal_low_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_low  IS NOT NULL THEN (ps.goal_low  / ps.current_price - 1) ELSE NULL END"),
+    ("goal_high_upside",  "CASE WHEN ps.current_price > 0 AND ps.goal_high IS NOT NULL THEN (ps.goal_high / ps.current_price - 1) ELSE NULL END"),
+    ("goal_pe_upside",    "CASE WHEN ps.current_price > 0 AND ps.goal_pe   IS NOT NULL THEN (ps.goal_pe   / ps.current_price - 1) ELSE NULL END"),
+    ("goal_pcf_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_pcf  IS NOT NULL THEN (ps.goal_pcf  / ps.current_price - 1) ELSE NULL END"),
+    ("goal_peg_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_peg  IS NOT NULL THEN (ps.goal_peg  / ps.current_price - 1) ELSE NULL END"),
+    ("goal_bv_upside",    "CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END"),
 ]
 
 
@@ -90,6 +96,18 @@ class ScreenRequest(BaseModel):
     dividend_yield_max: float | None = None
     momentum_12_1_min: float | None = None
     momentum_12_1_max: float | None = None
+    goal_low_upside_min: float | None = None
+    goal_low_upside_max: float | None = None
+    goal_high_upside_min: float | None = None
+    goal_high_upside_max: float | None = None
+    goal_pe_upside_min: float | None = None
+    goal_pe_upside_max: float | None = None
+    goal_pcf_upside_min: float | None = None
+    goal_pcf_upside_max: float | None = None
+    goal_peg_upside_min: float | None = None
+    goal_peg_upside_max: float | None = None
+    goal_bv_upside_min: float | None = None
+    goal_bv_upside_max: float | None = None
 
 
 _BASE_QUERY = """
@@ -127,7 +145,13 @@ SELECT
     ps.debt_to_ebitda,
     ps.interest_coverage,
     ps.dividend_yield,
-    mp.momentum_12_1
+    mp.momentum_12_1,
+    CASE WHEN ps.current_price > 0 AND ps.goal_low  IS NOT NULL THEN (ps.goal_low  / ps.current_price - 1) ELSE NULL END AS goal_low_upside,
+    CASE WHEN ps.current_price > 0 AND ps.goal_high IS NOT NULL THEN (ps.goal_high / ps.current_price - 1) ELSE NULL END AS goal_high_upside,
+    CASE WHEN ps.current_price > 0 AND ps.goal_pe   IS NOT NULL THEN (ps.goal_pe   / ps.current_price - 1) ELSE NULL END AS goal_pe_upside,
+    CASE WHEN ps.current_price > 0 AND ps.goal_pcf  IS NOT NULL THEN (ps.goal_pcf  / ps.current_price - 1) ELSE NULL END AS goal_pcf_upside,
+    CASE WHEN ps.current_price > 0 AND ps.goal_peg  IS NOT NULL THEN (ps.goal_peg  / ps.current_price - 1) ELSE NULL END AS goal_peg_upside,
+    CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END AS goal_bv_upside
 FROM hf.pe_stats ps
 LEFT JOIN latest_co co ON ps.ticker = co.ticker
 LEFT JOIN latest_mp mp ON ps.ticker = mp.ticker
