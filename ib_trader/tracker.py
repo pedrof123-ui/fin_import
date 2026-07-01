@@ -163,13 +163,13 @@ def _apply_fifo_lot(
     # SELL: close open lots oldest-first (FIFO)
     remaining = qty
     lots = conn.execute(
-        "SELECT id, open_date, open_price, qty_remaining FROM tax_lots "
+        "SELECT id, open_date, open_price, qty, qty_remaining FROM tax_lots "
         "WHERE strategy = ? AND ticker = ? AND qty_remaining > 0 "
         "ORDER BY open_date ASC, id ASC",
         [strategy, ticker],
     ).fetchall()
 
-    for lot_id, open_date, open_price, lot_remaining in lots:
+    for lot_id, open_date, open_price, lot_qty, lot_remaining in lots:
         if remaining <= 0:
             break
         close_qty = min(remaining, lot_remaining)
@@ -179,18 +179,27 @@ def _apply_fifo_lot(
         realized_pnl = (fill_price - open_price) * close_qty
         tax_rate = 0.15 if is_lt else 0.24
 
-        conn.execute(
-            "UPDATE tax_lots SET qty_remaining = ? WHERE id = ?",
-            [new_remaining, lot_id],
-        )
-        conn.execute(
-            "INSERT INTO tax_lots "
-            "(strategy, ticker, open_date, open_price, qty, qty_remaining, "
-            " close_date, close_price, realized_pnl, is_long_term, tax_rate) "
-            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
-            [strategy, ticker, open_date, open_price, close_qty,
-             fill_date, fill_price, realized_pnl, is_lt, tax_rate],
-        )
+        if close_qty == lot_qty:
+            # Whole lot closed in one sell — update in place, no duplicate row.
+            conn.execute(
+                "UPDATE tax_lots SET qty_remaining = 0, close_date = ?, close_price = ?, "
+                "realized_pnl = ?, is_long_term = ?, tax_rate = ? WHERE id = ?",
+                [fill_date, fill_price, realized_pnl, is_lt, tax_rate, lot_id],
+            )
+        else:
+            # Partial close — shrink the open lot, record the closed slice separately.
+            conn.execute(
+                "UPDATE tax_lots SET qty_remaining = ? WHERE id = ?",
+                [new_remaining, lot_id],
+            )
+            conn.execute(
+                "INSERT INTO tax_lots "
+                "(strategy, ticker, open_date, open_price, qty, qty_remaining, "
+                " close_date, close_price, realized_pnl, is_long_term, tax_rate) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+                [strategy, ticker, open_date, open_price, close_qty,
+                 fill_date, fill_price, realized_pnl, is_lt, tax_rate],
+            )
         remaining -= close_qty
 
 
