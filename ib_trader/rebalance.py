@@ -28,7 +28,14 @@ def run_rebalance(
     Returns blotter DataFrame.
     """
     # 1. Account state
-    nav = nav_override if nav_override else client.get_nav()
+    if nav_override is None:
+        raise ValueError(
+            "run_rebalance() requires an explicit nav_override. Falling back to the full "
+            "account NAV (client.get_nav()) is unsafe when multiple strategies share one "
+            "IB account — it would size the target portfolio against every strategy's "
+            "combined capital instead of just this one's."
+        )
+    nav = nav_override
     ib_positions = client.get_positions()
 
     # Scope current positions to only what this strategy owns, so we never

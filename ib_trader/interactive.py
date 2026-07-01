@@ -117,7 +117,20 @@ def _handle_cancel(client, args: list[str]) -> None:
         print(f"  Cancelled order {order_id}.")
 
 
-def _handle_rebalance(client, args: list[str], dry_run: bool, strategy: str) -> None:
+def _handle_rebalance(client, args: list[str], dry_run: bool, strategy: str, tracker_conn) -> None:
+    if tracker_conn is None:
+        print("  No tracker DB connected — refusing to rebalance. Relaunch with "
+              "'uv run scripts/ib_repl.py --tracker-db PATH' so NAV and positions "
+              "can be scoped to this strategy instead of the whole shared account.")
+        return
+
+    from .tracker import get_latest_strategy_nav
+    nav_override = get_latest_strategy_nav(tracker_conn, strategy)
+    if nav_override is None:
+        print(f"  No NAV recorded yet for strategy '{strategy}'. Run sync_fills.py once "
+              f"first, or use scripts/rebalance.py --nav-override for the initial run.")
+        return
+
     path_args = [a for a in args if not a.startswith("--")]
     if path_args:
         scores_path = path_args[0]
@@ -132,10 +145,11 @@ def _handle_rebalance(client, args: list[str], dry_run: bool, strategy: str) -> 
 
     ranked_df = load_scores_csv(scores_path)
     print(f"Loaded {len(ranked_df)} portfolio positions.")
-    run_rebalance(ranked_df, client, order_type="MOC", dry_run=dry_run, strategy=strategy)
+    run_rebalance(ranked_df, client, order_type="MOC", dry_run=dry_run, strategy=strategy,
+                  tracker_conn=tracker_conn, nav_override=nav_override)
 
 
-def run_repl(client, strategy: str = "fundamentals_alpha") -> None:
+def run_repl(client, strategy: str = "fundamentals_alpha", tracker_conn=None) -> None:
     account_type = "LIVE" if client.is_live() else "PAPER"
     print(f"\nIB Trader REPL — {client.account} [{account_type}]")
     if client.is_live():
@@ -173,9 +187,9 @@ def run_repl(client, strategy: str = "fundamentals_alpha") -> None:
         elif cmd == "cancel":
             _handle_cancel(client, args)
         elif cmd == "preview":
-            _handle_rebalance(client, args, dry_run=True, strategy=strategy)
+            _handle_rebalance(client, args, dry_run=True, strategy=strategy, tracker_conn=tracker_conn)
         elif cmd == "rebalance":
             confirm = "--confirm" in args
-            _handle_rebalance(client, args, dry_run=not confirm, strategy=strategy)
+            _handle_rebalance(client, args, dry_run=not confirm, strategy=strategy, tracker_conn=tracker_conn)
         else:
             print(f"Unknown command: {cmd!r}. Type 'help' for commands.")
