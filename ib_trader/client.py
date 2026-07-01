@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 from pathlib import Path
@@ -10,6 +11,13 @@ from ib_async import IB, Contract, Stock
 
 nest_asyncio.apply()
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+log = logging.getLogger(__name__)
+
+
+def _log_ib_error(reqId: int, errorCode: int, errorString: str, contract: Contract | None) -> None:
+    symbol = f" [{contract.symbol}]" if contract is not None else ""
+    log.warning("IB error %s (reqId=%s)%s: %s", errorCode, reqId, symbol, errorString)
 
 
 class IBClient:
@@ -27,6 +35,7 @@ class IBClient:
         self.client_id = int(client_id or os.getenv("IB_CLIENT_ID", "1"))
         self.account = account or os.getenv("IB_ACCOUNT", "")
         self.ib = IB()
+        self.ib.errorEvent += _log_ib_error
 
     def connect(self) -> "IBClient":
         self.ib.connect(self.host, self.port, clientId=self.client_id)

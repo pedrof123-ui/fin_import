@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import subprocess
 import sys
 import time
@@ -86,7 +87,8 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
-    uv = ["uv", "run"]
+    uv_bin = shutil.which("uv") or "/home/pedro/.local/bin/uv"
+    uv = [uv_bin, "run"]
     timings: dict[str, float] = {}
 
     print(f"\n{'#' * 70}")

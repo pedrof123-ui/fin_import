@@ -34,6 +34,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +50,17 @@ from ib_trader.portfolio import find_latest_scores, load_scores_csv
 from ib_trader.rebalance import run_rebalance
 
 log = logging.getLogger(__name__)
+
+
+def _is_last_trading_day_of_month() -> bool:
+    """True if today is the last weekday (Mon-Fri) of the current month."""
+    today = date.today()
+    next_month = today.replace(day=28) + timedelta(days=4)
+    last_calendar_day = next_month - timedelta(days=next_month.day)
+    d = last_calendar_day
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return today == d
 
 
 def main() -> None:
@@ -76,8 +88,15 @@ def main() -> None:
                         help="Cancel all open orders and exit")
     parser.add_argument("--status", action="store_true",
                         help="Show account status and exit")
+    parser.add_argument("--force", action="store_true",
+                        help="Bypass the last-trading-day-of-month guard")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+
+    if (not args.dry_run and not args.force and not args.status and not args.cancel_all
+            and not _is_last_trading_day_of_month()):
+        print("Not the last trading day of the month — skipping live rebalance. Use --force to override.")
+        return
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

@@ -142,7 +142,11 @@ def main() -> int:
         db.close()
 
     log.info("Update complete: %d ok, %d failed", ok, failed)
-    return 0 if failed == 0 else 1
+    failure_rate = failed / len(tickers)
+    if failure_rate > 0.05:
+        log.error("Failure rate %.1f%% exceeds 5%% threshold — treating as fatal.", failure_rate * 100)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
