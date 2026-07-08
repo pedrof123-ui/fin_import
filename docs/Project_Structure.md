@@ -153,7 +153,10 @@ fin_import2/
 │   │                                    record_fills_from_blotter, load_backtest_benchmarks
 │   ├── performance.py                   P&L, risk metrics, and IC computations from tracker data
 │   │                                    Functions: get_open_positions, get_pnl_summary, get_monthly_returns,
-│   │                                    get_performance_stats, get_period_returns_table, get_slippage_summary,
+│   │                                    get_performance_stats, get_trade_stats (Profit Factor + Van Tharp
+│   │                                    R-Multiple from closed tax_lots; added for trade_systems/DASHBOARD.md,
+│   │                                    matches the strategies/hammer_bottom_reverse backtest notebook's
+│   │                                    definition), get_period_returns_table, get_slippage_summary,
 │   │                                    get_ic_series, compare_vs_backtest, get_trade_history
 │   └── report.py                        snapshot_report() (8-section printed report) + Jupyter query wrappers:
 │                                        get_trades, get_positions, get_performance, get_tax_summary

@@ -342,6 +342,41 @@ def get_slippage_summary(conn: duckdb.DuckDBPyConnection, strategy: str) -> dict
     }
 
 
+def get_trade_stats(conn: duckdb.DuckDBPyConnection, strategy: str) -> dict:
+    """Profit Factor and Van Tharp R-Multiple from realized closed trades.
+
+    Matches the definition used in strategies/hammer_bottom_reverse's backtest
+    notebook: 1R = mean absolute % return of realized losing trades, so live and
+    backtest numbers are directly comparable.
+    """
+    df = conn.execute(
+        "SELECT open_price, close_price FROM tax_lots "
+        "WHERE strategy = ? AND close_date IS NOT NULL AND open_price > 0",
+        [strategy],
+    ).df()
+    if len(df) < 2:
+        return {"n_closed_trades": len(df)}
+
+    ret = (df["close_price"] - df["open_price"]) / df["open_price"]
+    wins = ret[ret > 0]
+    losses = ret[ret <= 0]
+
+    gross_loss = losses.abs().sum()
+    profit_factor = float(wins.sum() / gross_loss) if gross_loss > 0 else float("inf")
+
+    r_value = float(losses.abs().mean()) if len(losses) > 0 else float("nan")
+    mean_r_multiple = float((ret / r_value).mean()) if r_value and r_value > 0 else float("nan")
+
+    return {
+        "n_closed_trades": len(ret),
+        "win_rate": float((ret > 0).mean()),
+        "profit_factor": profit_factor,
+        "r_value": r_value,
+        "r_definition": "1R = mean absolute % return of realized losing trades",
+        "mean_r_multiple": mean_r_multiple,
+    }
+
+
 def get_trade_history(
     conn: duckdb.DuckDBPyConnection,
     strategy: str,
