@@ -7,7 +7,7 @@ import asyncio
 import time
 import pandas as pd
 from fastapi import HTTPException
-from edgar import Company
+from edgar import Company, CompanyNotFoundError
 
 from financial_statements_db import FinancialStatementsDB
 from extractors.income_statement_extractor import extract_income_statement
@@ -48,7 +48,10 @@ async def import_ticker(
 ) -> dict:
     form = "10-K" if period_type == "FY" else "10-Q"
 
-    company = await asyncio.to_thread(lambda: Company(ticker))
+    try:
+        company = await asyncio.to_thread(lambda: Company(ticker))
+    except CompanyNotFoundError:
+        raise HTTPException(status_code=404, detail=f"No company found for ticker {ticker}")
     from xbrl_mappings.sic_lookup import get_ff48
     ff48_code = get_ff48(getattr(company, 'sic', None))
 

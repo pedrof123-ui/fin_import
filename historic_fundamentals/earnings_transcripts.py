@@ -50,6 +50,18 @@ def open_db(db_path: Path = DEFAULT_DB_PATH) -> duckdb.DuckDBPyConnection:
         conn.execute("ALTER TABLE earnings_transcripts ADD COLUMN source VARCHAR DEFAULT 'av'")
     if "earnings_call_date" not in cols:
         conn.execute("ALTER TABLE earnings_transcripts ADD COLUMN earnings_call_date DATE")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS earnings_surprises (
+            symbol           VARCHAR NOT NULL,
+            fiscal_date_ending VARCHAR NOT NULL,
+            reported_date    VARCHAR,
+            reported_eps     DOUBLE,
+            estimated_eps    DOUBLE,
+            surprise_pct     DOUBLE,
+            fetched_at       TIMESTAMP,
+            PRIMARY KEY (symbol, fiscal_date_ending)
+        )
+    """)
     return conn
 
 
@@ -67,6 +79,18 @@ def get_latest_cached_quarter(conn: duckdb.DuckDBPyConnection, symbol: str) -> O
         [symbol],
     ).fetchone()
     return row[0] if row else None
+
+
+def get_last_n_transcripts(
+    conn: duckdb.DuckDBPyConnection, symbol: str, n: int = 4
+) -> list[tuple[str, str]]:
+    """Return up to n cached (quarter, transcript_text) pairs, newest first."""
+    rows = conn.execute(
+        "SELECT quarter, transcript_text FROM earnings_transcripts "
+        "WHERE symbol = ? ORDER BY quarter DESC LIMIT ?",
+        [symbol, n],
+    ).fetchall()
+    return [(r[0], r[1]) for r in rows]
 
 
 def save_transcript(
@@ -92,6 +116,98 @@ def save_transcript(
         """,
         [symbol, quarter, transcript_text, date.today(), api_json, source, earnings_call_date],
     )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# EPS beat/miss history (AV EARNINGS function)
+# ---------------------------------------------------------------------------
+
+_SURPRISE_CACHE_DAYS = 30
+
+
+def get_cached_surprises(
+    conn: duckdb.DuckDBPyConnection, symbol: str, max_age_days: int = _SURPRISE_CACHE_DAYS
+) -> Optional[list[dict]]:
+    """Return up to 8 cached quarterly (reported_eps, estimated_eps, surprise_pct) rows,
+    newest first, or None if the cache is stale/empty."""
+    from datetime import datetime, timedelta
+
+    row = conn.execute(
+        "SELECT MAX(fetched_at) FROM earnings_surprises WHERE symbol = ?", [symbol]
+    ).fetchone()
+    if not row or row[0] is None or row[0] < datetime.utcnow() - timedelta(days=max_age_days):
+        return None
+    rows = conn.execute(
+        """SELECT fiscal_date_ending, reported_date, reported_eps, estimated_eps, surprise_pct
+           FROM earnings_surprises WHERE symbol = ?
+           ORDER BY fiscal_date_ending DESC LIMIT 8""",
+        [symbol],
+    ).fetchall()
+    return [
+        {"fiscal_date_ending": r[0], "reported_date": r[1], "reported_eps": r[2],
+         "estimated_eps": r[3], "surprise_pct": r[4]}
+        for r in rows
+    ]
+
+
+def fetch_surprises_from_av(symbol: str, api_key: Optional[str] = None) -> Optional[list[dict]]:
+    """Fetch quarterly EPS beat/miss history from Alpha Vantage's EARNINGS function."""
+    if api_key is None:
+        api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    if not api_key:
+        return None
+
+    resp = requests.get(
+        _AV_URL,
+        params={"function": "EARNINGS", "symbol": symbol, "apikey": api_key},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    quarterly = data.get("quarterlyEarnings")
+    if not quarterly:
+        return None
+
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    return [
+        {
+            "fiscal_date_ending": q.get("fiscalDateEnding"),
+            "reported_date": q.get("reportedDate"),
+            "reported_eps": _f(q.get("reportedEPS")),
+            "estimated_eps": _f(q.get("estimatedEPS")),
+            "surprise_pct": _f(q.get("surprisePercentage")),
+        }
+        for q in quarterly[:8]
+    ]
+
+
+def save_surprises(conn: duckdb.DuckDBPyConnection, symbol: str, rows: list[dict]) -> None:
+    from datetime import datetime
+
+    fetched_at = datetime.utcnow()
+    for r in rows:
+        conn.execute(
+            """
+            INSERT INTO earnings_surprises
+                (symbol, fiscal_date_ending, reported_date, reported_eps, estimated_eps,
+                 surprise_pct, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (symbol, fiscal_date_ending) DO UPDATE SET
+                reported_date = EXCLUDED.reported_date,
+                reported_eps  = EXCLUDED.reported_eps,
+                estimated_eps = EXCLUDED.estimated_eps,
+                surprise_pct  = EXCLUDED.surprise_pct,
+                fetched_at    = EXCLUDED.fetched_at
+            """,
+            [symbol, r["fiscal_date_ending"], r["reported_date"], r["reported_eps"],
+             r["estimated_eps"], r["surprise_pct"], fetched_at],
+        )
     conn.commit()
 
 
