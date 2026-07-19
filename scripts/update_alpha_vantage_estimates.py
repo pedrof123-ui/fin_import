@@ -76,7 +76,7 @@ def store_estimates(db: FinancialStatementsDB, ticker: str, estimates: list[dict
         db.conn.execute(
             """
             INSERT INTO earnings_estimates (
-                ticker, date, horizon, fetched_at,
+                ticker, fiscal_date, horizon, fetched_at,
                 eps_avg, eps_high, eps_low, eps_count,
                 eps_avg_7d, eps_avg_30d, eps_avg_60d, eps_avg_90d,
                 eps_rev_up_7d, eps_rev_down_7d, eps_rev_up_30d, eps_rev_down_30d,

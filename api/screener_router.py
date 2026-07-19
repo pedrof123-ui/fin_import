@@ -22,10 +22,12 @@ router = APIRouter(prefix="/screen", tags=["screener"])
 _HF_DB = Path(os.environ.get("HF_DB_PATH", str(Path(__file__).parent.parent / "data" / "historic_fundamentals.duckdb")))
 _AV_DB = Path(os.environ.get("AV_FINANCIALS_DB_PATH", str(Path(__file__).parent.parent / "data" / "av_financials.duckdb")))
 
-# (field_prefix, SQL expression using table aliases ps / co / mp)
+# (field_prefix, SQL expression using table aliases ps / co / mp / dr)
 # ps  = hf.pe_stats
 # co  = latest row from av.company_overview
 # mp  = latest row from hf.monthly_pe
+# dr  = hf.dcf_results (status='ok' rows only), refreshed monthly by
+#       scripts/compute_dcf_batch.py — see DCF_SCREENER_PLAN.md
 RANGE_FIELDS: list[tuple[str, str]] = [
     ("market_cap_b",      "COALESCE(ps.market_cap_b, co.market_cap / 1e9)"),
     ("pe",                "ps.current_pe"),
@@ -52,6 +54,7 @@ RANGE_FIELDS: list[tuple[str, str]] = [
     ("goal_pcf_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_pcf  IS NOT NULL THEN (ps.goal_pcf  / ps.current_price - 1) ELSE NULL END"),
     ("goal_peg_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_peg  IS NOT NULL THEN (ps.goal_peg  / ps.current_price - 1) ELSE NULL END"),
     ("goal_bv_upside",    "CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END"),
+    ("dcf_upside",        "CASE WHEN ps.current_price > 0 AND dr.intrinsic_value_per_share IS NOT NULL THEN (dr.intrinsic_value_per_share / ps.current_price - 1) ELSE NULL END"),
 ]
 
 
@@ -108,6 +111,8 @@ class ScreenRequest(BaseModel):
     goal_peg_upside_max: float | None = None
     goal_bv_upside_min: float | None = None
     goal_bv_upside_max: float | None = None
+    dcf_upside_min: float | None = None
+    dcf_upside_max: float | None = None
 
 
 _BASE_QUERY = """
@@ -151,10 +156,13 @@ SELECT
     CASE WHEN ps.current_price > 0 AND ps.goal_pe   IS NOT NULL THEN (ps.goal_pe   / ps.current_price - 1) ELSE NULL END AS goal_pe_upside,
     CASE WHEN ps.current_price > 0 AND ps.goal_pcf  IS NOT NULL THEN (ps.goal_pcf  / ps.current_price - 1) ELSE NULL END AS goal_pcf_upside,
     CASE WHEN ps.current_price > 0 AND ps.goal_peg  IS NOT NULL THEN (ps.goal_peg  / ps.current_price - 1) ELSE NULL END AS goal_peg_upside,
-    CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END AS goal_bv_upside
+    CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END AS goal_bv_upside,
+    dr.intrinsic_value_per_share                         AS dcf_intrinsic_value,
+    CASE WHEN ps.current_price > 0 AND dr.intrinsic_value_per_share IS NOT NULL THEN (dr.intrinsic_value_per_share / ps.current_price - 1) ELSE NULL END AS dcf_upside
 FROM hf.pe_stats ps
 LEFT JOIN latest_co co ON ps.ticker = co.ticker
 LEFT JOIN latest_mp mp ON ps.ticker = mp.ticker
+LEFT JOIN hf.dcf_results dr ON ps.ticker = dr.ticker AND dr.status = 'ok'
 """
 
 

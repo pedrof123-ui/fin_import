@@ -459,6 +459,22 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS debt_to_ebitda_median DOUBLE")
         self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS interest_coverage_median DOUBLE")
 
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS dcf_results (
+                ticker                    VARCHAR NOT NULL,
+                intrinsic_value_per_share DOUBLE,
+                wacc                      DOUBLE,
+                terminal_growth_rate      DOUBLE,
+                enterprise_value          DOUBLE,
+                net_debt                  DOUBLE,
+                diluted_shares            DOUBLE,
+                status                    VARCHAR NOT NULL,
+                error_message             VARCHAR,
+                computed_at               TIMESTAMP NOT NULL,
+                PRIMARY KEY (ticker)
+            )
+        """)
+
     # ── Upsert ───────────────────────────────────────────────────────────────
 
     def upsert_monthly_pe(self, ticker: str, df: pd.DataFrame) -> int:
@@ -932,6 +948,29 @@ class HistoricFundamentalsDB:
             """)
         finally:
             self.conn.execute("DROP VIEW IF EXISTS _tmp_sector")
+        return len(df)
+
+    def upsert_dcf_results(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        cols = [
+            "ticker", "intrinsic_value_per_share", "wacc", "terminal_growth_rate",
+            "enterprise_value", "net_debt", "diluted_shares",
+            "status", "error_message", "computed_at",
+        ]
+        data = df.copy()
+        for col in cols:
+            if col not in data.columns:
+                data[col] = None
+        self.conn.register("_tmp_dcf_results", data[cols])
+        try:
+            col_csv = ", ".join(cols)
+            self.conn.execute(f"""
+                INSERT OR REPLACE INTO dcf_results ({col_csv})
+                SELECT {col_csv} FROM _tmp_dcf_results
+            """)
+        finally:
+            self.conn.execute("DROP VIEW IF EXISTS _tmp_dcf_results")
         return len(df)
 
     def update_forward_pe(self, ticker: str, forward_pe: float | None, forward_12m_eps: float | None) -> None:

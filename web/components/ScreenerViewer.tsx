@@ -38,6 +38,7 @@ const RANGE_FIELD_META: Record<string, { label: string; fmt: FmtType }> = {
   goal_pcf_upside:   { label: "PT P/FCF Upside",  fmt: "pct" },
   goal_peg_upside:   { label: "PT PEG Upside",    fmt: "pct" },
   goal_bv_upside:    { label: "PT P/BV Upside",   fmt: "pct" },
+  dcf_upside:        { label: "DCF Upside",       fmt: "pct" },
 };
 
 const FILTER_SECTIONS: { label: string; fields: string[] }[] = [
@@ -47,7 +48,7 @@ const FILTER_SECTIONS: { label: string; fields: string[] }[] = [
   { label: "Quality",           fields: ["gross_margin", "ebit_margin", "fcf_margin", "roe", "roic"] },
   { label: "Leverage",          fields: ["debt_to_ebitda", "interest_coverage"] },
   { label: "Income & Momentum", fields: ["dividend_yield", "momentum_12_1"] },
-  { label: "Price Targets",    fields: ["goal_low_upside", "goal_high_upside", "goal_pe_upside", "goal_pcf_upside", "goal_peg_upside", "goal_bv_upside"] },
+  { label: "Price Targets",    fields: ["goal_low_upside", "goal_high_upside", "goal_pe_upside", "goal_pcf_upside", "goal_peg_upside", "goal_bv_upside", "dcf_upside"] },
 ];
 
 const RESULT_COLS: { key: string; label: string; fmt: FmtType }[] = [
@@ -69,6 +70,7 @@ const RESULT_COLS: { key: string; label: string; fmt: FmtType }[] = [
   { key: "momentum_12_1",            label: "Mom 12-1",  fmt: "pct" },
   { key: "goal_low_upside",          label: "PT Low Up", fmt: "pct" },
   { key: "goal_high_upside",         label: "PT Hi Up",  fmt: "pct" },
+  { key: "dcf_upside",               label: "DCF Upside", fmt: "pct" },
 ];
 
 type Preset = {
@@ -112,6 +114,17 @@ const PRESETS: Record<string, Preset> = {
       ["", "All fundamental price targets"],
       ["", "(P/E, P/FCF, PEG, P/BV)"],
       ["", "above current price"],
+    ],
+  },
+  dcf_undervalued: {
+    label: "DCF Undervalued",
+    filters: {
+      dcf_upside_min: "20",
+    },
+    tooltip: [
+      ["DCF Upside", "> 20%"],
+      ["", "Intrinsic value (DCF model)"],
+      ["", "exceeds current price by 20%+"],
     ],
   },
 };

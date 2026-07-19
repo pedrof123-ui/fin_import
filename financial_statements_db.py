@@ -322,7 +322,7 @@ class FinancialStatementsDB:
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS earnings_estimates (
                 ticker VARCHAR NOT NULL,
-                date DATE NOT NULL,
+                fiscal_date DATE NOT NULL,
                 horizon VARCHAR NOT NULL,
                 fetched_at TIMESTAMP NOT NULL,
                 eps_avg DOUBLE,
@@ -341,9 +341,18 @@ class FinancialStatementsDB:
                 rev_high DOUBLE,
                 rev_low DOUBLE,
                 rev_count INTEGER,
-                PRIMARY KEY (ticker, date, horizon, fetched_at)
+                PRIMARY KEY (ticker, fiscal_date, horizon, fetched_at)
             )
         """)
+        # Older DBs created this table with the column named "date" — dcf/estimates.py
+        # (shared with historic_fundamentals.duckdb, which already uses "fiscal_date")
+        # queries "fiscal_date" and 500s against the old name. Migrate in place.
+        legacy_col = self.conn.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'earnings_estimates' AND column_name = 'date'"
+        ).fetchone()
+        if legacy_col:
+            self.conn.execute('ALTER TABLE earnings_estimates RENAME COLUMN "date" TO "fiscal_date"')
 
         print("Database schema created/verified")
 

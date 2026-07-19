@@ -5,11 +5,13 @@ End-to-end pipeline runner for the fundamentals-alpha model.
 Runs each step in the correct order, stops on failure, and reports timing.
 
 Default pipeline (fast path, no AV data fetch):
-    1. hf_update      — rebuild monthly_pe features from existing financials DB
-    2. validate_model — walk-forward validation (OOS IC, ICIR, SHAP)
-    3. train_model    — train XGBoost on full history, save model.joblib
-    4. run_backtest   — composite + XGBoost + guardrails backtest, save report
-    5. score_live     — score current universe, save ranked CSV
+    1. hf_update        — rebuild monthly_pe features from existing financials DB
+    1b. compute_dcf_batch — refresh dcf_results cache for the Screener's DCF-upside
+                            filter (~15 min for the full universe)
+    2. validate_model   — walk-forward validation (OOS IC, ICIR, SHAP)
+    3. train_model      — train XGBoost on full history, save model.joblib
+    4. run_backtest     — composite + XGBoost + guardrails backtest, save report
+    5. score_live       — score current universe, save ranked CSV
 
 With --av-update (slow, ~30 min, rate-limited to 75 calls/min):
     0. av_update      — fetch latest financials from Alpha Vantage API
@@ -20,6 +22,7 @@ Usage:
     uv run scripts/run_pipeline.py --av-update      # full refresh including AV
     uv run scripts/run_pipeline.py --skip-validate  # skip walk-forward (faster)
     uv run scripts/run_pipeline.py --skip-train     # reuse existing model.joblib
+    uv run scripts/run_pipeline.py --skip-dcf       # skip DCF batch (saves ~15 min)
     uv run scripts/run_pipeline.py --quarterly      # quarterly backtest
     uv run scripts/run_pipeline.py --tc-bps 20      # higher transaction cost
     uv run scripts/run_pipeline.py --dry-run        # print commands without running
@@ -77,6 +80,8 @@ def main() -> None:
                         help="Skip walk-forward validation (saves ~30s)")
     parser.add_argument("--skip-train", action="store_true",
                         help="Skip model training (reuse existing model.joblib)")
+    parser.add_argument("--skip-dcf", action="store_true",
+                        help="Skip DCF batch (saves ~15 min for the full universe)")
     parser.add_argument("--quarterly", action="store_true",
                         help="Run quarterly backtest in addition to monthly")
     parser.add_argument("--tc-bps", type=float, default=10.0,
@@ -102,6 +107,8 @@ def main() -> None:
         print("  Walk-forward validation: SKIPPED")
     if args.skip_train:
         print("  Model training: SKIPPED (reusing model.joblib)")
+    if args.skip_dcf:
+        print("  DCF batch: SKIPPED")
     print(f"  TC: {args.tc_bps:.0f} bps")
     print()
 
@@ -119,6 +126,14 @@ def main() -> None:
         "HF Update — rebuild monthly_pe features",
         dry_run=args.dry_run,
     )
+
+    # Step 1b: DCF batch (refreshes dcf_results for the Screener's DCF-upside filter)
+    if not args.skip_dcf:
+        timings["compute_dcf_batch"] = _run(
+            uv + ["scripts/compute_dcf_batch.py"],
+            "DCF Batch — refresh dcf_results cache for the Screener",
+            dry_run=args.dry_run,
+        )
 
     # Step 2: walk-forward validation
     if not args.skip_validate:
@@ -179,6 +194,8 @@ def main() -> None:
     print(f"    docs/backtest_results_model_guardrails.md")
     print(f"    docs/validation_report.md")
     print(f"    docs/live_scores_*.csv")
+    if not args.skip_dcf:
+        print(f"    data/historic_fundamentals.duckdb::dcf_results (screener DCF cache)")
     if not args.skip_train:
         print(f"    data/model.joblib")
     print()
