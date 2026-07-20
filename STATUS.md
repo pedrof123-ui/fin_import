@@ -1,5 +1,21 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## Phase 11 Go/No-Go Gate — CLOSED, Composite Accepted, XGBoost Retired (2026-07-20)
+
+Closed the go/no-go gate that had been open since May (`features/historic_fundamentals/fundamentals_alpha_action_plan.md` Phase 11 — `reports/model_acceptance_checklist.md`/`model_usage_decision.md` never existed until now). Triggered by a chain of findings this session: a train/serve z-score bug fix in `score_live.py` → discovering the same code pattern would be *wrong* to fix in `run_backtest.py` (single static model applied across ~40 years, era-mismatched normalization) → building a genuine walk-forward portfolio backtest to answer the question honestly → running Phase 9 robustness checks on the winner.
+
+**Decision**: composite factor score (value+quality+momentum, no ML) = **Category 3, Paper Trading** — already what's live (`vw_gr_top_n_25`), now formally ratified with evidence. XGBoost `ret_1y` model = **Category 1, Research Only** — fails OOS rank IC (-0.017) and underperforms composite on every risk-adjusted metric under honest walk-forward testing (top_n_25: XGBoost Sharpe 0.73/-61.7% MaxDD vs. composite Sharpe 0.92/-50.1% MaxDD). No live behavior change: `score_live.py` already defaulted to composite; the pipeline never passed `--use-model`.
+
+**Composite passed robustness testing** (`docs/composite_robustness_report.md`): stable-to-improving Sharpe across market-cap cuts (300M-5B), edge survives up to 100bps TC, no small-cap/illiquidity dependency.
+
+**Two caveats disclosed, not resolved, in the acceptance checklist:**
+- Sector-neutral scoring underperforms raw scoring (Sharpe 0.85 vs 0.94) — real share of the edge is sector positioning, not pure stock selection.
+- `docs/composite_ic_analysis.md`: monthly rank IC is small-but-positive (+0.014 to +0.035, ICIR ~0.2-0.3) and top-25/50 beats bottom-25/50, but this **inverts** at top-100+/decile cuts (bottom outperforms top). The traded configuration (top_n_25) sits in the positive zone, but the score is not a broadly monotonic signal — open question, flagged for follow-up, not blocking.
+
+Full detail: `reports/model_acceptance_checklist.md`, `reports/model_usage_decision.md`.
+
+---
+
 ## ML Comps Valuation Model (complete, 2026-07-20)
 
 Cross-sectional peer-comps ML model predicting a fair P/E and P/FCF multiple for each stock from its fundamentals vs. sector peers — additive to the existing self-referential `goal_pe`/`goal_low`/`goal_high` (which compare a ticker to its *own* multiple history, not peers). Full phased build record: `features/historic_fundamentals/ml_comps_valuation_plan.md`.

@@ -1,0 +1,37 @@
+# Fundamentals Alpha — Model Acceptance Checklist
+
+Closes the Phase 11 go/no-go gate defined in
+`features/historic_fundamentals/fundamentals_alpha_action_plan.md`, open since
+2026-05 (this checklist and `model_usage_decision.md` were the two deliverables
+that plan called for and never existed until now). Evaluated 2026-07-20.
+
+**Scope:** two candidate models were compared — the composite factor score
+(value + quality + momentum, no ML) and the XGBoost `ret_1y` model. Criteria
+below are evaluated for both; the verdict column states which one satisfies
+each criterion.
+
+| # | Criterion | Composite | XGBoost | Evidence |
+|---|---|---|---|---|
+| 1 | No point-in-time leakage found | **PASS** | **PASS** (with history) | Both draw features from `monthly_pe`, gated by `feature_available_date` at the row level (`historic_fundamentals/pe.py`). A prior leakage bug (`goal_discount`/`goal_upside` derived from all-time `pe_lt_median`) was found and fixed by removing those fields from `FEATURE_COLS` (`STATUS.md`, "Bugs Fixed"). Composite's factor set (`ps_ratio`, `fcf_yield`, `ev_ebitda`, `earnings_yield`, `roic`, `roa`, `operating_margin_slope_5y`, `earnings_quality`, `asset_growth`, `momentum_12_1`) contains none of the flagged self-referential fields. Separately, a train/serve normalization bug in `score_live.py` (XGBoost path only) was found and fixed 2026-07-20 — see criterion 11. |
+| 2 | Investable backtest beats universe equal-weight after costs | **PASS** | PASS (weaker) | Composite `top_n_25`: CAGR +19.58% (full history, 10bps TC) to +22.84% (1991-2026 window) vs. universe-EW +15.48% (same window). XGBoost walk-forward `top_n_25`: +20.76%, also beats EW but on a worse risk-adjusted basis (see #9). `docs/walk_forward_portfolio_backtest.md`, `docs/composite_robustness_report.md`. |
+| 3 | Investable backtest beats SPY or has lower risk with acceptable alpha | **PASS** | PASS (weaker) | SPY (1991-2026): CAGR +8.85%, Sharpe 0.619, MaxDD -61.22%. Composite `top_n_25`: CAGR +22.84%, Sharpe 0.923. Live guardrailed+vol-weighted variant `vw_gr_top_n_25`: CAGR +16.7%, Sharpe 1.000, MaxDD -35.4% — beats SPY on both return and risk. XGBoost also beats SPY on CAGR but with materially worse Sharpe/drawdown (see #9). |
+| 4 | Positive out-of-sample rank IC | **CONDITIONAL PASS** | **FAIL** | Composite: mean monthly rank IC = +0.014 (1mo fwd) / +0.035 (12mo fwd), ICIR 0.21-0.28, positive in ~59-60% of months — small but real and consistently signed. XGBoost: mean OOS rank IC = **-0.017** (walk-forward, 35 folds, 1991-2026) — flat/slightly negative. `docs/composite_ic_analysis.md`. |
+| 5 | Top bucket beats bottom bucket consistently | **CONDITIONAL PASS — see note** | FAIL | Composite: top-25 beats bottom-25 by +0.36%/mo (1mo fwd) and +4.02%/12mo — positive at the traded size. **But this inverts at broader cuts**: top-100 and top-decile (~190 names) show the *bottom* of the ranking outperforming by -1.37%/mo and -0.80%/mo respectively. The composite score is not a broadly monotonic signal across the full ranking; it identifies a narrow top slice, which happens to be exactly the slice this pipeline trades (`top_n_25`). Unresolved tension with the positive `composite_top_pct_20` portfolio-backtest result — flagged as a follow-up, not blocking for the top_n_25 configuration in use. `docs/composite_ic_analysis.md`. |
+| 6 | Results survive market-cap filters | **PASS** | Not retested (XGBoost retired, see #9) | Composite Sharpe is stable to *improving* at larger/more liquid cuts: 300M Sharpe 0.965, 1B (baseline) 0.938, 5B 0.980. Not a small-cap/illiquidity artifact. `docs/composite_robustness_report.md`. |
+| 7 | Results survive transaction costs | **PASS** | Not retested | Edge decays smoothly and survives even a punitive 100bps one-way assumption: CAGR +16.04%, Sharpe 0.797 at 100bps vs. +19.98%/0.954 at 0bps — still clearly ahead of SPY's 0.619 Sharpe. `docs/composite_robustness_report.md`. |
+| 8 | Sector exposures are explainable and controlled | **PARTIAL PASS — disclose** | N/A | A 25% max-sector-position cap is enforced in both backtests and live scoring (`max_sector_pct=0.25` in `score_live.py`/`run_monthly_backtest`). However, sector-neutral scoring *underperforms* raw scoring (CAGR +17.40%/Sharpe 0.851 vs. +19.58%/0.938) — meaning a real share of the strategy's edge comes from sector-level positioning (overweighting cheap/high-momentum sectors as a whole), not purely within-sector stock selection. This should be disclosed as the nature of the strategy, not treated as a pure stock-picking signal. `docs/composite_robustness_report.md`. |
+| 9 | Drawdowns are acceptable | **NEEDS PM JUDGMENT** | Worse | Unguarded `top_n_25` variants show MaxDD -50% to -62% across all configurations tested — comparable in magnitude to SPY's own worst historical drawdown (-61.22%). The **live** guardrailed + vol-weighted + regime-filtered variant (`vw_gr_top_n_25`) is materially shallower at -35.4% (`STATUS.md`), which is why that risk-managed variant — not raw equal-weight top_n_25 — is what's actually deployed. XGBoost's walk-forward MaxDD (-61.66% at top_n_25) is deeper than composite's at every size tested. "Acceptable" is a portfolio-manager judgment call, not something this checklist can unilaterally resolve — flagged explicitly rather than assumed. |
+| 10 | Live top names pass quality/liquidity checks | **PASS** | N/A | Guardrails (`value_trap_flags`, missing-data exclusion) are on by default in `score_live.py`; liquidity filter (`avg_dollar_volume >= $5M`) is enforced in `filter_universe`/`UNIVERSE_DEFAULTS`. Already live, not a gap. |
+| 11 | *(added)* Live pipeline actually uses the accepted model | **PASS, by default** | **N/A — never invoked live** | `score_live.py` defaults to composite scoring; the XGBoost path only runs if `--use-model`/`--model PATH` is passed explicitly, which the automated monthly pipeline (`run_pipeline.py`) never does. The live paper-trading rebalance has always run on composite scoring. The z-score train/serve bug found and fixed in the XGBoost path (2026-07-20) therefore never affected a live trade. |
+
+## Summary
+
+**Composite factor score: 8 PASS, 2 CONDITIONAL/disclose, 1 PM-judgment item. No FAIL.**
+**XGBoost `ret_1y` model: fails the central criterion (#4, OOS rank IC) outright**, and underperforms composite on every comparable metric once evaluated under a genuine walk-forward methodology (`docs/walk_forward_portfolio_backtest.md`) rather than the single-static-model backtest that originally made it look competitive.
+
+**Caveats carried forward, not resolved by this checklist:**
+- Survivorship bias estimated at +0.5-1.5pp/year CAGR inflation for this universe (`docs/survivorship_bias_report.md`) — applies to both models equally, doesn't change the ranking between them, but means absolute return figures above are optimistic.
+- The live paper track record is 13 trading days old as of this writing (inception 2026-07-01) — effectively uninformative so far (-0.19% since inception, 0 closed trades). Backtest evidence is not yet corroborated by live results one way or the other.
+- The top/bottom-bucket non-monotonicity (#5) is a genuine open question about *why* the composite score works at top-25 specifically — worth investigating further, but does not block acceptance of the configuration actually traded.
+
+See `reports/model_usage_decision.md` for the resulting category assignment.

@@ -1139,6 +1139,20 @@ Reason: The log should be automatic, but monthly results should be reviewed sepa
 
 # Phase 11 — Go / No-Go Decision Framework
 
+**CLOSED 2026-07-20.** Both deliverables below now exist:
+`reports/model_acceptance_checklist.md`, `reports/model_usage_decision.md`.
+Outcome: the composite factor score (not the XGBoost model this plan was
+originally scoped around) is the accepted model, Category 3 (paper trading —
+already what's running live). XGBoost is downgraded to Category 1 (research
+only) after a genuine walk-forward portfolio backtest
+(`scripts/walk_forward_portfolio_backtest.py`,
+`docs/walk_forward_portfolio_backtest.md`) showed it has no edge over the
+composite score, consistent with this plan's own walk-forward IC finding
+that was never reconciled with the single-static-model backtest at the time.
+See the two report docs for full evidence and disclosed caveats (sector
+concentration, drawdown, a top/bottom-bucket non-monotonicity still under
+investigation).
+
 ## Step 11.1 — Define Minimum Acceptance Criteria
 
 Do not consider the model usable unless it passes most of these:
