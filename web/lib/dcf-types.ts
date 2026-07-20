@@ -85,6 +85,7 @@ export interface HistoricalRow {
   ebitda: number | null;
   income_tax_expense: number | null;
   pretax_income: number | null;
+  noncontrolling_interest: number | null;
   is_actual: boolean;
   accounts_receivable: number | null;
   accounts_payable: number | null;
@@ -296,6 +297,26 @@ export interface FundamentalsData {
   // Leverage
   debt_to_ebitda: number | null;
   interest_coverage: number | null;
+
+  // ML comps-based fair valuation (additive to goal_pe/goal_low/goal_high
+  // above; cross-sectional peer-comps model, not self-referential to the
+  // ticker's own history). EV/EBITDA fields are always null — excluded from
+  // production, see features/historic_fundamentals/ml_comps_valuation_plan.md.
+  ml_fair_pe_low: number | null;
+  ml_fair_pe_mid: number | null;
+  ml_fair_pe_high: number | null;
+  ml_fair_evebitda_low: number | null;
+  ml_fair_evebitda_mid: number | null;
+  ml_fair_evebitda_high: number | null;
+  ml_fair_pfcf_low: number | null;
+  ml_fair_pfcf_mid: number | null;
+  ml_fair_pfcf_high: number | null;
+  ml_fair_price_low: number | null;
+  ml_fair_price_mid: number | null;
+  ml_fair_price_high: number | null;
+  ml_fair_price_basis: string | null;
+  ml_comps_model_version: string | null;
+  ml_comps_computed_at: string | null;
 
   // Time series & estimates
   monthly_series: MonthlyDataPoint[];

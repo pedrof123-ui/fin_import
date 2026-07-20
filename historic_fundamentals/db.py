@@ -475,6 +475,55 @@ class HistoricFundamentalsDB:
             )
         """)
 
+        # ML comps-based fair valuation (additive to goal_pe/goal_low/goal_high;
+        # see features/historic_fundamentals/ml_comps_valuation_plan.md)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS ml_comps_valuation (
+                ticker                  VARCHAR NOT NULL,
+                computed_at             TIMESTAMP NOT NULL,
+                model_version           VARCHAR NOT NULL,
+                sector                  VARCHAR,
+                ml_fair_pe_low          DOUBLE,
+                ml_fair_pe_mid          DOUBLE,
+                ml_fair_pe_high         DOUBLE,
+                ml_fair_evebitda_low    DOUBLE,
+                ml_fair_evebitda_mid    DOUBLE,
+                ml_fair_evebitda_high   DOUBLE,
+                ml_fair_pfcf_low        DOUBLE,
+                ml_fair_pfcf_mid        DOUBLE,
+                ml_fair_pfcf_high       DOUBLE,
+                ml_fair_price_low       DOUBLE,
+                ml_fair_price_mid       DOUBLE,
+                ml_fair_price_high      DOUBLE,
+                ml_fair_price_basis     VARCHAR,
+                status                  VARCHAR NOT NULL,
+                error_message           VARCHAR,
+                PRIMARY KEY (ticker)
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS ml_model_metadata (
+                model_name               VARCHAR NOT NULL,
+                model_version            VARCHAR NOT NULL,
+                target                   VARCHAR NOT NULL,
+                trained_at               TIMESTAMP NOT NULL,
+                train_start_date         DATE,
+                train_end_date           DATE,
+                n_train_rows             INTEGER,
+                n_tickers                INTEGER,
+                feature_cols             VARCHAR,
+                model_params             VARCHAR,
+                oos_rmse_log             DOUBLE,
+                oos_rmse_vs_baseline_pct DOUBLE,
+                oos_coverage_p10_p90     DOUBLE,
+                file_path                VARCHAR,
+                is_active                BOOLEAN,
+                notes                    VARCHAR,
+                PRIMARY KEY (model_name, model_version, target)
+            )
+        """)
+
     # ── Upsert ───────────────────────────────────────────────────────────────
 
     def upsert_monthly_pe(self, ticker: str, df: pd.DataFrame) -> int:
@@ -972,6 +1021,66 @@ class HistoricFundamentalsDB:
         finally:
             self.conn.execute("DROP VIEW IF EXISTS _tmp_dcf_results")
         return len(df)
+
+    def upsert_ml_comps_valuation(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        cols = [
+            "ticker", "computed_at", "model_version", "sector",
+            "ml_fair_pe_low", "ml_fair_pe_mid", "ml_fair_pe_high",
+            "ml_fair_evebitda_low", "ml_fair_evebitda_mid", "ml_fair_evebitda_high",
+            "ml_fair_pfcf_low", "ml_fair_pfcf_mid", "ml_fair_pfcf_high",
+            "ml_fair_price_low", "ml_fair_price_mid", "ml_fair_price_high",
+            "ml_fair_price_basis", "status", "error_message",
+        ]
+        data = df.copy()
+        for col in cols:
+            if col not in data.columns:
+                data[col] = None
+        self.conn.register("_tmp_ml_comps_valuation", data[cols])
+        try:
+            col_csv = ", ".join(cols)
+            self.conn.execute(f"""
+                INSERT OR REPLACE INTO ml_comps_valuation ({col_csv})
+                SELECT {col_csv} FROM _tmp_ml_comps_valuation
+            """)
+        finally:
+            self.conn.execute("DROP VIEW IF EXISTS _tmp_ml_comps_valuation")
+        return len(df)
+
+    def upsert_ml_model_metadata(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        cols = [
+            "model_name", "model_version", "target", "trained_at",
+            "train_start_date", "train_end_date", "n_train_rows", "n_tickers",
+            "feature_cols", "model_params",
+            "oos_rmse_log", "oos_rmse_vs_baseline_pct", "oos_coverage_p10_p90",
+            "file_path", "is_active", "notes",
+        ]
+        data = df.copy()
+        for col in cols:
+            if col not in data.columns:
+                data[col] = None
+        self.conn.register("_tmp_ml_model_metadata", data[cols])
+        try:
+            col_csv = ", ".join(cols)
+            self.conn.execute(f"""
+                INSERT OR REPLACE INTO ml_model_metadata ({col_csv})
+                SELECT {col_csv} FROM _tmp_ml_model_metadata
+            """)
+        finally:
+            self.conn.execute("DROP VIEW IF EXISTS _tmp_ml_model_metadata")
+        return len(df)
+
+    def deactivate_ml_model_versions(self, target: str, model_name: str = "ml_comps_valuation") -> None:
+        """Flip is_active=False for all prior versions of (model_name, target)
+        before inserting a new active version — mirrors the '{target}_latest.joblib'
+        pointer convention on disk."""
+        self.conn.execute(
+            "UPDATE ml_model_metadata SET is_active = FALSE WHERE model_name = ? AND target = ?",
+            [model_name, target],
+        )
 
     def update_forward_pe(self, ticker: str, forward_pe: float | None, forward_12m_eps: float | None) -> None:
         self.conn.execute("""

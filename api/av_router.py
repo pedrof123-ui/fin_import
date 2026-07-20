@@ -5,12 +5,12 @@ from pathlib import Path
 from typing import Literal
 
 import duckdb
-import requests
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from dcf.model import run_dcf_av
 from api.dcf_router import RunRequest, _build_overrides, _sanitize
+from historic_fundamentals.quote import fetch_live_price, fetch_live_quote
 
 router = APIRouter()
 
@@ -43,6 +43,11 @@ _AV_DB = Path(os.environ.get(
 _HF_DB = Path(os.environ.get(
     "HF_DB_PATH",
     str(Path(__file__).parent.parent / "data" / "historic_fundamentals.duckdb"),
+))
+
+_PRICES_DB = Path(os.environ.get(
+    "PRICES_DB_PATH",
+    "/home/pedro/projects/trade_systems/data/prices.duckdb",
 ))
 
 _TABLE = {
@@ -156,23 +161,46 @@ _STAT_FIELDS = [
     "debt_to_ebitda", "interest_coverage",
 ]
 
+# ML comps-based fair valuation — additive to the rule-based goal_* fields
+# above (which compare a ticker to its own multiple history, not peers). See
+# features/historic_fundamentals/ml_comps_valuation_plan.md. Only P/E and
+# P/FCF cleared the Phase 3 validation gate; EV/EBITDA fields are always null.
+_ML_COMPS_FIELDS = [
+    "ml_fair_pe_low", "ml_fair_pe_mid", "ml_fair_pe_high",
+    "ml_fair_evebitda_low", "ml_fair_evebitda_mid", "ml_fair_evebitda_high",
+    "ml_fair_pfcf_low", "ml_fair_pfcf_mid", "ml_fair_pfcf_high",
+    "ml_fair_price_low", "ml_fair_price_mid", "ml_fair_price_high",
+    "ml_fair_price_basis",
+]
 
-def _fetch_live_price(ticker: str) -> float | None:
-    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not api_key:
-        return None
+
+@router.get("/quote/{ticker}")
+async def get_quote(ticker: str):
+    t = ticker.upper()
+    quote = fetch_live_quote(t)
+    if quote:
+        return {"ticker": t, "is_live": True, **quote}
+
+    # Fall back to the latest known close so the header still shows something.
     try:
-        resp = requests.get(
-            "https://www.alphavantage.co/query",
-            params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": api_key},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        quote = resp.json().get("Global Quote", {})
-        price_str = quote.get("05. price")
-        return float(price_str) if price_str else None
+        with duckdb.connect(str(_PRICES_DB), read_only=True) as conn:
+            row = conn.execute(
+                "SELECT close, date FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+                [t],
+            ).fetchone()
     except Exception:
-        return None
+        row = None
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No price available for {t}")
+    return {
+        "ticker": t,
+        "is_live": False,
+        "price": float(row[0]),
+        "change": None,
+        "change_percent": None,
+        "latest_trading_day": str(row[1]),
+    }
 
 
 @router.get("/av-fundamentals/{ticker}")
@@ -231,6 +259,13 @@ async def av_fundamentals_snapshot(ticker: str):
             [t],
         ).df()
 
+        try:
+            ml_comps_df = hf.execute(
+                "SELECT * FROM ml_comps_valuation WHERE ticker = ? AND status = 'ok'", [t]
+            ).df()
+        except Exception:
+            ml_comps_df = None  # table missing (e.g. --enable-ml-comps never run) — fields stay null
+
         hf.close()
         av.close()
     except HTTPException:
@@ -240,8 +275,9 @@ async def av_fundamentals_snapshot(ticker: str):
 
     row = stats_df.iloc[0].to_dict()
     ov = ov_df.iloc[0].to_dict() if not ov_df.empty else {}
+    ml_comps = ml_comps_df.iloc[0].to_dict() if ml_comps_df is not None and not ml_comps_df.empty else {}
 
-    current_price = _fetch_live_price(t) or row.get("current_price")
+    current_price = fetch_live_price(t) or row.get("current_price")
 
     payload = {
         "ticker": t,
@@ -258,6 +294,9 @@ async def av_fundamentals_snapshot(ticker: str):
         "analyst_strong_sell": _si(ov.get("analyst_rating_strong_sell")),
         "overview_updated_at": str(ov.get("fetch_date", "")),
         **{k: row.get(k) for k in _STAT_FIELDS},
+        **{k: ml_comps.get(k) for k in _ML_COMPS_FIELDS},
+        "ml_comps_model_version": ml_comps.get("model_version"),
+        "ml_comps_computed_at": str(ml_comps["computed_at"]) if ml_comps.get("computed_at") is not None else None,
         "monthly_series": json.loads(
             series_df.to_json(orient="records", date_format="iso")
         ),

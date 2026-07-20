@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import type { FundamentalsData } from "@/lib/dcf-types";
 import { API } from "@/lib/config";
+import ValuationRangeBand from "./ValuationRangeBand";
 
 // ── Chart style constants (matches DcfIncomeChart) ───────────────────────────
 
@@ -513,6 +514,45 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
           Current: {fmtDollar(price)} · For full DCF model see AV DCF tab
         </p>
       </div>
+
+      {/* ── 5b. ML comps-based fair valuation (additive, experimental) ──────── */}
+      {data.ml_fair_price_mid != null && (
+        <div>
+          <SectionHeading>ML Fair Value (Experimental — Comps Model)</SectionHeading>
+          <p className="font-mono text-[10px] text-amber-600/80 mb-3">
+            Cross-sectional peer-comps model, not yet validated against Price Targets above — cross-check before relying on it.
+          </p>
+          <div className="rounded border border-white/[0.07] p-4" style={{ background: "oklch(0.09 0.006 265)" }}>
+            <ValuationRangeBand
+              label="Fair Price"
+              low={data.ml_fair_price_low}
+              mid={data.ml_fair_price_mid}
+              high={data.ml_fair_price_high}
+              current={price}
+              unit="$"
+            />
+            <ValuationRangeBand
+              label="P/E Implied"
+              low={data.ml_fair_pe_low}
+              mid={data.ml_fair_pe_mid}
+              high={data.ml_fair_pe_high}
+              current={data.current_pe}
+              unit="x"
+            />
+            <ValuationRangeBand
+              label="P/FCF Implied"
+              low={data.ml_fair_pfcf_low}
+              mid={data.ml_fair_pfcf_mid}
+              high={data.ml_fair_pfcf_high}
+              current={data.current_pfcf}
+              unit="x"
+            />
+          </div>
+          <p className="font-mono text-[10px] text-zinc-700 mt-1.5">
+            Basis: {data.ml_fair_price_basis ?? "—"} · Model version: {data.ml_comps_model_version ?? "—"}
+          </p>
+        </div>
+      )}
 
       {/* ── 6. Valuation multiples detail ───────────────────────────────────── */}
       <div>

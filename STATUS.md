@@ -1,5 +1,43 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## ML Comps Valuation Model (complete, 2026-07-20)
+
+Cross-sectional peer-comps ML model predicting a fair P/E and P/FCF multiple for each stock from its fundamentals vs. sector peers — additive to the existing self-referential `goal_pe`/`goal_low`/`goal_high` (which compare a ticker to its *own* multiple history, not peers). Full phased build record: `features/historic_fundamentals/ml_comps_valuation_plan.md`.
+
+### Approach
+
+- 3 candidate multiples (P/E, EV/EBITDA, P/FCF), one XGBoost quantile-regression model each (`reg:quantileerror`, `quantile_alpha=[0.1,0.5,0.9]`) predicting a fair low/mid/high range in a single fit.
+- Features: `monthly_pe`'s existing growth/margin/quality/leverage columns, sector-relative z-scored (fold-safe fit/transform split, not the live-batch self-referential z-scoring `score_live.py` uses).
+- Fair price = predicted multiple × the ticker's own EPS/FCF-per-share.
+
+### Validation gate (walk-forward, 36 folds/multiple, 1990-2026)
+
+| Multiple | RMSE improvement vs. naive sector-median baseline | Fold win rate | Coverage p10–p90 | Result |
+|---|---:|---:|---:|---|
+| P/E | +18.3% | 100% (36/36) | 74.9% | PASS |
+| EV/EBITDA | +14.7% | 100% (36/36) | 74.1% | FAIL (missed 15% bar by 0.3pp) |
+| P/FCF | +18.7% | 100% (36/36) | 73.1% | PASS |
+
+Only P/E and P/FCF are trained/scored in production. Result reproduced identically on a second full rerun (deterministic, fixed seeds). Model beat the naive baseline in 100% of individual folds across 36 years — the fold-level check this gate was specifically designed to enforce, not just an aggregate number.
+
+### Infrastructure added
+
+- `historic_fundamentals/ml_comps_model.py` — feature assembly, quantile model fit/predict, walk-forward harness, fit/transform-split sector z-scoring
+- `ml_comps_valuation` + `ml_model_metadata` tables in `historic_fundamentals.duckdb`
+- `scripts/{validate,train,score}_ml_comps_valuation.py`, `scripts/report_ml_comps_history.py`
+- `api/av_router.py` — 13 new `ml_fair_*` fields in `/av-fundamentals/{ticker}`, additive, `null` when unscored
+- `web/components/ValuationRangeBand.tsx` + new "ML Fair Value (Experimental)" panel in `FundamentalsViewer.tsx`, verified live in a browser
+- `notebooks/ml_comps_valuation.ipynb` — coverage/RMSE/win-rate-over-time monitoring, executes end-to-end
+- Wired into `scripts/run_pipeline.py` behind `--enable-ml-comps` (**opt-in, not yet enabled in the production cron** — that's a separate deploy decision)
+
+### Key findings
+
+- Two real bugs caught before shipping, not caught by the validation gate itself (which only validates the model in isolation): (1) recomputing sector z-score stats from the live scoring batch instead of persisting training-time stats caused wildly miscalibrated predictions (P/E "high" bands in the thousands for effectively every ticker); (2) training the final production model on the full 40-year history instead of the gate-validated 5-year rolling window caused the same failure mode even after fixing (1). Both fixed — see plan doc for full detail.
+- The existing `score_live.py` for the ret_1y model likely has the same z-score train/serve skew bug (#1 above) — not fixed here (out of scope), flagged for future attention if that model's live scores are ever scrutinized.
+- Not wired to replace `goal_pe`/`goal_low`/`goal_high` — that's an explicit, deliberately un-started future decision (see plan doc's Phase 9).
+
+---
+
 ## BCD Mispricing Filter (complete, 2026-06-29)
 
 Hard portfolio filter applied in `scripts/score_live.py` based on Bakshi-Chen 2001 structural valuation model.

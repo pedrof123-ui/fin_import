@@ -82,6 +82,11 @@ def main() -> None:
                         help="Skip model training (reuse existing model.joblib)")
     parser.add_argument("--skip-dcf", action="store_true",
                         help="Skip DCF batch (saves ~15 min for the full universe)")
+    parser.add_argument("--enable-ml-comps", action="store_true",
+                        help="Train + score the ML comps valuation model (P/E, P/FCF). "
+                             "Off by default — see features/historic_fundamentals/"
+                             "ml_comps_valuation_plan.md for the Phase 3 validation gate "
+                             "this passed before being wired in here.")
     parser.add_argument("--quarterly", action="store_true",
                         help="Run quarterly backtest in addition to monthly")
     parser.add_argument("--tc-bps", type=float, default=10.0,
@@ -109,6 +114,8 @@ def main() -> None:
         print("  Model training: SKIPPED (reusing model.joblib)")
     if args.skip_dcf:
         print("  DCF batch: SKIPPED")
+    if args.enable_ml_comps:
+        print("  ML Comps Valuation: ENABLED")
     print(f"  TC: {args.tc_bps:.0f} bps")
     print()
 
@@ -132,6 +139,19 @@ def main() -> None:
         timings["compute_dcf_batch"] = _run(
             uv + ["scripts/compute_dcf_batch.py"],
             "DCF Batch — refresh dcf_results cache for the Screener",
+            dry_run=args.dry_run,
+        )
+
+    # Step 1c: ML comps valuation (opt-in; additive to goal_pe/goal_low/goal_high)
+    if args.enable_ml_comps:
+        timings["train_ml_comps"] = _run(
+            uv + ["scripts/train_ml_comps_valuation.py"],
+            "ML Comps Valuation — train quantile models (P/E, P/FCF)",
+            dry_run=args.dry_run,
+        )
+        timings["score_ml_comps"] = _run(
+            uv + ["scripts/score_ml_comps_valuation.py"],
+            "ML Comps Valuation — batch score current universe",
             dry_run=args.dry_run,
         )
 

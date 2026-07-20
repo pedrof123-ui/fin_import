@@ -11,6 +11,7 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 - **DuckDB** (`data/historic_fundamentals.duckdb`) — monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates (43K rows), analyst estimates
 - **DuckDB** (`data/earnings_transcripts.duckdb`) — earnings call transcripts for all AV tickers, fetched from Alpha Vantage and cached; used by the Earnings tab and AI Research
 - **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
+- **ML comps valuation** (`historic_fundamentals/ml_comps_model.py`) — XGBoost quantile regression predicting a fair P/E and P/FCF multiple per stock vs. sector peers, converted to a fair-price range; additive to `goal_pe`/`goal_low`/`goal_high`. Opt-in via `--enable-ml-comps` (see [ML Comps Valuation](#ml-comps-valuation-experimental) below)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 - **IB Trader** (`ib_trader/`) — Interactive Brokers execution layer: connects to TWS, computes target positions from live scores, diffs current holdings, and submits MOC/MKT/LMT orders; includes a CLI rebalancer and an interactive REPL for ad-hoc orders
 
@@ -291,6 +292,28 @@ uv run scripts/rebalance.py --no-dry-run
 
 ---
 
+## ML Comps Valuation (Experimental)
+
+Cross-sectional peer-comps model: predicts a fair P/E and P/FCF multiple for each stock from its fundamentals vs. sector peers (XGBoost quantile regression, low/mid/high range), converted to a fair-price band. Additive to the `goal_pe`/`goal_low`/`goal_high` fields already surfaced in the Fundamentals tab, which compare a ticker to its *own* multiple history rather than peers — both are shown side by side. Full build record and validation gate: `features/historic_fundamentals/ml_comps_valuation_plan.md`.
+
+```bash
+# One-time / after retraining: validate the model beats a naive sector-median baseline (~85 min)
+uv run scripts/validate_ml_comps_valuation.py
+
+# Train final production models (P/E, P/FCF only — see plan doc for why EV/EBITDA is excluded)
+uv run scripts/train_ml_comps_valuation.py
+
+# Score the current universe -> ml_comps_valuation table -> /av-fundamentals/{ticker} API fields
+uv run scripts/score_ml_comps_valuation.py
+
+# Retrain history / drift visibility
+uv run scripts/report_ml_comps_history.py
+```
+
+Not part of the monthly `av_update.py`/`hf_update.py` cycle by default — pass `--enable-ml-comps` to `scripts/run_pipeline.py` to include training + scoring in the pipeline run. Off by default; enabling it in the production cron is a separate deploy decision.
+
+---
+
 ## IB Trader
 
 Execution layer for Interactive Brokers TWS. Requires TWS or IB Gateway running locally with API enabled.
@@ -396,6 +419,7 @@ web/                   Next.js frontend (port 3000)
     DcfFcffTable.tsx         FCFF build-up table + EV bridge
     DcfTerminalValue.tsx     Terminal value decomposition card
     DcfSensitivity.tsx       2D sensitivity table (WACC × terminal growth)
+    ValuationRangeBand.tsx   Low/mid/high range bar w/ current-value marker; used by the ML Fair Value panel
   lib/
     dcf-types.ts         TypeScript interfaces for all DCF data
     formatField.ts       blurFormat / focusStrip / parsePct utilities
@@ -413,6 +437,7 @@ historic_fundamentals/         Monthly PE/P/FCF/EV/EBITDA timeseries + sector/in
   estimates.py                 EARNINGS_ESTIMATES fetch, normalize, forward PE/P/FCF/NTM revenue calculation
   sector.py                    compute_sector_stats(): monthly median/p25/p75 aggregates per sector and industry
   query.py                     Notebook-friendly wrappers: get_pe_stats() (with peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
+  ml_comps_model.py            ML comps valuation: feature assembly, XGBoost quantile fit/predict, walk-forward harness, fit/transform-split sector z-scoring
 scripts/
   manage_tickers.py            Add/delete tickers across all three DBs (prices + AV + historic fundamentals)
   av_import.py                 Import AV financials + shares + dividends (single/CSV/prices.duckdb)
@@ -430,6 +455,10 @@ scripts/
   score_live.py                Live scoring: ranked investable portfolio with alloc_pct; writes docs/live_scores_YYYYMMDD.csv
   rebalance.py                 IB portfolio rebalancer CLI (dry run by default); reads latest live_scores CSV
   ib_repl.py                   Interactive REPL for IB: status, buy/sell, quote, cancel, rebalance
+  validate_ml_comps_valuation.py  ML comps valuation go/no-go gate: walk-forward vs. naive sector-median baseline
+  train_ml_comps_valuation.py     Train final quantile models (P/E, P/FCF) on a rolling 5yr window; saves to data/ml_comps_valuation/
+  score_ml_comps_valuation.py     Batch-score current universe -> ml_comps_valuation table
+  report_ml_comps_history.py      Retrain history / drift visibility from ml_model_metadata
 ib_trader/
   __init__.py                  Public API: IBClient, make_order, place_order, cancel_all_open_orders, get_order_status, OrderSpec, load_scores_csv, find_latest_scores, build_target, diff_portfolio, summarise_diff, run_rebalance
   client.py                    IBClient: connect, get_nav, get_positions, qualify_contracts, get_live_prices, get_live_midprices
@@ -446,7 +475,7 @@ tests/                 pytest tests
 data/
   financial_statements.duckdb       SEC EDGAR financial statements
   av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends, company overview
-  historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates, analyst estimates
+  historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates, analyst estimates, ML comps valuation cache
   earnings_transcripts.duckdb       Earnings call transcripts: text, fetched_date, earnings_call_date (nullable), source
   xbrl_mappings_multi.duckdb        AI-discovered XBRL concept mapping store
 ```
