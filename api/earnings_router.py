@@ -36,7 +36,7 @@ router = APIRouter()
 OPENROUTER_MODELS = [
     "qwen/qwen3-235b-a22b-2507",
     "google/gemini-3.5-flash",
-    "google/gemini-3.1-pro-preview",
+    "z-ai/glm-5.2",
     "qwen/qwen3.7-max",
     "minimax/minimax-m3",
 ]

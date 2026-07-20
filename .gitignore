@@ -15,6 +15,7 @@ wheels/
 # Database files
 *.duckdb
 *.db
+data/backups/
 
 # Log files
 *.log

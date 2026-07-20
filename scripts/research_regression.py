@@ -48,6 +48,9 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
     h, v = report.header, report.valuation
 
     checks.append(_check("report generated", True))
+    # The Chief is now two sequential LLM calls (Core + Narrative, see _run_research_agent) —
+    # this budget covers both combined, not one. Verified comfortably under 180s (26-97s) for
+    # _DEFAULT_MODEL; a slower model would need a higher budget here.
     checks.append(_check("generation time < 180s", elapsed < 180, f"{elapsed:.1f}s"))
     checks.append(_check("target_low <= target_high", h.target_low <= h.target_high))
     checks.append(_check("has intrinsic_valuation section", bool(report.intrinsic_valuation)))
@@ -56,6 +59,10 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
     if valuation_tables_md:
         for label in ("DCF Scenario Assumptions", "Key Fundamentals", "Comparable Companies", "Model Summary"):
             checks.append(_check(f"tables include '{label}'", label in valuation_tables_md))
+        # P/S and P/FCF cross-check rows are data-dependent (need forward revenue consensus /
+        # FCF margin), so informational rather than a hard gate.
+        for label in ("Multiples (P/S", "Multiples (P/E", "Multiples (P/FCF"):
+            info.append(_check(f"model summary includes '{label}...)'", label in valuation_tables_md))
 
     info.append(_check(
         "direct competitors table", bool(direct_competitors_md),

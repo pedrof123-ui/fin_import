@@ -23,7 +23,7 @@ const MODEL_OPTIONS = [
   { label: "Claude Sonnet 4.6",           value: "anthropic/claude-sonnet-4-6" },
   { label: "Qwen3 235B",                  value: "qwen/qwen3-235b-a22b-2507" },
   { label: "Gemini 3.5 Flash (Default)",  value: "google/gemini-3.5-flash" },
-  { label: "Gemini 3.1 Pro",              value: "google/gemini-3.1-pro-preview" },
+  { label: "GLM 5.2",                     value: "z-ai/glm-5.2" },
   { label: "Qwen3.7 Max",                 value: "qwen/qwen3.7-max" },
   { label: "Grok 4.5",                    value: "x-ai/grok-4.5" },
 ];

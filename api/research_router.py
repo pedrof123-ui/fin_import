@@ -29,6 +29,7 @@ from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner
 import historic_fundamentals.earnings_transcripts as et
 from historic_fundamentals.technical_indicators import get_technical_summary
 from historic_fundamentals.quote import fetch_live_price
+from historic_fundamentals.estimates import compute_ntm_revenue
 from api.valuation_data import get_dcf_summary, get_valuation_inputs, compute_dcf_scenarios
 
 log = logging.getLogger(__name__)
@@ -49,12 +50,16 @@ _EARNINGS_TIMEOUT = 30
 _DB_TIMEOUT       = 10
 _TAVILY_TIMEOUT   = 20
 _DCF_TIMEOUT      = 90
+_LLM_TIMEOUT      = 400  # per-agent LLM call cap — well above the slowest observed real call
+                          # (Claude Sonnet 4.6, 268s for one call) so it won't kill a legitimately
+                          # slow-but-working model; catches a genuine provider stall instead of
+                          # relying solely on the user noticing and clicking Cancel.
 
 _MODEL_OPTIONS = [
     {"label": "Claude Sonnet 4.6",           "value": "anthropic/claude-sonnet-4-6"},
     {"label": "Qwen3 235B",                  "value": "qwen/qwen3-235b-a22b-2507"},
     {"label": "Gemini 3.5 Flash (Default)",  "value": "google/gemini-3.5-flash"},
-    {"label": "Gemini 3.1 Pro",              "value": "google/gemini-3.1-pro-preview"},
+    {"label": "GLM 5.2",                     "value": "z-ai/glm-5.2"},
     {"label": "Qwen3.7 Max",                 "value": "qwen/qwen3.7-max"},
     {"label": "Grok 4.5",                    "value": "x-ai/grok-4.5"},
 ]
@@ -150,6 +155,41 @@ class EquityResearchReport(BaseModel):
     mda_summary: str
     risk_factors: list[str]
     near_term_catalysts: list[str]
+    earnings_highlights: str
+    quarterly_trend_analysis: str
+    technical_analysis: str
+    technical_rating: Literal["BULLISH", "NEUTRAL", "BEARISH"]
+    intrinsic_valuation: Optional[str] = None
+    balance_sheet_analysis: Optional[str] = None
+    investment_thesis: str
+    price_vs_fundamentals: str = ""
+    target_price_validation: str = ""
+
+
+# The Chief's output is produced by two sequential calls instead of one (see
+# _run_research_agent) — a single EquityResearchReport-sized structured output schema exceeds
+# Anthropic's compiled-grammar size limit for strict tool use ("The compiled grammar is too
+# large..."), which broke every report generated with a Claude model. Splitting the schema in
+# two brings each call comfortably under that limit (verified empirically) without losing any
+# fields — the two outputs are merged back into a plain EquityResearchReport afterward, so nothing
+# downstream (rendering, QC validation) needs to know about the split.
+class ChiefCoreOutput(BaseModel):
+    header: ResearchHeader
+    key_highlights: list[str]
+    financial_performance: list[FinancialRow]
+    financial_years: list[str]
+    valuation: ValuationSummary
+    peak_earnings_analysis: Optional[str] = None
+    risk_factors: list[str]
+    near_term_catalysts: list[str]
+
+
+class ChiefNarrativeOutput(BaseModel):
+    company_overview: str
+    competitive_analysis: str
+    industry_outlook: str
+    strategic_framework_analysis: str
+    mda_summary: str
     earnings_highlights: str
     quarterly_trend_analysis: str
     technical_analysis: str
@@ -1117,6 +1157,46 @@ def get_peer_comparison(ticker: str) -> str:
 # so the numbers in the report can't drift from what the model actually computed.
 # ---------------------------------------------------------------------------
 
+def _forward_revenue_estimate(ticker: str) -> Optional[float]:
+    """Next-12-month consensus revenue estimate — used for the P/S cross-check. Unlike forward
+    EPS, revenue is virtually always defined even for unprofitable companies, so P/S can
+    cross-check fair value where P/E can't. Uses the same NTM convention as forward_12m_eps
+    (sum of next 4 quarterly estimates, falling back to the next fiscal year estimate) so the
+    two forward figures in the Key Fundamentals table share a horizon."""
+    if not _HIST_FUND_DB.exists():
+        return None
+    conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+    try:
+        return compute_ntm_revenue(conn, ticker.upper())
+    finally:
+        conn.close()
+
+
+def _latest_diluted_shares(ticker: str) -> Optional[float]:
+    """Best-available diluted share count, preferring the dedicated shares_outstanding table
+    (quarterly-refreshed, truly diluted) over the coarser annual balance-sheet figure — same
+    two-tier preference as scripts/hf_update.py::_update_forward_ps."""
+    if not _AV_FIN_DB.exists():
+        return None
+    conn = duckdb.connect(str(_AV_FIN_DB), read_only=True)
+    try:
+        row = conn.execute("""
+            SELECT shares_outstanding_diluted FROM shares_outstanding
+            WHERE ticker = ? AND shares_outstanding_diluted IS NOT NULL
+            ORDER BY date DESC LIMIT 1
+        """, [ticker.upper()]).fetchone()
+        if not row:
+            row = conn.execute("""
+                SELECT common_stock_shares_outstanding FROM balance_sheets
+                WHERE ticker = ? AND period_type = 'quarterly'
+                    AND common_stock_shares_outstanding IS NOT NULL
+                ORDER BY fiscal_date_ending DESC LIMIT 1
+            """, [ticker.upper()]).fetchone()
+        return float(row[0]) if row and row[0] else None
+    finally:
+        conn.close()
+
+
 def _dcf_assumptions_table(scenarios: dict) -> str:
     rows = []
     for label, key in [("Bear", "bear"), ("Base", "base"), ("Bull", "bull")]:
@@ -1148,15 +1228,18 @@ def _dcf_assumptions_table(scenarios: dict) -> str:
     return "\n".join(lines)
 
 
-def _fundamentals_table(ticker: str) -> tuple[str, Optional[tuple]]:
-    """Returns (markdown table, (pe_p25_5yr, pe_rolling_5yr_median, pe_p75_5yr, forward_12m_eps))
-    — the tuple is reused by the Model Summary table's multiples cross-check so the two tables
-    stay consistent with a single query."""
+def _fundamentals_table(ticker: str) -> tuple[str, Optional[tuple], Optional[tuple], Optional[tuple]]:
+    """Returns (markdown table, pe_multiples, ps_multiples, pfcf_multiples) where each multiples
+    tuple is (p25, rolling_5yr_median, p75, forward_per_share_metric) — reused by the Model
+    Summary table's multiples cross-checks so all tables stay consistent with one query.
+    P/S and P/FCF are included alongside P/E because they remain computable for unprofitable
+    companies where P/E is undefined (revenue and, to a lesser extent, FCF margin still exist)."""
     if not _HIST_FUND_DB.exists():
-        return "", None
+        return "", None, None, None
     conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
     row = conn.execute("""
         SELECT pe_rolling_5yr_median, pfcf_rolling_5yr_median, pe_p25_5yr, pe_p75_5yr,
+               pfcf_p25_5yr, pfcf_p75_5yr, ps_rolling_5yr_median, ps_p25_5yr, ps_p75_5yr,
                rev_cagr_3yr, earn_cagr_3yr, rev_growth_1yr, earn_growth_1yr, earn_ntm_growth_est,
                current_roic, current_gross_margin, gross_margin_5y_median,
                current_operating_margin, operating_margin_5y_median,
@@ -1166,9 +1249,10 @@ def _fundamentals_table(ticker: str) -> tuple[str, Optional[tuple]]:
     """, [ticker.upper()]).fetchone()
     conn.close()
     if not row:
-        return "", None
+        return "", None, None, None
 
-    (pe_med, pfcf_med, pe_p25, pe_p75, rev_cagr3, earn_cagr3, rev_g1, earn_g1, earn_ntm,
+    (pe_med, pfcf_med, pe_p25, pe_p75, pfcf_p25, pfcf_p75, ps_med, ps_p25, ps_p75,
+     rev_cagr3, earn_cagr3, rev_g1, earn_g1, earn_ntm,
      roic, gm, gm_med, om, om_med, fcfm, fcfm_med, debt_ebitda, ttm_eps, fwd_eps) = row
 
     def pct(v):
@@ -1177,9 +1261,22 @@ def _fundamentals_table(ticker: str) -> tuple[str, Optional[tuple]]:
     def num(v, fmt=".1f"):
         return f"{float(v):{fmt}}" if v is not None else "n/a"
 
+    # Forward per-share metrics for the P/S and P/FCF cross-checks — both derived from the same
+    # forward revenue consensus estimate (not fabricated): P/S needs forward revenue/share
+    # directly; P/FCF needs a forward FCF/share, estimated as forward revenue/share x the
+    # company's own current FCF margin (assumes near-term margin stability, disclosed as such
+    # wherever this figure surfaces).
+    forward_rev = _forward_revenue_estimate(ticker)
+    shares = _latest_diluted_shares(ticker)
+    forward_rev_per_share = forward_rev / shares if forward_rev and shares else None
+    forward_fcf_per_share = (
+        forward_rev_per_share * float(fcfm) if forward_rev_per_share is not None and fcfm is not None else None
+    )
+
     rows = [
         ["P/E (5yr rolling median)", num(pe_med)],
         ["P/FCF (5yr rolling median)", num(pfcf_med)],
+        ["P/S (5yr rolling median)", num(ps_med)],
         ["Revenue CAGR (3yr)", pct(rev_cagr3)],
         ["Earnings CAGR (3yr)", pct(earn_cagr3)],
         ["Revenue Growth (1yr)", pct(rev_g1)],
@@ -1192,10 +1289,14 @@ def _fundamentals_table(ticker: str) -> tuple[str, Optional[tuple]]:
         ["Debt / EBITDA", num(debt_ebitda)],
         ["TTM EPS", f"${num(ttm_eps, '.2f')}"],
         ["Forward 12M EPS (consensus)", f"${num(fwd_eps, '.2f')}"],
+        ["Forward Revenue/Share (consensus)", f"${num(forward_rev_per_share, '.2f')}"],
     ]
     lines = ["#### Key Fundamentals", ""]
     lines += _md_table(["Metric", "Value"], rows)
-    return "\n".join(lines), (pe_p25, pe_med, pe_p75, fwd_eps)
+    pe_multiples = (pe_p25, pe_med, pe_p75, fwd_eps)
+    ps_multiples = (ps_p25, ps_med, ps_p75, forward_rev_per_share)
+    pfcf_multiples = (pfcf_p25, pfcf_med, pfcf_p75, forward_fcf_per_share)
+    return "\n".join(lines), pe_multiples, ps_multiples, pfcf_multiples
 
 
 def _comps_table(ticker: str) -> str:
@@ -1227,7 +1328,8 @@ def _comps_table(ticker: str) -> str:
 
 
 def _model_summary_table(
-    scenarios: dict, pe_multiples: Optional[tuple],
+    scenarios: dict, pe_multiples: Optional[tuple], ps_multiples: Optional[tuple],
+    pfcf_multiples: Optional[tuple],
     fair_value_low: float, fair_value_base: float, fair_value_high: float,
 ) -> str:
     rows = []
@@ -1238,14 +1340,29 @@ def _model_summary_table(
         f"${base.intrinsic_value_per_share:.2f}" if base else "n/a",
         f"${bull.intrinsic_value_per_share:.2f}" if bull else "n/a",
     ])
-    if pe_multiples and all(v is not None for v in pe_multiples):
-        pe_p25, pe_med, pe_p75, fwd_eps = pe_multiples
-        rows.append([
-            "Multiples (P/E x Forward EPS)",
-            f"${pe_p25 * fwd_eps:.2f}",
-            f"${pe_med * fwd_eps:.2f}",
-            f"${pe_p75 * fwd_eps:.2f}",
-        ])
+
+    def _multiples_row(label, multiples):
+        if not multiples or not all(v is not None for v in multiples):
+            return None
+        p25, med, p75, forward_metric = multiples
+        return [
+            label,
+            f"${p25 * forward_metric:.2f}",
+            f"${med * forward_metric:.2f}",
+            f"${p75 * forward_metric:.2f}",
+        ]
+
+    # P/S first: the most broadly computable cross-check (revenue is defined even when
+    # earnings/FCF aren't), followed by P/E and P/FCF where available.
+    for label, multiples in [
+        ("Multiples (P/S x Forward Revenue/Share)", ps_multiples),
+        ("Multiples (P/E x Forward EPS)", pe_multiples),
+        ("Multiples (P/FCF x Forward FCF/Share, est.)", pfcf_multiples),
+    ]:
+        row = _multiples_row(label, multiples)
+        if row:
+            rows.append(row)
+
     rows.append([
         "**Valuation Analyst Fair Value**",
         f"**${fair_value_low:.2f}**", f"**${fair_value_base:.2f}**", f"**${fair_value_high:.2f}**",
@@ -1262,12 +1379,15 @@ def render_valuation_model_tables(
     Python from the DCF engine / database — never authored by an LLM — so it can't drift from
     what the model actually produced. `scenarios` is the (already-computed) output of
     compute_dcf_scenarios — shared with render_market_share_table so the DCF only runs once."""
-    fundamentals_md, pe_multiples = _fundamentals_table(ticker)
+    fundamentals_md, pe_multiples, ps_multiples, pfcf_multiples = _fundamentals_table(ticker)
     blocks = [
         _dcf_assumptions_table(scenarios),
         fundamentals_md,
         _comps_table(ticker),
-        _model_summary_table(scenarios, pe_multiples, fair_value_low, fair_value_base, fair_value_high),
+        _model_summary_table(
+            scenarios, pe_multiples, ps_multiples, pfcf_multiples,
+            fair_value_low, fair_value_base, fair_value_high,
+        ),
     ]
     return "### Valuation Model Detail\n\n" + "\n\n".join(b for b in blocks if b)
 
@@ -1361,6 +1481,17 @@ def render_market_share_table(ticker: str, scenarios: Optional[dict], competitiv
         hi = revenue / 1e9 / tam_low * 100
         return f"{lo:.2f}% – {hi:.2f}%", hi
 
+    # A genuine independent 2030-ish estimate is essentially never bit-for-bit identical to
+    # today's TAM figure — an exact match here means the Competitive Analyst almost certainly
+    # failed to distinguish "current" from "projected" in an ambiguous search result and copied
+    # the same range into both fields. Suppress only the corrupted projected figure; the current
+    # row's math is independent and still correct.
+    projected_is_duplicate = (
+        competitive.tam_projected_low is not None and competitive.tam_current_low is not None
+        and competitive.tam_projected_low == competitive.tam_current_low
+        and competitive.tam_projected_high == competitive.tam_current_high
+    )
+
     rows = []
     scope_warning = False
     if current_revenue and competitive.tam_current_low is not None and competitive.tam_current_high is not None:
@@ -1371,7 +1502,10 @@ def render_market_share_table(ticker: str, scenarios: Optional[dict], competitiv
                 f"${current_revenue / 1e9:.1f}B", share,
             ])
             scope_warning = scope_warning or hi >= 90
-    if future_revenue and competitive.tam_projected_low is not None and competitive.tam_projected_high is not None:
+    if (
+        not projected_is_duplicate and future_revenue
+        and competitive.tam_projected_low is not None and competitive.tam_projected_high is not None
+    ):
         share, hi = share_range(future_revenue, competitive.tam_projected_low, competitive.tam_projected_high)
         if share:
             year_label = f"Projected ({competitive.tam_projected_year})" if competitive.tam_projected_year else "Projected"
@@ -1385,6 +1519,13 @@ def render_market_share_table(ticker: str, scenarios: Optional[dict], competitiv
         return ""
     lines = ["#### Market Size & Share", ""]
     lines += _md_table(["Period", "TAM Range", "Company Revenue", "Estimated Market Share"], rows)
+    if projected_is_duplicate:
+        lines += [
+            "",
+            "*Note: the projected TAM range matched the current range exactly, which usually "
+            "means the source data didn't clearly distinguish today's market size from a future "
+            "estimate — omitted rather than shown as a misleading figure.*",
+        ]
     if scope_warning:
         lines += [
             "",
@@ -1600,10 +1741,15 @@ async def _run_research_agent(
         agent = Agent(name=name, instructions=instructions, model=llm, output_type=output_type)
         t_sub = datetime.now()
         try:
-            result = await Runner.run(agent, f"Produce your section for {ticker.upper()}.")
+            result = await asyncio.wait_for(
+                Runner.run(agent, f"Produce your section for {ticker.upper()}."), timeout=_LLM_TIMEOUT,
+            )
             log.info("[%s] research: %s done in %.1fs", ticker, name,
                      (datetime.now() - t_sub).total_seconds())
             return result.final_output
+        except asyncio.TimeoutError:
+            log.error("[%s] research: %s sub-agent timed out after %ds", ticker, name, _LLM_TIMEOUT)
+            return fallback
         except Exception as e:
             log.error("[%s] research: %s sub-agent failed: %s", ticker, name, e)
             return fallback
@@ -1692,24 +1838,62 @@ async def _run_research_agent(
         f"{_format_specialist_outputs(competitive_out, earnings_out, technical_out, valuation_out)}"
     )
 
-    chief_agent = Agent(
-        name="chief_analyst",
-        instructions=_fill("research_chief.md", chief_context),
+    core_agent = Agent(
+        name="chief_analyst_core",
+        instructions=_fill("research_chief_core.md", chief_context),
         model=llm,
-        output_type=EquityResearchReport,
-        model_settings=ModelSettings(max_tokens=32000),
+        output_type=ChiefCoreOutput,
+        model_settings=ModelSettings(max_tokens=16000),
     )
     t_llm = datetime.now()
-    result, (valuation_tables_md, direct_competitors_md, market_share_md) = await asyncio.gather(
-        Runner.run(chief_agent, f"Generate investment research report for {ticker.upper()}."),
-        loop.run_in_executor(
-            None, lambda: _build_post_subagent_tables(ticker, valuation_out, competitive_out),
-        ),
+    try:
+        core_result, (valuation_tables_md, direct_competitors_md, market_share_md) = await asyncio.gather(
+            asyncio.wait_for(
+                Runner.run(core_agent, f"Generate the rating, target price, and financial synthesis for {ticker.upper()}."),
+                timeout=_LLM_TIMEOUT,
+            ),
+            loop.run_in_executor(
+                None, lambda: _build_post_subagent_tables(ticker, valuation_out, competitive_out),
+            ),
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"Chief Core timed out after {_LLM_TIMEOUT}s")
+    core_out = core_result.final_output
+    log.info("[%s] research: Chief Core done in %.1fs", ticker, (datetime.now() - t_llm).total_seconds())
+
+    h, v = core_out.header, core_out.valuation
+    core_context = (
+        f"rating: {h.rating}\n"
+        f"target_low: {h.target_low}\n"
+        f"target_high: {h.target_high}\n"
+        f"thesis_summary: {h.thesis_summary}\n"
+        f"current_price: {v.current_price}\n"
+        f"upside_pct: {v.upside_pct}\n"
+        f"fair_value_low / fair_value_base / fair_value_high: {v.fair_value_low} / {v.fair_value_base} / {v.fair_value_high}\n"
+        f"goal_low / goal_high: {v.goal_low} / {v.goal_high}\n"
+        f"analyst_target_price: {v.analyst_target_price}"
     )
-    log.info("[%s] research: Chief Analyst done in %.1fs — total %.1fs", ticker,
-             (datetime.now() - t_llm).total_seconds(),
+    narrative_agent = Agent(
+        name="chief_analyst_narrative",
+        instructions=_fill("research_chief_narrative.md", chief_context).replace("{core_context}", core_context),
+        model=llm,
+        output_type=ChiefNarrativeOutput,
+        model_settings=ModelSettings(max_tokens=32000),
+    )
+    t_llm2 = datetime.now()
+    try:
+        narrative_result = await asyncio.wait_for(
+            Runner.run(narrative_agent, f"Generate the narrative sections for {ticker.upper()}."),
+            timeout=_LLM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"Chief Narrative timed out after {_LLM_TIMEOUT}s")
+    narrative_out = narrative_result.final_output
+    log.info("[%s] research: Chief Narrative done in %.1fs — total %.1fs", ticker,
+             (datetime.now() - t_llm2).total_seconds(),
              (datetime.now() - t0).total_seconds())
-    report = result.final_output
+
+    report = EquityResearchReport(**core_out.model_dump(), **narrative_out.model_dump())
     findings = _validate_report(report, technical_out, valuation_out)
     if findings:
         log.warning("[%s] research: QC found %d inconsistencies: %s", ticker, len(findings), findings)

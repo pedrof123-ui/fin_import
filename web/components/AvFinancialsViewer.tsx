@@ -175,6 +175,7 @@ const STMT_LABELS: Record<StmtType, string> = {
 
 type SubRowDef = {
   label: string;
+  format?: "pct" | "dollar";
   compute: (col: Record<string, unknown>, prev: Record<string, unknown> | null) => number | null;
 };
 
@@ -201,6 +202,17 @@ const AV_INCOME_SUB_ROWS: Record<string, SubRowDef[]> = {
       const r = col.total_revenue as number | null;
       const oi = col.operating_income as number | null;
       return r && oi != null ? oi / r : null;
+    },
+  }],
+  net_income_from_continuing_ops: [{
+    label: "Noncontrolling Interest",
+    format: "dollar" as const,
+    compute: (col) => {
+      const cont = col.net_income_from_continuing_ops as number | null;
+      const ni = col.net_income as number | null;
+      if (cont == null || ni == null) return null;
+      const nci = cont - ni;
+      return Math.abs(nci) > 1e5 ? nci : null;
     },
   }],
   net_income: [{
@@ -472,7 +484,7 @@ export default function AvFinancialsViewer({ ticker }: { ticker: string }) {
                       </td>
                       {data.map((record, colIdx) => {
                         const val = sub.compute(record, data[colIdx + 1] ?? null);
-                        const { text, negative } = fmtRatio(val);
+                        const { text, negative } = sub.format === "dollar" ? formatNumber(val) : fmtRatio(val);
                         return (
                           <td
                             key={colIdx}

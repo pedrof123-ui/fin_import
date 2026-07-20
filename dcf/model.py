@@ -165,6 +165,10 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
         tax_raw = _val(row, "income_tax_expense")
         income_tax = abs(tax_raw) if tax_raw is not None else None
 
+        _ni_cont = _val(row, "net_income_from_continuing_ops")
+        _ni = _val(row, "net_income")
+        _nci = (_ni_cont - _ni) if _ni_cont is not None and _ni is not None and abs(_ni_cont - _ni) > 1e5 else None
+
         rows.append(
             HistoricalRow(
                 period_label=label,
@@ -186,6 +190,7 @@ def _build_historical_rows(annual: dict[str, pd.DataFrame]) -> list:
                 ebitda=ebitda,
                 income_tax_expense=income_tax,
                 pretax_income=_val(row, "pretax_income"),
+                noncontrolling_interest=_nci,
                 accounts_receivable=_val(bs_row, "accounts_receivable"),
                 accounts_payable=_val(bs_row, "accounts_payable"),
                 inventory=_val(bs_row, "inventory"),
@@ -213,7 +218,8 @@ def _build_proforma_rows(
         other = rev * yf.other_pct
         pretax = fc.ebit - interest + other
         income_tax = pretax * tax_rate
-        net_income = pretax * (1 - tax_rate)
+        nci = rev * yf.nci_pct if yf.nci_pct > 0 else None
+        net_income = pretax * (1 - tax_rate) - (nci or 0.0)
         ebitda = fc.ebit + fc.da
         diluted_eps = net_income / shares if shares and shares > 0 else None
 
@@ -237,6 +243,7 @@ def _build_proforma_rows(
                 ebitda=ebitda,
                 income_tax_expense=income_tax,
                 pretax_income=pretax,
+                noncontrolling_interest=nci,
             )
         )
     return rows

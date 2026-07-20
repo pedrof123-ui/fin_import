@@ -55,6 +55,16 @@ RANGE_FIELDS: list[tuple[str, str]] = [
     ("goal_peg_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_peg  IS NOT NULL THEN (ps.goal_peg  / ps.current_price - 1) ELSE NULL END"),
     ("goal_bv_upside",    "CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END"),
     ("dcf_upside",        "CASE WHEN ps.current_price > 0 AND dr.intrinsic_value_per_share IS NOT NULL THEN (dr.intrinsic_value_per_share / ps.current_price - 1) ELSE NULL END"),
+    ("q1_rev_yoy",        "qy.q1_rev_yoy"),
+    ("q1_earn_yoy",       "qy.q1_earn_yoy"),
+    ("q1_ebit_yoy",       "qy.q1_ebit_yoy"),
+    ("q2_rev_yoy",        "qy.q2_rev_yoy"),
+    ("q2_earn_yoy",       "qy.q2_earn_yoy"),
+    ("q2_ebit_yoy",       "qy.q2_ebit_yoy"),
+    ("accel_rev_yoy",     "qy.q1_rev_yoy - qy.q2_rev_yoy"),
+    ("accel_earn_yoy",    "qy.q1_earn_yoy - qy.q2_earn_yoy"),
+    ("accel_ebit_yoy",    "qy.q1_ebit_yoy - qy.q2_ebit_yoy"),
+    ("op_leverage_q1",    "qy.q1_ebit_yoy - qy.q1_rev_yoy"),
 ]
 
 
@@ -113,6 +123,26 @@ class ScreenRequest(BaseModel):
     goal_bv_upside_max: float | None = None
     dcf_upside_min: float | None = None
     dcf_upside_max: float | None = None
+    q1_rev_yoy_min: float | None = None
+    q1_rev_yoy_max: float | None = None
+    q1_earn_yoy_min: float | None = None
+    q1_earn_yoy_max: float | None = None
+    q1_ebit_yoy_min: float | None = None
+    q1_ebit_yoy_max: float | None = None
+    q2_rev_yoy_min: float | None = None
+    q2_rev_yoy_max: float | None = None
+    q2_earn_yoy_min: float | None = None
+    q2_earn_yoy_max: float | None = None
+    q2_ebit_yoy_min: float | None = None
+    q2_ebit_yoy_max: float | None = None
+    accel_rev_yoy_min: float | None = None
+    accel_rev_yoy_max: float | None = None
+    accel_earn_yoy_min: float | None = None
+    accel_earn_yoy_max: float | None = None
+    accel_ebit_yoy_min: float | None = None
+    accel_ebit_yoy_max: float | None = None
+    op_leverage_q1_min: float | None = None
+    op_leverage_q1_max: float | None = None
 
 
 _BASE_QUERY = """
@@ -125,6 +155,35 @@ latest_co AS (
     SELECT ticker, name, sector, industry, market_cap
     FROM av.company_overview
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fetch_date DESC) = 1
+),
+quarters AS (
+    SELECT
+        ticker,
+        fiscal_date_ending,
+        total_revenue,
+        ebit,
+        net_income,
+        LAG(total_revenue, 4) OVER (PARTITION BY ticker ORDER BY fiscal_date_ending) AS total_revenue_py,
+        LAG(ebit, 4)          OVER (PARTITION BY ticker ORDER BY fiscal_date_ending) AS ebit_py,
+        LAG(net_income, 4)    OVER (PARTITION BY ticker ORDER BY fiscal_date_ending) AS net_income_py,
+        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fiscal_date_ending DESC) AS rn
+    FROM av.income_statements
+    WHERE period_type = 'quarterly'
+),
+quarterly_yoy AS (
+    SELECT
+        ticker,
+        MAX(CASE WHEN rn = 1 THEN fiscal_date_ending END) AS q1_date,
+        MAX(CASE WHEN rn = 1 AND total_revenue_py > 0 THEN total_revenue / total_revenue_py - 1 END) AS q1_rev_yoy,
+        MAX(CASE WHEN rn = 1 AND net_income_py    > 0 THEN net_income / net_income_py - 1 END)       AS q1_earn_yoy,
+        MAX(CASE WHEN rn = 1 AND ebit_py          > 0 THEN ebit / ebit_py - 1 END)                    AS q1_ebit_yoy,
+        MAX(CASE WHEN rn = 2 THEN fiscal_date_ending END) AS q2_date,
+        MAX(CASE WHEN rn = 2 AND total_revenue_py > 0 THEN total_revenue / total_revenue_py - 1 END) AS q2_rev_yoy,
+        MAX(CASE WHEN rn = 2 AND net_income_py    > 0 THEN net_income / net_income_py - 1 END)       AS q2_earn_yoy,
+        MAX(CASE WHEN rn = 2 AND ebit_py          > 0 THEN ebit / ebit_py - 1 END)                    AS q2_ebit_yoy
+    FROM quarters
+    WHERE rn <= 2
+    GROUP BY ticker
 )
 SELECT
     ps.ticker,
@@ -158,10 +217,23 @@ SELECT
     CASE WHEN ps.current_price > 0 AND ps.goal_peg  IS NOT NULL THEN (ps.goal_peg  / ps.current_price - 1) ELSE NULL END AS goal_peg_upside,
     CASE WHEN ps.current_price > 0 AND ps.goal_bv   IS NOT NULL THEN (ps.goal_bv   / ps.current_price - 1) ELSE NULL END AS goal_bv_upside,
     dr.intrinsic_value_per_share                         AS dcf_intrinsic_value,
-    CASE WHEN ps.current_price > 0 AND dr.intrinsic_value_per_share IS NOT NULL THEN (dr.intrinsic_value_per_share / ps.current_price - 1) ELSE NULL END AS dcf_upside
+    CASE WHEN ps.current_price > 0 AND dr.intrinsic_value_per_share IS NOT NULL THEN (dr.intrinsic_value_per_share / ps.current_price - 1) ELSE NULL END AS dcf_upside,
+    qy.q1_date,
+    qy.q1_rev_yoy,
+    qy.q1_earn_yoy,
+    qy.q1_ebit_yoy,
+    qy.q2_date,
+    qy.q2_rev_yoy,
+    qy.q2_earn_yoy,
+    qy.q2_ebit_yoy,
+    qy.q1_rev_yoy  - qy.q2_rev_yoy  AS accel_rev_yoy,
+    qy.q1_earn_yoy - qy.q2_earn_yoy AS accel_earn_yoy,
+    qy.q1_ebit_yoy - qy.q2_ebit_yoy AS accel_ebit_yoy,
+    qy.q1_ebit_yoy - qy.q1_rev_yoy  AS op_leverage_q1
 FROM hf.pe_stats ps
 LEFT JOIN latest_co co ON ps.ticker = co.ticker
 LEFT JOIN latest_mp mp ON ps.ticker = mp.ticker
+LEFT JOIN quarterly_yoy qy ON ps.ticker = qy.ticker
 LEFT JOIN hf.dcf_results dr ON ps.ticker = dr.ticker AND dr.status = 'ok'
 """
 

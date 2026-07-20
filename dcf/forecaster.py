@@ -343,6 +343,17 @@ def forecast_assumptions(
     else:
         hist_other_pct = np.array([])
 
+    # NCI % of revenue: noncontrolling interest = NI from continuing ops − NI attributable to common.
+    # Available when AV reports net_income_from_continuing_ops separately from net_income.
+    ni_cont = inc_a["net_income_from_continuing_ops"] if "net_income_from_continuing_ops" in inc_a.columns else pd.Series(dtype=float)
+    ni_rep = inc_a["net_income"] if "net_income" in inc_a.columns else pd.Series(dtype=float)
+    if not ni_cont.isna().all() and not ni_rep.isna().all():
+        nci_ser = (ni_cont.reindex(inc_a.index) - ni_rep.reindex(inc_a.index)).clip(lower=0)
+        hist_nci = _safe_ratio(nci_ser, inc_a["revenue"]).dropna().values
+    else:
+        hist_nci = np.array([])
+    nci_flat = _mean_ratio(hist_nci, 0.0, 0.0, 0.3) if len(hist_nci) >= 2 else 0.0
+
     # CapEx % of revenue — normalized 5-year mean from CF statement.
     cx_denom = inc_a["revenue"].reindex(cf_a.index).values
     hist_cx = _safe_ratio(cf_a["capital_expenditures"].abs(), pd.Series(cx_denom)).dropna().values
@@ -379,6 +390,7 @@ def forecast_assumptions(
     int_all  = [int_flat]  * 10
     other_all = [other_flat] * 10
     other_opex_all = [other_opex_flat] * 10
+    nci_all  = [nci_flat]  * 10
 
     prev_rev = [last_rev] + list(rev_all)
 
@@ -397,6 +409,7 @@ def forecast_assumptions(
                 interest_pct=float(int_all[i]),
                 other_pct=float(other_all[i]),
                 other_opex_pct=float(other_opex_all[i]),
+                nci_pct=float(nci_all[i]),
                 capex_pct_revenue=cx_pct_norm,
                 da_pct=da_pct_norm,
                 reports_cogs=reports_cogs,
@@ -458,6 +471,7 @@ def merge_overrides(base: list, overrides) -> list:
                 interest_pct=yo.interest_pct if yo.interest_pct is not None else yf.interest_pct,
                 other_pct=yo.other_pct if yo.other_pct is not None else yf.other_pct,
                 other_opex_pct=yo.other_opex_pct if yo.other_opex_pct is not None else yf.other_opex_pct,
+                nci_pct=yf.nci_pct,
                 capex_pct_revenue=yo.capex_pct_revenue if yo.capex_pct_revenue is not None else yf.capex_pct_revenue,
                 da_pct=yo.da_pct if yo.da_pct is not None else yf.da_pct,
                 reports_cogs=yf.reports_cogs,

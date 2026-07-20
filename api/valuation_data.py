@@ -276,7 +276,7 @@ def get_valuation_inputs(ticker: str) -> str:
                    current_roic, current_gross_margin, gross_margin_5y_median,
                    current_operating_margin, operating_margin_5y_median,
                    current_fcf_margin, fcf_margin_5y_median, debt_to_ebitda,
-                   current_ttm_eps, forward_12m_eps
+                   current_ttm_eps, forward_12m_eps, ps_rolling_5yr_median
             FROM pe_stats WHERE ticker = ?
         """, [ticker]).fetchone()
         conn.close()
@@ -292,9 +292,10 @@ def get_valuation_inputs(ticker: str) -> str:
         return f"{float(v) * 100:.{fmt[0]}f}%" if pct else f"{float(v):.{fmt[0]}f}"
 
     lines += [
-        "NORMALIZED HISTORICAL MULTIPLES (5yr rolling median of historical P/E and P/FCF ratios):",
+        "NORMALIZED HISTORICAL MULTIPLES (5yr rolling median of historical P/E, P/FCF, P/S ratios):",
         f"  P/E (5yr rolling median):   {f(ps[0], pct=False)}",
         f"  P/FCF (5yr rolling median): {f(ps[1], pct=False)}",
+        f"  P/S (5yr rolling median):   {f(ps[17], pct=False)}",
         "",
         "GROWTH:",
         f"  Revenue CAGR 3yr:      {f(ps[2])}",

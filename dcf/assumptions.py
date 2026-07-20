@@ -61,6 +61,7 @@ class YearForecast:
     da_pct: float = 0.03
     other_opex_pct: float = 0.0  # residual operating costs not in COGS/SGA/R&D
     reports_cogs: bool = True    # False for service cos. that don't break out cost of revenue
+    nci_pct: float = 0.0         # noncontrolling interest as % of revenue (deducted below tax line)
 
 
 @dataclass
@@ -130,6 +131,7 @@ class HistoricalRow:
     ebitda: float | None = None
     income_tax_expense: float | None = None
     pretax_income: float | None = None
+    noncontrolling_interest: float | None = None
     is_actual: bool = False
     # Balance sheet items for working-capital day metrics
     accounts_receivable: float | None = None

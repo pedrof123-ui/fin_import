@@ -84,6 +84,7 @@ function computeFullYear(quarters: HistoricalRow[]): HistoricalRow {
     ebitda:                      sum("ebitda"),
     income_tax_expense:          sum("income_tax_expense"),
     pretax_income:               sum("pretax_income"),
+    noncontrolling_interest:     sum("noncontrolling_interest"),
     accounts_receivable:         null,
     accounts_payable:            null,
     inventory:                   null,

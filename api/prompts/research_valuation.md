@@ -23,9 +23,11 @@ DATA PROVIDED:
    available; bull uses consensus-high revenue and 75th-percentile margins. Where consensus
    estimates don't cover a forecast year, growth is nudged by a momentum-vs-trend spread instead
    — this is disclosed in the data, not something you need to verify.
-2. VALUATION INPUTS — normalized 5yr P/E and P/FCF multiples (historical anchors, not current
-   multiples), growth rates, quality metrics (ROIC, margins vs. 5yr median, leverage), per-share
-   EPS/FCF history, and forward consensus EPS/revenue estimates.
+2. VALUATION INPUTS — normalized 5yr P/E, P/FCF, and P/S multiples (historical anchors, not
+   current multiples), growth rates, quality metrics (ROIC, margins vs. 5yr median, leverage),
+   per-share EPS/FCF history, and forward consensus EPS/revenue estimates. P/S is useful when
+   P/E or P/FCF is undefined (unprofitable or cash-burning company) since revenue is virtually
+   always positive.
 3. FINANCIAL PERFORMANCE — 5-year revenue/margin/FCF history.
 4. PEER COMPARISON — same-industry peers with their own market cap, multiples, and growth
    (peer prices/multiples are fine to use — they are not {ticker}'s own price).
@@ -62,10 +64,13 @@ fair_value_base: derive primarily from the BASE DCF scenario's intrinsic value p
 fair_value_low / fair_value_high: anchor on the BEAR and BULL DCF scenarios respectively, cross-
   checked against (a) the sensitivity grid's range and (b) a multiples-based cross-check: apply
   the normalized 5yr P/E and P/FCF to forward consensus EPS/FCF-per-share (not TTM — see peak-
-  earnings note below) to get a second fair-value estimate, and reconcile it with the DCF range
-  rather than picking one arbitrarily. Do not simply take the DCF base +/- an arbitrary
-  percentage — every low/high figure must trace to either a scenario DCF run or a multiples
-  calculation shown in your reasoning.
+  earnings note below) to get a second fair-value estimate. If P/E and P/FCF are both undefined
+  (unprofitable/cash-burning company), fall back to normalized 5yr P/S x forward consensus
+  revenue/share instead — this is often the only usable multiples cross-check for such
+  companies. Reconcile whichever cross-check is usable with the DCF range rather than picking
+  one arbitrarily. Do not simply take the DCF base +/- an arbitrary percentage — every low/high
+  figure must trace to either a scenario DCF run or a multiples calculation shown in your
+  reasoning.
 
 PEAK-EARNINGS AWARENESS: if TTM EPS is far above forward consensus EPS (check the per-share
 history and forward estimates in VALUATION INPUTS), anchor any multiples-based cross-check on
@@ -74,8 +79,9 @@ forward or normalized earnings, not TTM — TTM would overstate fair value on a 
 DEGRADATION: if the DCF summary is an [ERROR] placeholder, or its warnings indicate the output
 is structurally unreliable (e.g. zero market cap, WACC below 5%, critical fields null), fall
 back to a multiples-only valuation (normalized P/E x forward EPS, normalized P/FCF x forward
-FCF/share) and say so explicitly in valuation_methodology. If both DCF and multiples are
-unusable, set all three fair_value fields to 0.0 and explain why in valuation_methodology.
+FCF/share, or normalized P/S x forward revenue/share if P/E and P/FCF are undefined) and say so
+explicitly in valuation_methodology. If DCF and every multiples method are unusable, set all
+three fair_value fields to 0.0 and explain why in valuation_methodology.
 
 Produce:
 

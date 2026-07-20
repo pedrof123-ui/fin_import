@@ -80,7 +80,7 @@ def _extract_value(
         rows = main_items[main_items['bare_concept'] == bare]
         if not rows.empty and year_column in rows.columns:
             value = rows.iloc[0][year_column]
-            if pd.notna(value):
+            if pd.notna(value) and str(value).strip() != '':
                 if should_aggregate or should_max:
                     found_values.append(float(value))
                     found_concepts.append(concept)

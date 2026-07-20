@@ -106,6 +106,12 @@ def load_annual_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
 
 
 def load_current_price(ticker: str) -> float | None:
+    from historic_fundamentals.quote import fetch_live_price
+
+    live = fetch_live_price(ticker)
+    if live is not None:
+        return live
+
     try:
         conn = duckdb.connect(str(PRICES_DB), read_only=True)
         row = conn.execute(

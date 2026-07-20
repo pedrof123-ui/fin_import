@@ -122,13 +122,25 @@ def _feature_available_date(fiscal_date_ending: date, period_type: str) -> date:
     return fiscal_date_ending + _LAG_QUARTERLY
 
 
-def _drop_corrupt_quarters(df: pd.DataFrame, col: str = "total_assets", max_ratio: float = 50.0) -> pd.DataFrame:
+# Tickers where a large total_assets level-shift is a confirmed real event (e.g. a
+# reverse merger consolidating a new business onto the balance sheet), not an AV
+# unit-reporting bug -- exempt from _drop_corrupt_quarters.
+# AIBZ: Bitzero Holdings reverse merger, total_assets jumped ~2500x at fiscal_date_ending
+# 2025-09-30 and held at the new scale for the following two quarters.
+_CORRUPT_QUARTER_EXCEPTIONS: set[str] = {"AIBZ"}
+
+
+def _drop_corrupt_quarters(
+    df: pd.DataFrame, col: str = "total_assets", max_ratio: float = 50.0, ticker: str | None = None
+) -> pd.DataFrame:
     """
     Drop quarterly rows where a key balance-sheet figure differs by >max_ratio from
     the rolling median of the prior 4 quarters. Catches AV unit-reporting bugs where
     a single quarter is off by ~1000x (e.g. reported in billions instead of thousands).
     """
     if df.empty or col not in df.columns:
+        return df
+    if ticker in _CORRUPT_QUARTER_EXCEPTIONS:
         return df
     vals = df[col].copy().astype(float)
     rolling_med = vals.shift(1).rolling(4, min_periods=1).median()
@@ -183,7 +195,7 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
         ORDER BY i.fiscal_date_ending
     """
     quarterly = av_conn.execute(sql, [ticker, "quarterly"]).df()
-    quarterly = _drop_corrupt_quarters(quarterly, col="total_assets")
+    quarterly = _drop_corrupt_quarters(quarterly, col="total_assets", ticker=ticker)
     annual    = av_conn.execute(sql, [ticker, "annual"]).df()
     return quarterly, annual
 

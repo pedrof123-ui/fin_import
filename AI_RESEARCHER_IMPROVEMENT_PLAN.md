@@ -512,3 +512,109 @@ choosing:
   a specific earnings call ([2027Q1 call]) to validate the base case's revenue CAGR assumption.
   Full regression (NVDA/UPS/KO/degraded ticker) passed with zero QC findings and no latency
   regression (all runs completed in 44-50s, if anything faster than pre-change baseline).
+
+### Bug fix: TAM projected == TAM current producing a nonsensical market share
+
+User-reported: NVDA's Market Size & Share table showed identical TAM ranges ($1400B-$1700B) for
+both "Current" and "Projected (2030)," which meant the projected row divided the DCF's much
+larger Year-5 revenue by the SAME current-year TAM, producing a nonsensical 91.83%-111.51%
+implied market share. The Current row's math was independently correct (12.70%-15.42%) — the
+bug was purely that `tam_projected_low/high` had been set bit-for-bit identical to
+`tam_current_low/high` by the Competitive Analyst, almost certainly because an ambiguous search
+result ("the market is valued at $X-Y billion") didn't clearly separate "today" from "by 2030,"
+and the model copied the same range into both fields rather than recognizing the ambiguity.
+
+Two-layer fix (same "prompt does its best, code catches what's left" pattern used throughout):
+- Prompt (`research_competitive.md`): explicit instruction not to copy tam_current into
+  tam_projected — if the analyst can't find a source giving a genuinely different figure for a
+  specific future year, leave tam_projected_low/high/year all null instead.
+- Deterministic guard (`render_market_share_table`, the reliable fix): if tam_projected_low/high
+  are exactly identical to tam_current_low/high, treat the projected estimate as a data error
+  and suppress only that row (with an explanatory note) — the Current row is unaffected since
+  its math doesn't depend on the projected fields at all. A genuine independent 2030 estimate
+  would essentially never be bit-identical to today's figure, so exact equality is a reliable,
+  generic (not NVDA-specific) signal of this extraction failure.
+
+Verified: a unit test reproducing the exact reported bug (identical $1400-1700B current/
+projected) now correctly drops the Projected row and keeps the correct Current row; a
+legitimate distinct-range case still renders both rows unaffected. Full regression clean.
+
+### Post-launch enhancement: P/S and P/FCF added to the Model Summary triangulation
+
+User request, following a discussion of why the Multiples row was sometimes missing entirely
+(P/E and its percentile bands are undefined for companies with insufficient positive-earnings
+history or no forward EPS consensus — exactly the companies where a second cross-check matters
+most). Added two more multiples rows, both computed deterministically (no LLM arithmetic):
+
+- **P/S (Price/Sales)** — the priority addition: `ps_p25_5yr`/`ps_rolling_5yr_median`/
+  `ps_p75_5yr` (already in `pe_stats`, same construction as the P/E percentiles) x a forward
+  revenue/share figure from the nearest upcoming fiscal-year consensus estimate
+  (`_forward_revenue_estimate`) divided by latest diluted shares (`_latest_diluted_shares`, both
+  new small helpers in `research_router.py`). Revenue is virtually always defined even for
+  unprofitable/pre-profit companies, so P/S remains usable exactly where P/E fails.
+- **P/FCF** — added `pfcf_p25_5yr`/`pfcf_p75_5yr` (rolling median was already fetched). Forward
+  FCF/share has no direct consensus estimate, so it's derived as forward revenue/share x the
+  company's own current FCF margin (assumes near-term margin stability) — labeled "(est.)" in
+  the table to disclose this is a derived, not directly-sourced, figure.
+- `_fundamentals_table()` now returns 3 multiples tuples instead of 1; `_model_summary_table()`
+  renders whichever are available (P/S first, since it's most broadly computable, then P/E,
+  then P/FCF), silently omitting any tuple with a null component — same graceful-degradation
+  pattern as everywhere else in this feature. `get_valuation_inputs()` (the Valuation Analyst's
+  own input) and `research_valuation.md`'s methodology also updated so the LLM's own multiples
+  reasoning has and uses P/S, particularly as the fallback cross-check when P/E and P/FCF are
+  both undefined.
+
+Verified: all three rows populate correctly and independently for NVDA/UPS/KO; unknown-ticker
+case degrades to zero rows without crashing; full regression clean across all three tickers.
+
+### Bug fix: Claude Sonnet 4.6 (and any Claude model) failing every report with a 400
+
+User-reported: selecting "Claude Sonnet 4.6" from the model dropdown failed every report with
+`Error code: 400 ... "The compiled grammar is too large, which would cause performance issues.
+Simplify your tool schemas or reduce the number of strict tools."` — reproduced identically
+across all 3 backend providers OpenRouter routes Claude through (Azure, Anthropic direct,
+Amazon Bedrock), confirming it was the schema itself, not a provider-specific quirk.
+
+Root cause: the Chief Analyst's single structured-output schema (`EquityResearchReport`, ~5,657
+JSON-schema chars — by far the largest of the 5 agents' schemas, next is `CompetitiveOutput` at
+1,452) exceeds a size limit in Anthropic's compiled-grammar constrained-decoding compiler for
+strict tool use. Confirmed empirically: `AgentOutputSchema(..., strict_json_schema=False)` had
+*no effect* (OpenRouter evidently converts the response format into an Anthropic tool-use call
+regardless of the SDK's strict flag, so that toggle doesn't reach the actual constraint); the
+4 specialist sub-agents (largest schema 1,452 chars) all worked fine on Claude in isolation —
+only the Chief's mega-schema failed, and it failed instantly with a trivial prompt, confirming
+it was purely schema size/complexity, not prompt content.
+
+Fix: split the Chief into two sequential structured-output calls instead of one — `ChiefCoreOutput`
+(header/rating/target price/financial_performance/valuation/risk_factors/near_term_catalysts/
+peak_earnings_analysis, ~4,195 chars) and `ChiefNarrativeOutput` (everything else — all the
+copy-through specialist sections plus investment_thesis/price_vs_fundamentals/
+target_price_validation/balance_sheet_analysis, ~1,528 chars), each empirically verified well
+under the failure threshold. Narrative runs after Core and receives Core's finalized rating/
+target/fair-values as explicit context (`{core_context}` placeholder) so its reasoning (bull/bear
+case, target price triangulation) stays consistent with — never contradicts — Core's decision.
+The two validated Pydantic outputs are merged in Python into the same `EquityResearchReport`
+used everywhere downstream (exact field-set match verified: no fields missing or duplicated), so
+rendering, `_validate_report` QC, and every consumer are unaffected by the split. New prompt
+files `research_chief_core.md` / `research_chief_narrative.md` replace the old single
+`research_chief.md` (deleted).
+
+Applied uniformly across all models (not conditionally per-provider) for one code path — the
+added latency (one more sequential LLM call) is a deliberate, disclosed tradeoff for Claude to
+work at all.
+
+Also added, per user request following this fix: a per-agent LLM call timeout (`_LLM_TIMEOUT =
+400s`, applied to all 4 sub-agents via `asyncio.wait_for` inside `_run_subagent`, and to both
+Chief calls) so a genuinely stuck provider call fails to the existing error/fallback path
+automatically instead of hanging indefinitely with only the manual Cancel button as a recourse.
+400s was chosen with real headroom above the slowest verified real call (Claude Sonnet 4.6's
+Chief Narrative took 268s in testing).
+
+Verified: reproduced the exact reported 400 error before the fix (isolated to
+`EquityResearchReport` alone, trivial prompt); confirmed the fix with a full live end-to-end
+NVDA report generation using `anthropic/claude-sonnet-4-6` (419s total — Claude is ~3.8x slower
+than the default Gemini 3.5 Flash for this workload, all 4 sub-agents + both Chief calls
+completed with real content, zero fallbacks). Confirmed no regression on the default Gemini path
+(full pytest suite green; NVDA passed regression cleanly; UPS/KO hit a transient JSON-truncation
+failure on one regression run — reproduced as a dropped/truncated stream unrelated to the split,
+both succeeded cleanly on immediate retry, and this failure class existed before the split too).

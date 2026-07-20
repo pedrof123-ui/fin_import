@@ -19,6 +19,13 @@ type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
 type Tab = "screener" | "sector" | "calendar" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings" | "estimates" | "news";
 
+interface Quote {
+  price: number;
+  change: number | null;
+  change_percent: number | null;
+  is_live: boolean;
+}
+
 const FY_DISPLAY_PERIODS = 20;
 const Q_DISPLAY_PERIODS = 8;
 
@@ -45,6 +52,7 @@ export default function Home() {
   const [status, setStatus] = useState<string | null>(null);
   const [quartersStatus, setQuartersStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quote, setQuote] = useState<Quote | null>(null);
 
   const fetchXbrlStatement = useCallback(
     async (ticker: string, periodType: PeriodType, stmt: StmtType, periods: number) => {
@@ -76,6 +84,26 @@ export default function Home() {
     setStatus(null);
     setQuartersStatus(null);
   };
+
+  useEffect(() => {
+    if (!loadedTicker) {
+      setQuote(null);
+      return;
+    }
+    let cancelled = false;
+    setQuote(null);
+    fetch(`${API}/quote/${loadedTicker}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled) setQuote(data);
+      })
+      .catch(() => {
+        if (!cancelled) setQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadedTicker]);
 
   const handleScreenerSelectTicker = (ticker: string) => {
     handleLoad(ticker);
@@ -194,6 +222,21 @@ export default function Home() {
           </span>
           <div className="w-px h-4 bg-white/10 shrink-0" />
           <ImportForm onSubmit={handleLoad} loading={importing} />
+          {loadedTicker && quote && (
+            <span className="font-mono text-xs shrink-0 flex items-center gap-1.5">
+              <span className="text-zinc-200">${quote.price.toFixed(2)}</span>
+              {quote.change_percent !== null && (
+                <span className={quote.change_percent >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                  {quote.change_percent >= 0 ? "▲" : "▼"} {Math.abs(quote.change_percent).toFixed(2)}%
+                </span>
+              )}
+              {!quote.is_live && (
+                <span className="text-zinc-600" title="Live quote unavailable — showing latest close">
+                  (close)
+                </span>
+              )}
+            </span>
+          )}
           {loadedTicker && !xbrlLoaded && (
             <>
               <div className="w-px h-4 bg-white/10 shrink-0" />

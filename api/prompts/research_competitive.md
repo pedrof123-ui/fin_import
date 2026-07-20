@@ -73,6 +73,13 @@ tam_current_low / tam_current_high: the current TAM range in $ billions, from th
 tam_projected_low / tam_projected_high: a projected future TAM range in $ billions, at whatever
   future year the search results/your knowledge support (5-year-ish horizon is ideal, to roughly
   match the DCF forecast window, but use whatever year is actually sourced).
+  CRITICAL — DO NOT COPY tam_current INTO THIS FIELD: a search result is often a single
+  ambiguous figure (e.g. "the market is valued at $X-Y billion") that doesn't clearly state
+  whether it means today's size or a future projection. If you cannot find a source that
+  explicitly gives a DIFFERENT figure for a specific future year (vs. today), leave
+  tam_projected_low/high and tam_projected_year all null rather than reusing tam_current's
+  numbers — an identical current/projected range is treated downstream as a data error and
+  will be dropped from the report, so a null is strictly more useful than a guessed duplicate.
 tam_projected_year: the calendar year the projected TAM range refers to (e.g. 2030). Null if
   tam_projected_low/high are null.
 
