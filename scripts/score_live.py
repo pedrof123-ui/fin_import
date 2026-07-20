@@ -55,7 +55,7 @@ from historic_fundamentals.baselines import (  # noqa: E402
     _MOMENTUM_COL,
 )
 from historic_fundamentals.risk import value_trap_flags  # noqa: E402
-from historic_fundamentals.model import _apply_sector_zscore  # noqa: E402
+from historic_fundamentals.model import apply_zscore_stats  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -271,7 +271,8 @@ def _compute_composite_score(df: pd.DataFrame, sector_neutral: bool = True) -> p
 
 
 def _load_model(model_path):
-    """Load joblib model. Returns None if not found or model_path is None."""
+    """Load joblib model bundle ({model, zscore_stats, feature_cols}).
+    Returns None if not found or model_path is None."""
     if model_path is None:
         return None
     import joblib
@@ -280,35 +281,36 @@ def _load_model(model_path):
         log.warning("Model not found at %s — using composite baseline score.", model_path)
         return None
     try:
-        model = joblib.load(p)
+        bundle = joblib.load(p)
         log.info("Loaded model from %s", p)
-        return model
+        return bundle
     except Exception as exc:
         log.warning("Could not load model from %s: %s — using baseline score.", p, exc)
         return None
 
 
-def _predict_with_model(model, df: pd.DataFrame) -> pd.Series:
-    """Score using XGBoost model. Falls back to None if feature columns missing."""
+def _predict_with_model(bundle: dict, df: pd.DataFrame) -> pd.Series:
+    """Score using the XGBoost model bundle. Falls back to None if feature columns missing."""
     try:
-        feature_names = model.get_booster().feature_names
+        model = bundle["model"]
+        feature_names = bundle["feature_cols"]
+        zscore_stats = bundle["zscore_stats"]
         missing_feats = [f for f in feature_names if f not in df.columns]
         if missing_feats:
             log.warning("Model features missing from data: %s", missing_feats)
 
-        # Apply sector-relative z-scores to match the transformation used at training time.
-        # _apply_sector_zscore(train, test, ...) computes stats from train and applies to both;
-        # passing empty test mirrors what train_model.py does on the full training set.
+        # Apply the sector z-score stats persisted at training time — NOT recomputed
+        # from this live batch, which would rescale features into a different space
+        # than the model was trained on (see historic_fundamentals/model.py's
+        # fit_sector_zscore_stats() docstring for why this matters).
         sector_col = "sector"
         present_features = [f for f in feature_names if f in df.columns]
-        if sector_col in df.columns and df[sector_col].notna().any():
-            scored_df, _ = _apply_sector_zscore(
-                df, df.head(0), present_features, sector_col
-            )
-            log.info("Sector z-scores applied before model prediction.")
+        if sector_col in df.columns and df[sector_col].notna().any() and zscore_stats:
+            scored_df = apply_zscore_stats(df, present_features, sector_col, zscore_stats)
+            log.info("Sector z-scores applied (training-time stats) before model prediction.")
         else:
             scored_df = df.copy()
-            log.warning("No sector column — skipping sector z-score normalization.")
+            log.warning("No sector column or zscore stats — skipping sector z-score normalization.")
 
         X = scored_df[present_features].copy()
         for f in feature_names:

@@ -33,7 +33,11 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from historic_fundamentals.universe import UNIVERSE_DEFAULTS, filter_universe  # noqa: E402
-from historic_fundamentals.model import DEFAULT_MODEL_PARAMS, _apply_sector_zscore  # noqa: E402
+from historic_fundamentals.model import (  # noqa: E402
+    DEFAULT_MODEL_PARAMS,
+    apply_zscore_stats,
+    fit_sector_zscore_stats,
+)
 
 log = logging.getLogger(__name__)
 
@@ -137,10 +141,15 @@ def main() -> None:
 
     sector_col = "sector" if ("sector" in df.columns and df["sector"].notna().any()) else None
 
-    # Sector-relative z-scores on full training set
+    # Sector-relative z-scores on full training set. Stats are persisted alongside
+    # the model so serving (score_live.py, run_backtest.py, backtest_bcd_filter.py)
+    # applies the identical transform instead of recomputing from its own batch —
+    # see historic_fundamentals/model.py's fit_sector_zscore_stats() docstring.
     df_train = df.copy()
+    zscore_stats: dict = {}
     if sector_col:
-        df_train, _ = _apply_sector_zscore(df_train, df_train.head(0), feature_cols, sector_col)
+        zscore_stats = fit_sector_zscore_stats(df_train, feature_cols, sector_col)
+        df_train = apply_zscore_stats(df_train, feature_cols, sector_col, zscore_stats)
 
     X = df_train[feature_cols].to_numpy(dtype=float, copy=True)
     y = df_train[TARGET_COL].to_numpy(dtype=float, copy=True)
@@ -162,7 +171,8 @@ def main() -> None:
     model.fit(X, y)
     model.get_booster().feature_names = feature_cols
 
-    joblib.dump(model, model_path)
+    bundle = {"model": model, "zscore_stats": zscore_stats, "feature_cols": feature_cols}
+    joblib.dump(bundle, model_path)
     log.info("Model saved to %s", model_path)
 
     # Feature importance summary

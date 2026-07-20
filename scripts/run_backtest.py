@@ -225,16 +225,26 @@ def _compute_regime_exposure(
     return exposure
 
 
-def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
+def _score_with_model(universe: pd.DataFrame, bundle: dict) -> pd.Series:
     """
     Score each monthly cross-section with the XGBoost model.
 
-    Applies sector-relative z-scores per month (using only that month's
-    cross-section) before predicting, matching the transformation used
-    at training time. PIT-safe: each month's z-scores use only that
-    month's stocks.
+    Deliberately uses PER-MONTH self-referential sector z-scores (each month's
+    cross-section rescaled against its own peers), NOT the persisted training-time
+    stats that score_live.py now uses. This backtest applies one static model
+    (trained on a recent ~5yr window) across up to ~40 years of history; applying
+    that narrow window's normalization to eras decades away produces wildly
+    non-stationary, out-of-distribution z-scores (empirically: P/E z-score std
+    ranged from 0.8 in 1995 to 7.4 in 2015 to 1.7 in 2023, max values over 400) —
+    a worse distortion than the train/serve mismatch this pattern causes in
+    score_live.py, where "now" is temporally adjacent to training and there's no
+    era mismatch. Per-month normalization keeps the relative-ranking signal
+    era-invariant instead. See features/historic_fundamentals/ml_comps_valuation_plan.md
+    and historic_fundamentals/model.py's fit_sector_zscore_stats() docstring for
+    the score_live.py case this pattern *should* be fixed for.
     """
-    feature_names = model.get_booster().feature_names
+    model = bundle["model"]
+    feature_names = bundle["feature_cols"]
     sector_col = "sector"
     scores = {}
 
@@ -242,9 +252,7 @@ def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
         present = [f for f in feature_names if f in month_df.columns]
 
         if sector_col in month_df.columns and month_df[sector_col].notna().any():
-            scored_df, _ = _apply_sector_zscore(
-                month_df, month_df.head(0), present, sector_col
-            )
+            scored_df, _ = _apply_sector_zscore(month_df, month_df.head(0), present, sector_col)
         else:
             scored_df = month_df.copy()
 
@@ -441,6 +449,8 @@ def main() -> None:
                         help="Rebalance quarterly instead of monthly; saves to backtest_results_quarterly.md")
     parser.add_argument("--model", action="store_true",
                         help="Also run backtest using XGBoost model scores (requires data/model.joblib)")
+    parser.add_argument("--model-path", default=None,
+                        help="Override path to the model.joblib bundle (default: data/model.joblib)")
     parser.add_argument("--guardrails", action="store_true",
                         help="Also run guardrailed backtest excluding value traps and poor data quality")
     parser.add_argument("--max-missing", type=int, default=2,
@@ -536,11 +546,11 @@ def main() -> None:
     model_loaded = None
     if args.model:
         import joblib
-        model_path = ROOT / "data" / "model.joblib"
+        model_path = Path(args.model_path) if args.model_path else ROOT / "data" / "model.joblib"
         if model_path.exists():
             log.info("Loading XGBoost model from %s", model_path)
             model_loaded = joblib.load(model_path)
-            log.info("Scoring universe with XGBoost model (per-month sector z-scores) ...")
+            log.info("Scoring universe with XGBoost model (training-time sector z-score stats) ...")
             universe["model_score"] = _score_with_model(universe, model_loaded)
             log.info("Model scores computed for %d rows", universe["model_score"].notna().sum())
         else:

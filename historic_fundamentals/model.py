@@ -257,6 +257,67 @@ def _apply_sector_zscore(
     return train, test
 
 
+# ── Sector z-score: fit/transform split for production train -> serve ────────
+#
+# _apply_sector_zscore() above fits and transforms in one call, which is correct
+# for fold-safe walk-forward validation (train and test fold are both in hand at
+# once). It is NOT correct for production serving: scripts/score_live.py,
+# scripts/run_backtest.py, and scripts/backtest_bcd_filter.py were all calling
+# _apply_sector_zscore(batch, batch.head(0), ...) at serve time, which recomputes
+# normalization stats from just the live scoring batch (or a single backtest
+# month) instead of the training data the model actually learned from. A single
+# month's cross-sectional median/std within a sector can differ substantially
+# from the pooled 5-year training distribution, so this silently rescales
+# features into a different space than training time — confirmed empirically to
+# materially change predictions (Spearman rank correlation ~0.53 between
+# self-referential and correctly-normalized live scores on the current universe,
+# only 7/25 overlap in the resulting top-25). fit_sector_zscore_stats() /
+# apply_zscore_stats() split fit (once, at training time) from transform (every
+# time the model is served), so serving always uses the exact stats training used.
+
+def fit_sector_zscore_stats(df: pd.DataFrame, feature_cols: list[str], sector_col: str) -> dict:
+    """Compute per-sector median/std (+ global fallback) for each feature, to be
+    persisted alongside a trained model and applied identically at serve time."""
+    stats: dict = {}
+    global_medians = df[feature_cols].median()
+    global_stds = df[feature_cols].std(ddof=1)
+    for col in feature_cols:
+        if col not in df.columns:
+            continue
+        global_med = float(global_medians[col])
+        global_std = float(global_stds[col])
+        if not global_std or np.isnan(global_std):
+            global_std = 1.0
+        by_sector = {}
+        for sector, grp in df.groupby(sector_col)[col]:
+            med = float(grp.median())
+            std = float(grp.std(ddof=1))
+            if not std or np.isnan(std):
+                std = global_std
+            by_sector[sector] = (med, std)
+        stats[col] = {"by_sector": by_sector, "global": (global_med, global_std)}
+    return stats
+
+
+def apply_zscore_stats(df: pd.DataFrame, feature_cols: list[str], sector_col: str, stats: dict) -> pd.DataFrame:
+    """Transform-only: apply precomputed fit_sector_zscore_stats() output."""
+    df = df.copy()
+    for col in feature_cols:
+        if col not in df.columns or col not in stats:
+            continue
+        by_sector = stats[col]["by_sector"]
+        global_med, global_std = stats[col]["global"]
+        result = df[col].astype(float).copy()
+        for sector, idx in df.groupby(sector_col).groups.items():
+            med, std = by_sector.get(sector, (global_med, global_std))
+            result.loc[idx] = (df.loc[idx, col] - med) / (std or global_std)
+        missing_sector = df[sector_col].isna()
+        if missing_sector.any():
+            result.loc[missing_sector] = (df.loc[missing_sector, col] - global_med) / global_std
+        df[col] = result
+    return df
+
+
 # ── Walk-forward validation ───────────────────────────────────────────────────
 
 def walk_forward_validate(
@@ -500,6 +561,126 @@ def walk_forward_validate(
         "yearly": yearly,
         "feature_importance": feature_importance,
     }
+
+
+# ── Walk-forward OOS scores (for a true walk-forward portfolio backtest) ──────
+
+def generate_walk_forward_oos_scores(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    train_years: int = 5,
+    test_years: int = 1,
+    min_train_months: int = 36,
+    model_params: Optional[dict] = None,
+    sector_col: Optional[str] = None,
+    embargo_months: int = 12,
+) -> pd.DataFrame:
+    """
+    Same fold structure as walk_forward_validate() (same train/test windows,
+    embargo, fold-safe sector z-scoring), but instead of aggregate IC/R² metrics,
+    returns a row-level DataFrame of genuinely out-of-sample model scores —
+    one score per (ticker, month) in each fold's test window, produced by a
+    model trained ONLY on data strictly before that window.
+
+    This exists to answer a question walk_forward_validate() and
+    scripts/run_backtest.py --model each answer only half of: does this model
+    have real, tradable skill under periodic retraining? walk_forward_validate()
+    gives fold-safe IC/R² but no portfolio construction; run_backtest.py --model
+    gives portfolio CAGR/Sharpe but from ONE static model scored across up to
+    ~40 years of history (a different, less rigorous question, and — per the
+    z-score investigation in features/historic_fundamentals/fundamentals_alpha_action_plan.md
+    era — very sensitive to how normalization is handled that far from the
+    training window). Feed this function's output into
+    historic_fundamentals.backtest.run_monthly_backtest(df, score_col="oos_score", ...)
+    for a true walk-forward portfolio backtest: periodic retrain, no static
+    single model, no era-mismatched normalization.
+
+    Unlike walk_forward_validate()'s test_df, rows are NOT filtered to
+    target_col.notna() — every ticker present in a test month with valid
+    features gets a score, matching real rebalancing (you don't know the
+    future return at rebalance time). run_monthly_backtest() computes realized
+    returns from prices, not from target_col.
+
+    Returns
+    -------
+    pd.DataFrame with columns: ticker, month_end_date, oos_score, fold
+    """
+    params = {**DEFAULT_MODEL_PARAMS, **(model_params or {})}
+
+    df = df.copy()
+    df["month_end_date"] = pd.to_datetime(df["month_end_date"])
+    df = df.sort_values("month_end_date").reset_index(drop=True)
+
+    all_months = sorted(df["month_end_date"].unique())
+    if not all_months:
+        return pd.DataFrame(columns=["ticker", "month_end_date", "oos_score", "fold"])
+
+    train_months = train_years * 12
+    test_months = test_years * 12
+
+    records = []
+    fold_idx = 0
+    t = train_months
+
+    while t < len(all_months):
+        train_end_month = all_months[t - 1]
+
+        train_start_idx = max(0, t - train_months)
+        train_window = all_months[train_start_idx:t]
+
+        if len(train_window) < min_train_months:
+            t += test_months
+            continue
+
+        test_end_idx = min(t + test_months, len(all_months))
+        test_window = all_months[t:test_end_idx]
+        if not test_window:
+            break
+
+        train_mask = df["month_end_date"].isin(set(train_window))
+        test_mask = df["month_end_date"].isin(set(test_window))
+        train_df = df[train_mask].copy()
+        test_df = df[test_mask].copy()
+
+        if embargo_months > 0:
+            embargo_cutoff = pd.Timestamp(train_end_month) - pd.DateOffset(months=embargo_months)
+            train_df = train_df[train_df["month_end_date"] <= embargo_cutoff].copy()
+
+        train_df = train_df[train_df[target_col].notna()].copy()
+
+        if len(train_df) < min_train_months or test_df.empty:
+            t += test_months
+            continue
+
+        present_features = [c for c in feature_cols if c in train_df.columns]
+
+        if sector_col and sector_col in train_df.columns:
+            zscore_stats = fit_sector_zscore_stats(train_df, present_features, sector_col)
+            train_df = apply_zscore_stats(train_df, present_features, sector_col, zscore_stats)
+            test_df = apply_zscore_stats(test_df, present_features, sector_col, zscore_stats)
+
+        X_train = train_df[present_features].to_numpy(dtype=float, copy=True)
+        y_train = train_df[target_col].to_numpy(dtype=float, copy=True)
+        X_test = test_df[present_features].to_numpy(dtype=float, copy=True)
+
+        col_medians = np.nanmedian(X_train, axis=0)
+        for j in range(X_train.shape[1]):
+            X_train[np.isnan(X_train[:, j]), j] = col_medians[j]
+            X_test[np.isnan(X_test[:, j]), j] = col_medians[j]
+
+        model = XGBRegressor(**params)
+        model.fit(X_train, y_train)
+        preds = model.predict(X_test)
+
+        fold_label = f"fold_{fold_idx:02d}"
+        for ticker, month, pred in zip(test_df["ticker"].values, test_df["month_end_date"].values, preds):
+            records.append({"ticker": ticker, "month_end_date": month, "oos_score": float(pred), "fold": fold_label})
+
+        fold_idx += 1
+        t += test_months
+
+    return pd.DataFrame.from_records(records)
 
 
 # ── SHAP stability ────────────────────────────────────────────────────────────

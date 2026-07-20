@@ -53,8 +53,14 @@ MAX_SECTOR_PCT = 0.25
 SCORE_BUFFER = 0.10
 
 
-def _score_with_model(universe: pd.DataFrame, model) -> pd.Series:
-    feature_names = model.get_booster().feature_names
+def _score_with_model(universe: pd.DataFrame, bundle: dict) -> pd.Series:
+    """Deliberately uses PER-MONTH self-referential sector z-scores, not the
+    persisted training-time stats score_live.py now uses — this backtest applies
+    one static model across ~40 years, and the training window's normalization
+    is wildly non-stationary that far from training time (see run_backtest.py's
+    _score_with_model docstring for the empirical detail)."""
+    model = bundle["model"]
+    feature_names = bundle["feature_cols"]
     sector_col = "sector"
     scores = {}
     for date, month_df in universe.groupby("month_end_date"):

@@ -28,6 +28,8 @@ from historic_fundamentals.model import (
     compute_oos_metrics,
     walk_forward_validate,
     shap_stability,
+    fit_sector_zscore_stats,
+    apply_zscore_stats,
 )
 
 
@@ -375,3 +377,60 @@ def test_shap_stability_returns_dataframe():
         fold_cols = [c for c in result.columns if c != "mean_abs_shap"]
         if fold_cols:
             assert (result[fold_cols] >= 0).all().all(), "SHAP values must be non-negative"
+
+
+# ── Test 12: fit_sector_zscore_stats / apply_zscore_stats (fit/transform split) ─
+
+def test_apply_zscore_stats_matches_fit_batch_when_applied_to_itself():
+    """Applying stats fit on a batch back to that same batch should reproduce
+    what _apply_sector_zscore(df, df.head(0), ...) already does (same math,
+    just fit/transform separated instead of fused)."""
+    df, feature_cols = _make_df(n_months=12, add_sector=True)
+
+    stats = fit_sector_zscore_stats(df, feature_cols, "sector")
+    transformed = apply_zscore_stats(df, feature_cols, "sector", stats)
+
+    for sector, grp in df.groupby("sector"):
+        for col in feature_cols:
+            expected_med = grp[col].median()
+            expected_std = grp[col].std(ddof=1) or 1.0
+            actual = transformed.loc[grp.index, col]
+            expected = (grp[col] - expected_med) / expected_std
+            assert np.allclose(actual.values, expected.values), f"{sector}/{col} mismatch"
+
+
+def test_apply_zscore_stats_uses_training_stats_not_serving_batch():
+    """The whole point of the fix: applying training-fit stats to a DIFFERENT
+    (serving-time) batch should NOT reproduce that batch's own mean/std — it
+    should reflect the training distribution instead."""
+    train_df, feature_cols = _make_df(n_months=84, seed=1, add_sector=True)
+    serve_df, _ = _make_df(n_tickers=10, n_months=1, seed=99, add_sector=True)
+    serve_df["feat_0"] = serve_df["feat_0"] + 5.0  # shift serving batch's distribution
+
+    stats = fit_sector_zscore_stats(train_df, feature_cols, "sector")
+    served = apply_zscore_stats(serve_df, feature_cols, "sector", stats)
+
+    # Self-referential normalization on the shifted serving batch would center
+    # feat_0 near 0 regardless of the shift. Training-stats normalization should
+    # NOT do that -- the shift should still be visible.
+    assert served["feat_0"].mean() > 1.0, (
+        "applying training stats should preserve the serving batch's distributional "
+        "shift, not silently re-center it like a self-referential recompute would"
+    )
+
+
+def test_apply_zscore_stats_falls_back_to_global_for_unseen_sector():
+    """A sector present at serve time but absent from training falls back to the
+    training set's global median/std instead of erroring or producing NaN."""
+    train_df, feature_cols = _make_df(n_months=24, add_sector=True)
+    stats = fit_sector_zscore_stats(train_df, feature_cols, "sector")
+
+    serve_df = pd.DataFrame({
+        "ticker": ["NEW1"],
+        "feat_0": [1.0], "feat_1": [0.5], "feat_2": [0.2],
+        "sector": ["Energy"],  # not in train_df's {Technology, Healthcare}
+    })
+    served = apply_zscore_stats(serve_df, feature_cols, "sector", stats)
+    assert served["feat_0"].notna().all()
+    global_med, global_std = stats["feat_0"]["global"]
+    assert np.isclose(served["feat_0"].iloc[0], (1.0 - global_med) / global_std)
