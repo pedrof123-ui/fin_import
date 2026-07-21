@@ -492,6 +492,9 @@ class HistoricFundamentalsDB:
                 ml_fair_pfcf_low        DOUBLE,
                 ml_fair_pfcf_mid        DOUBLE,
                 ml_fair_pfcf_high       DOUBLE,
+                ml_fair_ps_low          DOUBLE,
+                ml_fair_ps_mid          DOUBLE,
+                ml_fair_ps_high         DOUBLE,
                 ml_fair_price_low       DOUBLE,
                 ml_fair_price_mid       DOUBLE,
                 ml_fair_price_high      DOUBLE,
@@ -501,6 +504,9 @@ class HistoricFundamentalsDB:
                 PRIMARY KEY (ticker)
             )
         """)
+        self.conn.execute("ALTER TABLE ml_comps_valuation ADD COLUMN IF NOT EXISTS ml_fair_ps_low DOUBLE")
+        self.conn.execute("ALTER TABLE ml_comps_valuation ADD COLUMN IF NOT EXISTS ml_fair_ps_mid DOUBLE")
+        self.conn.execute("ALTER TABLE ml_comps_valuation ADD COLUMN IF NOT EXISTS ml_fair_ps_high DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS ml_model_metadata (
@@ -1030,6 +1036,7 @@ class HistoricFundamentalsDB:
             "ml_fair_pe_low", "ml_fair_pe_mid", "ml_fair_pe_high",
             "ml_fair_evebitda_low", "ml_fair_evebitda_mid", "ml_fair_evebitda_high",
             "ml_fair_pfcf_low", "ml_fair_pfcf_mid", "ml_fair_pfcf_high",
+            "ml_fair_ps_low", "ml_fair_ps_mid", "ml_fair_ps_high",
             "ml_fair_price_low", "ml_fair_price_mid", "ml_fair_price_high",
             "ml_fair_price_basis", "status", "error_message",
         ]

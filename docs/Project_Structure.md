@@ -153,8 +153,8 @@ fin_import2/
 │                                        low/mid/high in one fit), walk_forward_validate_quantile() (embargo=0, RMSE/pinball/coverage vs.
 │                                        naive sector-median baseline — not IC, since target is same-month not forward-looking),
 │                                        fit_sector_zscore_stats()/apply_zscore_stats() (fit/transform split so scoring uses training-time
-│                                        stats, not a live-batch recompute). MULTIPLE_TARGETS = {pe, evebitda, pfcf}; PASSING_MULTIPLES = [pe, pfcf]
-│                                        (evebitda excluded — missed the Phase 3 gate's RMSE bar by 0.3pp).
+│                                        stats, not a live-batch recompute). MULTIPLE_TARGETS = {pe, evebitda, pfcf, ps}; PASSING_MULTIPLES = [pe, pfcf, ps]
+│                                        (evebitda excluded — missed the Phase 3 gate's RMSE bar by 0.3pp; ps added 2026-07-21, passed with best RMSE improvement of the 4).
 │
 ├── ib_trader/                           IB execution + portfolio tracking package
 │   ├── __init__.py                      Public re-exports for all ib_trader submodules
@@ -224,8 +224,9 @@ scripts/ also contains:
                                          Key flags: --guardrails, --vol-weight (vw_gr_* portfolios), --regime-filter (rf_gr_* portfolios), --model
     run_risk.py                          Run risk diagnostics, guardrail checks, drawdown, beta decomposition; writes docs/risk_report.md
     validate_ml_comps_valuation.py       ML comps valuation go/no-go gate: walk-forward RMSE/coverage vs. naive sector-median baseline
-                                         for P/E, EV/EBITDA, P/FCF; writes docs/ml_comps_validation_report.md + ml_comps_validation_folds.csv;
-                                         exits non-zero if fewer than 2 of 3 multiples pass.
+                                         for P/E, EV/EBITDA, P/FCF, P/S; writes docs/ml_comps_validation_report.md + ml_comps_validation_folds.csv;
+                                         exits non-zero if fewer than 2 of the 4 candidate multiples pass (each judged independently;
+                                         passing moves a multiple from MULTIPLE_TARGETS into PASSING_MULTIPLES).
     train_ml_comps_valuation.py          Train final quantile models on a rolling window (--rolling-years, default 5 — matches the gate);
                                          saves versioned + "_latest" joblib bundles {model, zscore_stats, feature_cols} to data/ml_comps_valuation/;
                                          records ml_model_metadata.

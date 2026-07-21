@@ -11,7 +11,7 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 - **DuckDB** (`data/historic_fundamentals.duckdb`) — monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates (43K rows), analyst estimates
 - **DuckDB** (`data/earnings_transcripts.duckdb`) — earnings call transcripts for all AV tickers, fetched from Alpha Vantage and cached; used by the Earnings tab and AI Research
 - **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
-- **ML comps valuation** (`historic_fundamentals/ml_comps_model.py`) — XGBoost quantile regression predicting a fair P/E and P/FCF multiple per stock vs. sector peers, converted to a fair-price range; additive to `goal_pe`/`goal_low`/`goal_high`. Opt-in via `--enable-ml-comps` (see [ML Comps Valuation](#ml-comps-valuation-experimental) below)
+- **ML comps valuation** (`historic_fundamentals/ml_comps_model.py`) — XGBoost quantile regression predicting a fair P/E, P/FCF, and P/S multiple per stock vs. sector peers, converted to a fair-price range; additive to `goal_pe`/`goal_low`/`goal_high`. Opt-in via `--enable-ml-comps` (see [ML Comps Valuation](#ml-comps-valuation-experimental) below)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 - **IB Trader** (`ib_trader/`) — Interactive Brokers execution layer: connects to TWS, computes target positions from live scores, diffs current holdings, and submits MOC/MKT/LMT orders; includes a CLI rebalancer and an interactive REPL for ad-hoc orders
 
@@ -294,13 +294,13 @@ uv run scripts/rebalance.py --no-dry-run
 
 ## ML Comps Valuation (Experimental)
 
-Cross-sectional peer-comps model: predicts a fair P/E and P/FCF multiple for each stock from its fundamentals vs. sector peers (XGBoost quantile regression, low/mid/high range), converted to a fair-price band. Additive to the `goal_pe`/`goal_low`/`goal_high` fields already surfaced in the Fundamentals tab, which compare a ticker to its *own* multiple history rather than peers — both are shown side by side. Full build record and validation gate: `features/historic_fundamentals/ml_comps_valuation_plan.md`.
+Cross-sectional peer-comps model: predicts a fair P/E, P/FCF, and P/S multiple for each stock from its fundamentals vs. sector peers (XGBoost quantile regression, low/mid/high range), converted to a fair-price band. Additive to the `goal_pe`/`goal_low`/`goal_high` fields already surfaced in the Fundamentals tab, which compare a ticker to its *own* multiple history rather than peers — both are shown side by side. Full build record and validation gate: `features/historic_fundamentals/ml_comps_valuation_plan.md`.
 
 ```bash
-# One-time / after retraining: validate the model beats a naive sector-median baseline (~85 min)
+# One-time / after retraining: validate the model beats a naive sector-median baseline (~2hr for 4 candidate multiples)
 uv run scripts/validate_ml_comps_valuation.py
 
-# Train final production models (P/E, P/FCF only — see plan doc for why EV/EBITDA is excluded)
+# Train final production models (P/E, P/FCF, P/S — see plan doc for why EV/EBITDA is excluded)
 uv run scripts/train_ml_comps_valuation.py
 
 # Score the current universe -> ml_comps_valuation table -> /av-fundamentals/{ticker} API fields
@@ -456,7 +456,7 @@ scripts/
   rebalance.py                 IB portfolio rebalancer CLI (dry run by default); reads latest live_scores CSV
   ib_repl.py                   Interactive REPL for IB: status, buy/sell, quote, cancel, rebalance
   validate_ml_comps_valuation.py  ML comps valuation go/no-go gate: walk-forward vs. naive sector-median baseline
-  train_ml_comps_valuation.py     Train final quantile models (P/E, P/FCF) on a rolling 5yr window; saves to data/ml_comps_valuation/
+  train_ml_comps_valuation.py     Train final quantile models (P/E, P/FCF, P/S) on a rolling 5yr window; saves to data/ml_comps_valuation/
   score_ml_comps_valuation.py     Batch-score current universe -> ml_comps_valuation table
   report_ml_comps_history.py      Retrain history / drift visibility from ml_model_metadata
 ib_trader/

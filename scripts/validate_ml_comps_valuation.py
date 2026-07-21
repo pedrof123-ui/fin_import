@@ -2,8 +2,9 @@
 """
 Go/no-go validation gate for the ML comps-based fair valuation model.
 
-Runs walk-forward validation for each of the 3 multiples (P/E, EV/EBITDA,
-P/FCF) against a naive "predict the sector-median multiple" baseline, and
+Runs walk-forward validation for each candidate multiple in
+historic_fundamentals.ml_comps_model.MULTIPLE_TARGETS (P/E, EV/EBITDA, P/FCF,
+P/S) against a naive "predict the sector-median multiple" baseline, and
 decides pass/fail per features/historic_fundamentals/ml_comps_valuation_plan.md
 Phase 3 criteria:
 
@@ -13,9 +14,11 @@ Phase 3 criteria:
        fundamentals-alpha model's flat-IC-hidden-by-good-backtest problem).
     3. coverage_p10_p90 between 70% and 90%, miss rate roughly symmetric.
 
-At least 2 of the 3 multiples must pass all three criteria for the model to
-be considered usable. If fewer than 2 pass, downstream phases (batch scoring,
-API, frontend) must not be wired up.
+Each multiple is judged independently against these three criteria; a
+multiple only moves from MULTIPLE_TARGETS into
+historic_fundamentals.ml_comps_model.PASSING_MULTIPLES (wired into batch
+scoring/API/frontend) if it passes all three on its own — passing/failing is
+not decided relative to the other candidates.
 
 Usage:
     uv run scripts/validate_ml_comps_valuation.py

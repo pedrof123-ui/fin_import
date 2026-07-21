@@ -311,6 +311,9 @@ export interface FundamentalsData {
   ml_fair_pfcf_low: number | null;
   ml_fair_pfcf_mid: number | null;
   ml_fair_pfcf_high: number | null;
+  ml_fair_ps_low: number | null;
+  ml_fair_ps_mid: number | null;
+  ml_fair_ps_high: number | null;
   ml_fair_price_low: number | null;
   ml_fair_price_mid: number | null;
   ml_fair_price_high: number | null;

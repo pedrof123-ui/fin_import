@@ -163,12 +163,13 @@ _STAT_FIELDS = [
 
 # ML comps-based fair valuation — additive to the rule-based goal_* fields
 # above (which compare a ticker to its own multiple history, not peers). See
-# features/historic_fundamentals/ml_comps_valuation_plan.md. Only P/E and
-# P/FCF cleared the Phase 3 validation gate; EV/EBITDA fields are always null.
+# features/historic_fundamentals/ml_comps_valuation_plan.md. Only P/E, P/FCF,
+# and P/S cleared the Phase 3 validation gate; EV/EBITDA fields are always null.
 _ML_COMPS_FIELDS = [
     "ml_fair_pe_low", "ml_fair_pe_mid", "ml_fair_pe_high",
     "ml_fair_evebitda_low", "ml_fair_evebitda_mid", "ml_fair_evebitda_high",
     "ml_fair_pfcf_low", "ml_fair_pfcf_mid", "ml_fair_pfcf_high",
+    "ml_fair_ps_low", "ml_fair_ps_mid", "ml_fair_ps_high",
     "ml_fair_price_low", "ml_fair_price_mid", "ml_fair_price_high",
     "ml_fair_price_basis",
 ]

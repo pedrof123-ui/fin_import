@@ -5,8 +5,8 @@ to data/ml_comps_valuation/{target}_{version}.joblib (+ a "_latest.joblib"
 pointer), recording metrics in ml_model_metadata.
 
 Only trains multiples that cleared the Phase 3 go/no-go gate
-(historic_fundamentals.ml_comps_model.PASSING_MULTIPLES — currently P/E and
-P/FCF; EV/EBITDA excluded, see ml_comps_valuation_plan.md).
+(historic_fundamentals.ml_comps_model.PASSING_MULTIPLES — currently P/E,
+P/FCF, and P/S; EV/EBITDA excluded, see ml_comps_valuation_plan.md).
 
 Run after scripts/validate_ml_comps_valuation.py confirms the gate passes.
 Do not enable in run_pipeline.py (--enable-ml-comps) until it does.

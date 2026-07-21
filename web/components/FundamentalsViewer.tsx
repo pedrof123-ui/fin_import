@@ -519,7 +519,7 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
       {data.ml_fair_price_mid != null && (
         <div>
           <SectionHeading>ML Fair Value (Experimental — Comps Model)</SectionHeading>
-          <p className="font-mono text-[10px] text-amber-600/80 mb-3">
+          <p className="font-mono text-[10px] text-amber-400 mb-3">
             Cross-sectional peer-comps model, not yet validated against Price Targets above — cross-check before relying on it.
           </p>
           <div className="rounded border border-white/[0.07] p-4" style={{ background: "oklch(0.09 0.006 265)" }}>
@@ -547,8 +547,16 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
               current={data.current_pfcf}
               unit="x"
             />
+            <ValuationRangeBand
+              label="P/S Implied"
+              low={data.ml_fair_ps_low}
+              mid={data.ml_fair_ps_mid}
+              high={data.ml_fair_ps_high}
+              current={data.current_ps}
+              unit="x"
+            />
           </div>
-          <p className="font-mono text-[10px] text-zinc-700 mt-1.5">
+          <p className="font-mono text-[10px] text-zinc-600 mt-1.5">
             Basis: {data.ml_fair_price_basis ?? "—"} · Model version: {data.ml_comps_model_version ?? "—"}
           </p>
         </div>

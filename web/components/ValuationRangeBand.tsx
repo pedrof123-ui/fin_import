@@ -33,7 +33,7 @@ export default function ValuationRangeBand({ label, low, mid, high, current, uni
     <div className="mb-3">
       <div className="flex items-baseline justify-between mb-1">
         <span className="font-mono text-[10px] text-zinc-500">{label}</span>
-        <span className="font-mono text-[10px] text-zinc-500">
+        <span className="font-mono text-[10px] text-zinc-300">
           {fmt(low, unit)} &ndash; {fmt(high, unit)} (mid {fmt(mid, unit)})
         </span>
       </div>

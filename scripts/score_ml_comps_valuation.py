@@ -6,10 +6,11 @@ the additive "ML Fair Value" field in the fundamentals API/UI (see
 features/historic_fundamentals/ml_comps_valuation_plan.md Phase 4).
 
 Only scores multiples that cleared the Phase 3 gate
-(historic_fundamentals.ml_comps_model.PASSING_MULTIPLES — currently P/E and
-P/FCF). Fair price per multiple = predicted multiple x the ticker's own
-current EPS/FCF-per-share; ml_fair_price_{low,mid,high} blends whichever
-bases are available (median across bases, documented in ml_fair_price_basis).
+(historic_fundamentals.ml_comps_model.PASSING_MULTIPLES — currently P/E,
+P/FCF, and P/S). Fair price per multiple = predicted multiple x the ticker's
+own current EPS/FCF-per-share/revenue-per-share; ml_fair_price_{low,mid,high}
+blends whichever bases are available (median across bases, documented in
+ml_fair_price_basis).
 
 Usage:
     uv run scripts/score_ml_comps_valuation.py                    # all tickers
@@ -161,6 +162,8 @@ def score_ml_comps_valuation(tickers: list[str], hf_conn, av_conn, version: str)
                 basis = row["ttm_eps"]
             elif name == "pfcf" and pd.notna(row.get("ttm_fcf")) and pd.notna(row.get("shares")) and row["ttm_fcf"] > 0 and row["shares"] > 0:
                 basis = row["ttm_fcf"] / row["shares"]
+            elif name == "ps" and pd.notna(row.get("ttm_revenue")) and pd.notna(row.get("shares")) and row["ttm_revenue"] > 0 and row["shares"] > 0:
+                basis = row["ttm_revenue"] / row["shares"]
 
             if basis is not None:
                 price_bases.append((name, np.array([p10, p50, p90]) * basis))

@@ -11,6 +11,7 @@
 **Phase 6 — COMPLETE** (2026-07-20): API exposure, verified against a live server.
 **Phase 7 — COMPLETE** (2026-07-20): Frontend panel, verified in a real browser (Playwright) — renders correctly, 0 console errors, existing Price Targets/Valuation Multiples sections unaffected.
 **Phase 8 — COMPLETE** (2026-07-20): Monitoring notebook, executed end-to-end with real data.
+**Phase 3b (P/S extension) — COMPLETE, PASS** (2026-07-21): P/S added as a 4th candidate multiple and cleared the gate (+23.6% RMSE improvement, best of the 4; 100% fold win rate; 74.7% coverage). Wired into Phases 4-7 (training, scoring, API, frontend) below.
 
 ---
 
@@ -106,6 +107,33 @@ Verified live: `npm run dev` + `uv run uvicorn api.main:app --port 8000`, loaded
 Re-ran the full gate as part of producing this artifact (same 36 folds/multiple, 1990-2026): result unchanged, P/E and P/FCF pass, EV/EBITDA misses by the same margin — confirms the Phase 3 result is stable, not a one-off.
 
 Executed via `jupyter nbconvert --to notebook --execute` — all 4 plot cells produced non-empty images, zero errors.
+
+---
+
+## Phase 3b — P/S extension (2026-07-21)
+
+**Why**: P/S and P/BV were identified as a real gap — `sector_stats` already had the peer-baseline columns (`ps_median`, `pbv_median`) ready and unused, this was an unexamined Phase 0 scope choice, not a deliberate exclusion. P/S was judged worth prototyping (revenue is defined even when EPS/FCF are negative, and the model's existing margin features give it real signal to condition on); P/BV was not pursued — book value is near-meaningless outside financials/industrials, a single universe-wide fit would likely repeat EV/EBITDA's near-miss for structural reasons, not a tuning problem. PEG doesn't fit this model's "predicted multiple × ticker's own fundamental = fair price" mechanism at all (it's a derived ratio, not in `sector_stats`, and the old `goal_peg` reaches its price target via a different formula entirely).
+
+**Implementation**: added `"ps": {"source_col": "ps_ratio", "peer_col": "ps_median"}` to `MULTIPLE_TARGETS` and pulled `ps_median` into `build_training_frame()`'s `sector_stats` query — no new features needed, `monthly_pe` already had `ps_ratio`/`ttm_revenue`.
+
+**Gate result (2026-07-21, same 36-fold walk-forward, 1990-2026): PASS.**
+
+| Multiple | RMSE improvement vs. baseline | Fold win rate | Coverage p10-p90 | Result |
+|---|---:|---:|---:|---|
+| P/S | +23.6% | 100% (36/36) | 74.7% | PASS — best of the 4 multiples |
+
+No red flags in per-fold detail: win rate and coverage stable across the full 36-year span including recent folds (2020-2026 coverage 72.8-80.5%).
+
+**Decision: add `"ps"` to `PASSING_MULTIPLES`.** Wired into Phases 4-7:
+- Phase 4 (training/scoring): both scripts are already generic over `PASSING_MULTIPLES`/`MULTIPLE_TARGETS`, no script logic changes needed beyond adding P/S's basis conversion (`ttm_revenue / shares`) to `score_ml_comps_valuation.py`'s per-multiple basis branch.
+- Schema: added `ml_fair_ps_low/mid/high` to `ml_comps_valuation` (CREATE TABLE + `ALTER TABLE ADD COLUMN IF NOT EXISTS` migration) and to `upsert_ml_comps_valuation()`'s column list.
+- Phase 6 (API): added the 3 new fields to `_ML_COMPS_FIELDS` in `api/av_router.py`.
+- Phase 7 (frontend): added a "P/S Implied" `ValuationRangeBand` to `FundamentalsViewer.tsx`, plus the corresponding fields in `web/lib/dcf-types.ts`.
+- Phase 5/8 (metadata report, monitoring notebook): both already generic over whatever's in `ml_model_metadata`/the fold CSV — picked up P/S automatically, no changes needed.
+
+**Coverage impact**: full-universe scoring went from 2,122/2,653 `ok` (515 `no_price_basis`) to **2,518/2,653 `ok` (119 `no_price_basis`)** — confirms the motivating hypothesis that P/S would rescue tickers with negative/zero earnings or FCF.
+
+**Verification**: full test suite (`uv run pytest tests/`) — 257 passed, 0 regressions (`test_ml_comps_valuation.py`'s test is generic over `PASSING_MULTIPLES`, no changes needed). Verified live: trained models (`uv run scripts/train_ml_comps_valuation.py`), scored full universe (`uv run scripts/score_ml_comps_valuation.py`), restarted the API server (caught the same "stale server serving pre-change code" issue documented in Phase 7 — killed and restarted), loaded MSFT and ACHR in a real browser via Playwright. MSFT: `Basis: median(pe,pfcf,ps)`, P/S Implied renders "5.2x – 18.4x (mid 12.1x)" alongside the existing bands, 0 console errors. ACHR (a low-revenue-base name, negative earnings/FCF): `Basis: median(ps)` — only P/S contributes, as expected — P/S Implied hits the existing `MAX_MULTIPLE=500` cap (mid 293.4x) rather than showing something absurd, confirming the cap (added for the original 3 multiples) needed no P/S-specific change.
 
 ---
 

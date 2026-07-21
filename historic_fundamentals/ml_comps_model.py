@@ -1,8 +1,8 @@
 """
-ML comps-based fair valuation: predicts a ticker's fair P/E, EV/EBITDA, and
-P/FCF multiple cross-sectionally against sector peers, from fundamentals
-already computed in monthly_pe. Additive to goal_pe/goal_low/goal_high (which
-compare a ticker to its own multiple history, not peers) — see
+ML comps-based fair valuation: predicts a ticker's fair P/E, EV/EBITDA,
+P/FCF, and P/S multiple cross-sectionally against sector peers, from
+fundamentals already computed in monthly_pe. Additive to goal_pe/goal_low/
+goal_high (which compare a ticker to its own multiple history, not peers) — see
 features/historic_fundamentals/ml_comps_valuation_plan.md for the full design
 rationale and the go/no-go validation gate this model must clear before use.
 
@@ -23,9 +23,10 @@ Design notes
 - feature_available_date point-in-time filtering is applied here; the existing
   ret_1y model's training script does not apply this filter today — not
   repeated in this module.
-- Peer-median columns (pe_median/evebitda_median/pfcf_median from sector_stats)
-  are used only for the naive baseline comparison, not as model features. The
-  model must earn its keep from ticker-specific fundamentals, sector-relative
+- Peer-median columns (pe_median/evebitda_median/pfcf_median/ps_median from
+  sector_stats) are used only for the naive baseline comparison, not as model
+  features. The model must earn its keep from ticker-specific fundamentals,
+  sector-relative
   z-scored via the reused _apply_sector_zscore, not from being handed the
   answer directly.
 """
@@ -56,13 +57,16 @@ MULTIPLE_TARGETS = {
     "pe": {"source_col": "pe_ratio", "peer_col": "pe_median"},
     "evebitda": {"source_col": "ev_ebitda", "peer_col": "evebitda_median"},
     "pfcf": {"source_col": "pfcf_ratio", "peer_col": "pfcf_median"},
+    "ps": {"source_col": "ps_ratio", "peer_col": "ps_median"},
 }
 
-# Multiples that cleared the Phase 3 go/no-go gate (2026-07-20 run, see
-# ml_comps_valuation_plan.md): P/E and P/FCF passed all 3 criteria; EV/EBITDA
-# missed the RMSE-improvement bar by 0.3pp and is excluded from production
-# scoring until revisited. Training/scoring scripts default to this list.
-PASSING_MULTIPLES = ["pe", "pfcf"]
+# Multiples that cleared the Phase 3 go/no-go gate. 2026-07-20 run: P/E and
+# P/FCF passed all 3 criteria; EV/EBITDA missed the RMSE-improvement bar by
+# 0.3pp and is excluded from production scoring until revisited. 2026-07-21
+# run: P/S added as a 4th candidate and passed all 3 criteria (+23.6% RMSE
+# improvement, the best of the four, 100% fold win rate, 74.7% coverage — see
+# ml_comps_valuation_plan.md). Training/scoring scripts default to this list.
+PASSING_MULTIPLES = ["pe", "pfcf", "ps"]
 
 DEFAULT_QUANTILE_PARAMS: dict = {
     "objective": "reg:quantileerror",
@@ -99,7 +103,7 @@ def build_training_frame(hf_conn, av_conn) -> pd.DataFrame:
     """
     Assemble the cross-sectional training frame: one row per (ticker, month)
     with FEATURE_COLS, peer-median context (for the baseline), and
-    target_log_{pe,evebitda,pfcf} columns.
+    target_log_{pe,evebitda,pfcf,ps} columns.
     """
     df = hf_conn.execute("SELECT * FROM monthly_pe ORDER BY ticker, month_end_date").df()
     df["month_end_date"] = pd.to_datetime(df["month_end_date"])
@@ -111,7 +115,7 @@ def build_training_frame(hf_conn, av_conn) -> pd.DataFrame:
 
     sector_stats = hf_conn.execute("""
         SELECT group_name AS sector, month_end_date, ticker_count,
-               pe_median, evebitda_median, pfcf_median
+               pe_median, evebitda_median, pfcf_median, ps_median
         FROM sector_stats
         WHERE group_type = 'sector'
     """).df()
