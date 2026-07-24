@@ -289,7 +289,13 @@ def quintile_returns(
         # Flip so that Q1 = best in both cases
         # When lower_is_better=True: ascending rank → low factor = rank 1 = Q1 (best). Correct.
         # When lower_is_better=False: descending rank → high factor = rank 1 = Q1 (best). Correct.
-        labels = pd.qcut(factor_rank, q=n_bins, labels=bin_cols, duplicates="drop")
+        try:
+            labels = pd.qcut(factor_rank, q=n_bins, labels=bin_cols, duplicates="drop")
+        except ValueError:
+            # Heavy ties (e.g. many stocks at an identical factor value) can leave fewer
+            # distinct bin edges than n_bins after duplicates="drop" -- skip this month
+            # rather than crash, same treatment as the min_stocks skip above.
+            continue
         row_data = {}
         for b in bin_cols:
             mask = labels == b
