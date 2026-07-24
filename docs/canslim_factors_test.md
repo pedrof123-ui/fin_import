@@ -196,14 +196,96 @@ the same "average masks inconsistency" pattern flagged for Greenblatt's
 augmented composite, but weaker here (37% vs. Greenblatt's 51-60%) and paired
 with a real drawdown cost Greenblatt's version didn't have.
 
-**Verdict: still not promoted**, but for a more nuanced reason than the full
-bundle. `rs_rating` and `up_down_vol_ratio` are not noise — removing the two
-dead factors measurably improved the result — but a <40% fold win rate plus a
-5pp worse MaxDD is a real cost for a Sharpe gain of 0.033, not a free win.
-This reads as a momentum/volatility-timing effect that helps in sharp
-recoveries and hurts in between, not a durable structural edge. Not
-compelling enough to change `_VALUE_COLS`/`_QUALITY_COLS` on this evidence.
-Both columns remain available in `monthly_pe` if a future test wants to
-address the drawdown cost directly (e.g. capping position concentration, or
-combining `rs_rating` with an explicit regime filter rather than running it
-unconditionally).
+**Verdict on the unconditional version: not promoted**, but for a more
+nuanced reason than the full bundle. `rs_rating` and `up_down_vol_ratio` are
+not noise — removing the two dead factors measurably improved the result —
+but a <40% fold win rate plus a 5pp worse MaxDD is a real cost for a Sharpe
+gain of 0.033, not a free win. This reads as a momentum/volatility-timing
+effect that helps in sharp recoveries and hurts in between, not a durable
+structural edge unconditionally. Section 7 tests whether gating it on a
+confirmed uptrend fixes that.
+
+## 7. Regime-conditioned rs_rating + up_down_vol_ratio
+
+Section 6's read was "helps in recoveries, hurts elsewhere" — the natural
+test is gating the two factors on a confirmed market uptrend rather than
+running them unconditionally, since that's exactly what O'Neil's own "M"
+letter is for. `scripts/test_canslim_rs_updown_regime.py`: SPY close >= its
+50-day moving average, evaluated at every historical month end (the literal
+historical generalization of `trade_systems/traderbot/ibd50/regime.py::spy_regime()`,
+the same signal that gates IBD50's live entries — not
+`run_backtest.py::_compute_regime_exposure`, which is a different, symmetric
+de-risk-on-either-extreme gate that doesn't match O'Neil's uptrend-confirmation
+semantics). 66.0% of months (346/523) qualify as uptrend. In uptrend months
+the composite uses `composite_augmented` (baseline + both factors); otherwise
+it falls back to plain `composite_baseline`.
+
+```
+                                       CAGR    Sharpe    MaxDD   WinRate
+baseline (no CANSLIM factors)       +15.96%   0.952   -40.07%   66.0%
+augmented (unconditional)           +16.40%   0.985   -45.27%   65.0%
+regime_conditional (uptrend-only)   +17.17%   1.011   -40.97%   65.5%
+```
+
+**All three problems from section 6 resolve at once**: CAGR gain nearly
+triples (+0.44pp -> +1.21pp), Sharpe gain nearly doubles (+0.033 -> +0.059),
+and MaxDD is almost fully rescued (5.2pp worse -> only 0.9pp worse than
+baseline). **Walk-forward fold win rate: 19/35 (54%)** — the only variant of
+CANSLIM tested in this entire series (full bundle, unconditional pair, or
+this) that beats a coin flip.
+
+**Caveat, stated plainly**: this is the third variant tried in search of a
+positive result (full 7-factor bundle, then the unconditional 2-factor pair,
+then this), and trying enough variations on a fixed historical dataset
+eventually turns up something that looks good by chance — that risk is real
+here, not hypothetical. Two checks before treating this as promotable rather
+than merely promising: (1) sensitivity to the regime definition itself — does
+it only work for this one specific gate, or is it robust to nearby reasonable
+choices; (2) a genuine holdout wasn't achievable (all 36 folds were already
+inspected above before this caveat was even written), so the practical
+substitute is checking whether the fold win rate is spread across the full
+history or concentrated in a handful of recent standout folds.
+
+**Check 1 — regime definition sensitivity** (`--ma-window 200` vs. the
+default 50): reproduces the same qualitative result.
+
+```
+                                       CAGR    Sharpe    MaxDD   WinRate
+regime_conditional (50dMA)          +17.17%   1.011   -40.97%   65.5%
+regime_conditional (200dMA)         +17.38%   1.011   -40.07%   66.0%
+```
+
+Fold win rate 18/35 (51%) at 200dMA vs. 19/35 (54%) at 50dMA — consistent,
+not an artifact of the specific threshold. This check **passed**.
+
+**Check 2 — temporal stability** (split the 35 valid folds at their midpoint,
+fold #18 / 2009): this is where the picture changes.
+
+```
+                     50dMA gate          200dMA gate
+first half (1992-2009):   7/17 (41%)        6/17 (35%)
+second half (2009-2026): 12/18 (67%)       12/18 (67%)
+```
+
+**Both regime definitions show the identical pattern**: below-coin-flip in
+the first 17 years, well above it in the last 17. The aggregate "beats a coin
+flip" headline from the unconditional run is a second-half phenomenon
+entirely — in the 1992-2009 half, the regime-conditional version actually
+*underperforms* plain baseline more often than not. This reproduces cleanly
+across both MA windows, so it isn't noise in one specific cut; it's a real,
+robust characteristic of how this factor pair behaves, just not the
+characteristic ("durable edge across the full sample") that would justify
+promotion.
+
+**Final verdict: not promoted.** The regime gate genuinely fixes the
+drawdown and full-period-average problems from section 6 (check 1 confirms
+that part is real and not threshold-specific), but check 2 shows the
+walk-forward edge is concentrated in the post-2009 era rather than present
+throughout 35 years of history — plausibly a structural regime shift
+(post-GFC market microstructure, passive/ETF flows, the low-rate era) rather
+than something in the CANSLIM factors themselves. That is a materially
+weaker claim than "a durable structural edge," and not enough to change
+`_VALUE_COLS`/`_QUALITY_COLS` on this evidence. If this is revisited, the
+open question worth answering first is *why* the pre-2009 half fails — not
+just re-running more variants on the same 35-year sample looking for one
+that clears a coin flip everywhere.
