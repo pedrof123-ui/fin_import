@@ -7,10 +7,18 @@ fin_import2/
 │   ├── importer.py                      Import logic: fetch SEC filings, extract, insert
 │   ├── db.py                            DuckDB connection wrapper
 │   ├── dcf_router.py                    DCF endpoints: GET /dcf/{ticker}, POST /dcf/{ticker}/run
-│   ├── screener_router.py               Stock screener: POST /screen, GET /screen/metadata
+│   ├── screener_router.py               Stock screener: POST /screen, GET /screen/metadata; includes Graham net current asset
+│   │                                    value (NCAV = current assets - total liabilities, Security Analysis Ch. XLIII)
 │   ├── sector_router.py                 Sector dashboard: GET /sector/snapshot, /sector/history, /sector/companies
 │   ├── earnings_router.py               Earnings call transcripts: GET /earnings/report, POST /earnings/import-url, GET /earnings/models
 │   ├── research_router.py               AI equity research: GET /research/{ticker}
+│   ├── industry_research_router.py      Industry AI research: GET /industry-research/{industries,models,report,status}, POST /industry-research/cancel
+│   │                                    Map-reduce multi-agent pipeline (per-company digest -> Trends/Risks specialists -> Chief) at strict AV
+│   │                                    `industry` grain (never sector — see features/industry_research/SPEC.md 2.1). Cache: industry_research_cache.duckdb
+│   ├── industry_data.py                 Industry AI research data layer: list_industries, resolve_members, get_industry_aggregates,
+│   │                                    get_member_financials, get_industry_beat_miss, get_industry_estimates, get_industry_transcripts,
+│   │                                    get_industry_web_search, scope_key. `*_raw`/`*_df` + `format_*` split (fetch once, format many) to
+│   │                                    avoid duplicate Alpha Vantage calls between LLM-context text and markdown appendix tables.
 │   └── av_router.py                     Alpha Vantage fundamentals: GET /av-fundamentals/{ticker} (goal prices + ml_fair_* ML comps valuation fields),
 │                                        GET /av-financials/{ticker}/{stmt}, GET /quote/{ticker}, GET /av-dcf/{ticker}
 │
@@ -34,6 +42,8 @@ fin_import2/
 │   │   ├── AvDcfViewer.tsx              AV-data-powered DCF valuation viewer
 │   │   ├── FundamentalsViewer.tsx       PE/FCF/EV/EBITDA history, goal prices, valuation signals
 │   │   ├── EquityResearchViewer.tsx     AI-generated equity research report
+│   │   ├── IndustryResearchViewer.tsx   AI-generated industry research report: industry picker (or custom ticker basket), model picker,
+│   │   │                                live status bar, clickable ticker cells in every appendix/ranked-ideas table (jumps to single-name AI Research)
 │   │   ├── EarningsSummaryViewer.tsx    Earnings call transcript summarization: quarter selector, model picker, URL import, LLM-generated report
 │   │   ├── StatementViewer.tsx          Financials table with FY/Q display toggle
 │   │   ├── DcfViewer.tsx                DCF container: state, Reset/Update buttons, layout
@@ -85,6 +95,11 @@ fin_import2/
 │   │                                    ml_comps_valuation (live-scoring cache, additive to goal_pe/goal_low/goal_high),
 │   │                                    ml_model_metadata (retrain history)
 │   ├── earnings_transcripts.duckdb      Earnings call transcripts: symbol, quarter, transcript_text, fetched_date, earnings_call_date (nullable), source
+│   │                                    Also earnings_surprises (EPS beat/miss history, 30d cache), shared by the single-name and industry AI researchers.
+│   ├── mda_filings.duckdb               MD&A text from SEC EDGAR 10-K/10-Q filings: ticker, form, fiscal_period_end, mda_text,
+│   │                                    char_count, status (ok/empty/error). See PLAN_MDA.md.
+│   ├── industry_research_cache.duckdb   Industry AI research report cache: scope_key (industry name, or a stable hash of a custom ticker
+│   │                                    basket), model, report_markdown, generated_at. 24h TTL, mirrors research_cache.duckdb's shape.
 │   ├── xbrl_mappings_multi.duckdb       AI-discovered concept mapping store
 │   └── ib_tracker.duckdb               Portfolio tracker: fills, tax lots, daily NAV, score snapshots, backtest benchmarks
 │                                        Created automatically when IB_TRACKER_DB env var is set.
@@ -131,6 +146,8 @@ fin_import2/
 │   ├── query.py                         Notebook-friendly wrappers: get_pe_stats() (peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
 │   ├── earnings_transcripts.py          Shared earnings transcript helpers: open_db(), is_cached(), save_transcript(), fetch_from_av(), fiscal_date_to_quarters()
 │   │                                    Used by earnings_router.py, research_router.py, earnings_backfill.py, earnings_update.py
+│   ├── mda.py                           MD&A (SEC EDGAR 10-K/10-Q) helpers: open_db(), fetch_mda(), fetch_all_mda_for_ticker(), get_cached_mda(), delete_ticker()
+│   │                                    Used by manage_tickers.py, mda_backfill.py, mda_update.py. See PLAN_MDA.md.
 │   ├── universe.py                      Investable universe filters: filter_universe(), report_universe_counts(), sensitivity_analysis(), UNIVERSE_DEFAULTS
 │   │                                    Default thresholds: market_cap >= $1B, price >= $5, sector must be known. NaN values fail filters.
 │   ├── baselines.py                     Rank-based single-factor and composite baseline models.
@@ -207,9 +224,14 @@ scripts/ also contains:
                                          Resume-safe; skips already-cached (symbol, quarter) pairs. --ticker, --quarters N, --dry-run flags.
     earnings_update.py                   Weekly update: check latest 1-2 quarters per ticker for new transcripts; designed for cron scheduling
                                          --ticker flag for single-ticker runs.
+    mda_backfill.py                      One-time backfill: fetch 20yr 10-K + 20qtr 10-Q MD&A for all tickers in company_overview
+                                         Resume-safe; skips already-cached (ticker, form, fiscal_period_end). --ticker, --csv, --limit, --force, --dry-run flags.
+    mda_update.py                        Weekly update: check latest 10-K + latest 10-Q per ticker for new MD&A; designed for cron scheduling
+                                         --ticker, --dry-run flags.
     rebuild_sector_stats.py              Full rebuild of sector_stats table in historic_fundamentals.duckdb (all months, ~43K rows)
                                          Run after schema changes to sector_stats or after adding new tickers in bulk.
-    manage_tickers.py                    Add/delete tickers across all three DBs: prices + AV financials + historic fundamentals (recommended)
+    manage_tickers.py                    Add/delete tickers across four DBs: prices + AV financials + historic fundamentals + MD&A (recommended)
+                                         add's --skip-mda skips the MD&A step (catch up later via mda_backfill.py --csv)
     av_import.py                         Import income/balance/cashflow from Alpha Vantage (75 calls/min limit enforced)
     av_import_overview.py                Backfill company overview (name, sector, industry, beta + 41 fields) for all tickers
     av_update.py                         Incremental update: refresh statements + overview for existing tickers
@@ -547,6 +569,27 @@ Created automatically when `IB_TRACKER_DB` env var is set. Schema is initialized
 | `earnings_call_date` | DATE | Date of the earnings call (nullable; AV does not return this field) |
 
 Quarter strings use calendar quarters derived from `fiscal_date_ending` via `(month - 1) // 3 + 1`. Populated by `earnings_backfill.py`, `earnings_update.py`, and on-demand by the Finview Earnings tab.
+
+### `data/mda_filings.duckdb`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `ticker` | VARCHAR | Ticker symbol (PK with `form`, `fiscal_period_end`) |
+| `cik` | VARCHAR | SEC CIK number |
+| `form` | VARCHAR | `'10-K'` or `'10-Q'` (PK with `ticker`, `fiscal_period_end`) |
+| `fiscal_period_end` | DATE | Filing's `period_of_report` (PK with `ticker`, `form`) |
+| `filing_date` | DATE | SEC filing date |
+| `accession_no` | VARCHAR | SEC accession number |
+| `section_key` | VARCHAR | edgartools extraction key used: `'mda'` (10-K) or `'part_i_item_2'` (10-Q) |
+| `mda_text` | VARCHAR | Extracted MD&A section text |
+| `char_count` | INTEGER | `len(mda_text)` |
+| `status` | VARCHAR | `'ok'` (>=500 chars), `'empty'` (<500 chars, edgartools couldn't find/extract the section — accepted gap, no retry), or `'error'` (fetch/parse exception) |
+| `downloaded_at` | TIMESTAMP | When the row was fetched |
+
+Populated by `mda_backfill.py` (one-time, 20yr 10-K + 20qtr 10-Q per ticker), `mda_update.py`
+(weekly, latest 1 10-K + 1 10-Q per ticker), and `manage_tickers.py add` (new tickers, unless
+`--skip-mda`). See `PLAN_MDA.md` for design/rationale, including the ~85% `ok` extraction rate
+and the DuckDB single-writer-lock interaction with concurrent `add`/backfill runs.
 
 ### `data/xbrl_mappings_multi.duckdb`
 

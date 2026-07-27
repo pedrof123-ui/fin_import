@@ -7,6 +7,7 @@ import AvFinancialsViewer from "@/components/AvFinancialsViewer";
 import AvDcfViewer from "@/components/AvDcfViewer";
 import FundamentalsViewer from "@/components/FundamentalsViewer";
 import EquityResearchViewer from "@/components/EquityResearchViewer";
+import IndustryResearchViewer from "@/components/IndustryResearchViewer";
 import EarningsSummaryViewer from "@/components/EarningsSummaryViewer";
 import EarningsCalendarViewer from "@/components/EarningsCalendarViewer";
 import ScreenerViewer from "@/components/ScreenerViewer";
@@ -17,7 +18,7 @@ import { API } from "@/lib/config";
 
 type PeriodType = "FY" | "Q";
 type StmtType = "income" | "balance" | "cashflow";
-type Tab = "screener" | "sector" | "calendar" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "earnings" | "estimates" | "news";
+type Tab = "screener" | "sector" | "calendar" | "av_financials" | "av_dcf" | "fundamentals" | "financials" | "research" | "industry_research" | "earnings" | "estimates" | "news";
 
 interface Quote {
   price: number;
@@ -191,6 +192,7 @@ export default function Home() {
     "fundamentals",
     "estimates",
     "research",
+    "industry_research",
     "earnings",
     "news",
     ...(xbrlLoaded ? (["financials"] as Tab[]) : []),
@@ -204,6 +206,7 @@ export default function Home() {
     fundamentals: "Fundamentals",
     estimates: "Estimates",
     research: "AI Research",
+    industry_research: "Industry Research",
     earnings: "Earnings",
     news: "News",
     financials: "XBRL",
@@ -312,6 +315,11 @@ export default function Home() {
           <EarningsCalendarViewer onSelectTicker={handleScreenerSelectTicker} />
         </div>
 
+        {/* Industry AI Research — always rendered, industry-scoped not ticker-scoped */}
+        <div className={activeTab === "industry_research" ? undefined : "hidden"}>
+          <IndustryResearchViewer onSelectTicker={handleScreenerSelectTicker} />
+        </div>
+
         {/* All ticker-specific tab panels */}
         {loadedTicker && (
           <>
@@ -355,7 +363,7 @@ export default function Home() {
         )}
 
         {/* Empty state — only when no ticker and not on screener/sector */}
-        {!loadedTicker && !error && activeTab !== "screener" && activeTab !== "sector" && activeTab !== "calendar" && activeTab !== "news" && (
+        {!loadedTicker && !error && activeTab !== "screener" && activeTab !== "sector" && activeTab !== "calendar" && activeTab !== "news" && activeTab !== "industry_research" && (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
               No data loaded

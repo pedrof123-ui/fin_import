@@ -1,5 +1,83 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## Industry AI Researcher (complete, 2026-07-27)
+
+New FinView tab: cross-company industry research, complementing the existing single-name AI
+Research tab. Pick an AV `industry` (e.g. "Semiconductors" — deliberately finer-grained than
+sector, since a sector like Technology spans industries on very different cycles: 12 sectors vs.
+145 industries in the current DB) or supply a custom ticker basket. Full spec, architecture, and
+phased build record: `features/industry_research/SPEC.md` and `features/industry_research/PLAN.md`
+(all 8 phases complete, extensively live-verified, not just unit-tested).
+
+### Architecture — map-reduce multi-agent pipeline
+
+```
+resolve members (top-8 by market cap, or custom basket)
+  -> gather data in parallel (transcripts, beat/miss, financials, estimates, aggregates, web search)
+  -> Stage 1 MAP: per-company Earnings Digest sub-agent, fanned out in parallel
+  -> Stage 2 REDUCE: Trends & Developments + Risks & Outlook specialists, parallel
+  -> Stage 3 SYNTHESIZE: Chief Industry Strategist (executive summary + ranked ideas)
+  -> deterministic Python rendering (appendix tables + ranked-ideas numeric join)
+```
+
+Every number in the final report — valuation medians, EPS surprises, revision momentum, the
+ranked-ideas table's valuation-vs-industry and revision-momentum columns — is computed in Python
+from the database. The LLM only writes prose, stance/catalyst/risk, and the executive summary.
+
+### Infrastructure added
+
+- `api/industry_data.py` — data layer: `list_industries`, `resolve_members`, industry aggregates,
+  member financials, beat/miss, estimates, transcripts, web search. Raw-fetch/pure-formatter split
+  throughout so the LLM-context text and the markdown appendix tables share one fetch instead of
+  double-hitting Alpha Vantage for the same tickers in one report generation pass.
+- `api/industry_research_router.py` — the 3-stage pipeline, deterministic tables, DuckDB cache
+  (`industry_research_cache.duckdb`, 24h TTL), background-task/status/cancel scaffolding
+  (structurally mirrors `research_router.py`), 5 new endpoints under `/industry-research/*`.
+- 4 new prompts (`api/prompts/industry_{company_digest,trends,risks,chief}.md`).
+- `web/components/IndustryResearchViewer.tsx` — industry picker with member counts, custom-basket
+  override, model picker, live status bar, and clickable ticker cells generalized across *every*
+  appendix table (not just ranked ideas) via a ticker-shape regex on table cells.
+- 105 new tests across 3 files (`test_industry_data.py`, `test_industry_research_router.py`,
+  `test_industry_research_orchestration.py`), all passing, zero regressions in the existing suite.
+
+### Grain guarantee — industry, never sector
+
+Hard requirement, tested and grep-audited: member resolution filters `UPPER(co.industry)=?` only
+(no OR-fallback to sector like the single-name researcher's `_peer_df` has), aggregates read
+`sector_stats WHERE group_type='industry'` only. A company with a null/blank industry
+classification is excluded, never sector-substituted. Verified live: Semiconductors and
+Software - Infrastructure (both under the Technology sector) resolve to disjoint member sets and
+distinct aggregate figures.
+
+### Key findings / bugs fixed (live, not hypothetical)
+
+- `pandas.NA` (not `None`/float `NaN`) is how DuckDB INTEGER columns with nulls surface in pandas
+  after `.df()` — crashed `int(pd.NA)` in estimate-revision formatting until caught by a shared
+  `is_missing()` helper used everywhere a DB value is formatted.
+- `google/gemini-3.5-flash` occasionally emits the literal two-character sequence `\n` inside a
+  structured-output string field instead of a real newline — sanitized before rendering
+  (`_sanitize_prose` for narrative sections, `_sanitize_table_cell` for table cells, which can't
+  contain a raw newline without breaking the table).
+- BBBY (the already-documented contaminated ticker from the survivorship-bias analysis below —
+  reassigned post-bankruptcy) has industry set to the literal string `"None"`, which slipped past
+  the NULL/blank filter and appeared as a selectable "NONE (1)" entry in the industry picker until
+  excluded defensively.
+- TSM's `current_pe` in `pe_stats` is 1.1 (vs. plausible ~25-35x peers), likely an ADR-ratio
+  handling issue in `historic_fundamentals` — surfaced live in a real report's ranked-ideas table,
+  flagged for separate investigation, not fixed here (pre-existing, out of scope for this feature).
+
+### Verification
+
+Live-verified at every layer, not just unit-tested: a real 3-4 company digest fan-out and full
+Stage 1-3 pipeline with a real LLM producing internally-consistent output (e.g. correctly
+aggregating "6 of 8 companies raised guidance" across digests rather than fabricating a pattern);
+a full HTTP round-trip with cache-hit confirmation; and a full 8-company Semiconductors report
+generated through the actual browser UI (~130s, within the estimated 60-150s), with working
+Cancel, retry-after-cancel, and click-to-navigate from any ticker cell to that ticker's single-name
+AI Research tab.
+
+---
+
 ## Phase 11 Go/No-Go Gate — CLOSED, Composite Accepted, XGBoost Retired (2026-07-20)
 
 Closed the go/no-go gate that had been open since May (`features/historic_fundamentals/fundamentals_alpha_action_plan.md` Phase 11 — `reports/model_acceptance_checklist.md`/`model_usage_decision.md` never existed until now). Triggered by a chain of findings this session: a train/serve z-score bug fix in `score_live.py` → discovering the same code pattern would be *wrong* to fix in `run_backtest.py` (single static model applied across ~40 years, era-mismatched normalization) → building a genuine walk-forward portfolio backtest to answer the question honestly → running Phase 9 robustness checks on the winner.

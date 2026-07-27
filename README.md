@@ -4,8 +4,8 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 
 ## Architecture
 
-- **FastAPI backend** (`api/`) — REST API for importing, querying statements, DCF valuations, stock screener, sector/industry dashboard, equity research, and earnings call transcripts
-- **Next.js frontend** (`web/`) — FinView UI with tabs: Screener, Sector Dashboard, AV Data, AV DCF, Fundamentals, AI Research, Earnings, XBRL Statements
+- **FastAPI backend** (`api/`) — REST API for importing, querying statements, DCF valuations, stock screener, sector/industry dashboard, single-name equity research, industry-level research, and earnings call transcripts
+- **Next.js frontend** (`web/`) — FinView UI with tabs: Screener, Sector Dashboard, Calendar, AV Data, AV DCF, Fundamentals, Estimates, AI Research, Industry Research, Earnings, News, XBRL Statements
 - **DuckDB** (`data/financial_statements.duckdb`) — stores income, balance sheet, and cash flow tables from SEC EDGAR
 - **DuckDB** (`data/av_financials.duckdb`) — stores income, balance sheet, and cash flow tables from Alpha Vantage API, plus company overview (sector/industry/name/beta)
 - **DuckDB** (`data/historic_fundamentals.duckdb`) — monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates (43K rows), analyst estimates
@@ -69,6 +69,11 @@ CSV format — any of these column names work: `ticker`, `symbol`, `stock`. Firs
 | `POST` | `/earnings/import-url` | Import transcript from a PDF/HTML URL and summarize |
 | `GET` | `/earnings/models` | List available LLM models for transcript summarization |
 | `POST` | `/research/{ticker}` | AI-generated equity research summary |
+| `GET` | `/industry-research/industries` | List industries with member counts, for the picker |
+| `GET` | `/industry-research/report` | AI-generated industry research report (params: `industry` or `tickers` for a custom basket, `model`, `retry`) |
+| `GET` | `/industry-research/status` | Live generation status/phase for polling |
+| `POST` | `/industry-research/cancel` | Cancel an in-progress industry report generation |
+| `GET` | `/industry-research/models` | List available LLM models for industry research |
 
 Import request body:
 ```json
@@ -214,6 +219,17 @@ uv run scripts/earnings_update.py --ticker MSFT
 Both scripts are resume-safe — already-cached `(symbol, quarter)` pairs are skipped. Quarter format is `YYYYQN` (e.g. `2026Q2`). A 60-day lookahead rule automatically probes the quarter after the latest one in `av_financials.duckdb` when it may have already reported.
 
 The Finview Earnings tab also fetches and caches transcripts on demand when a requested quarter is not in the database.
+
+---
+
+## AI Research
+
+Two LLM-generated research features, both in the Finview UI, both cached (24h TTL) and backed by the same multi-agent fan-out/fan-in pattern (`agents` SDK via OpenRouter):
+
+- **AI Research tab** (`api/research_router.py`) — single-name equity research report for one ticker: 4 parallel specialist sub-agents (Competitive & Strategy, Earnings & MD&A Historian, Technical Analyst, an independent price-blind Valuation Analyst) feeding a Chief Analyst synthesis. Includes a follow-up chat grounded in the generated report.
+- **Industry Research tab** (`api/industry_research_router.py`, data layer in `api/industry_data.py`) — cross-company industry research report: pick an AV `industry` (e.g. "Semiconductors" — deliberately finer-grained than sector, since a sector like Technology can span industries on very different cycles) or supply a custom ticker basket. A map-reduce pipeline digests each company's trailing earnings calls individually, then two specialists (Trends & Developments, Risks & Outlook) and a Chief Strategist synthesize industry-wide themes and a ranked table of relative (over/neutral/underweight) ideas across the analyzed companies. Every number in the report — valuation, growth, EPS surprises, the ranked-ideas metrics — is computed in Python from the database, never authored by the LLM. Full design rationale, architecture, and phased build record: `features/industry_research/SPEC.md` and `features/industry_research/PLAN.md`.
+
+Both models are user-selectable per report (Claude, Gemini, Qwen, GLM, Grok via OpenRouter).
 
 ---
 
@@ -393,6 +409,10 @@ api/
   importer.py          Import logic (fetch SEC filings, extract, insert)
   db.py                DuckDB connection wrapper
   dcf_router.py        DCF endpoints (GET /dcf/{ticker}, POST /dcf/{ticker}/run)
+  research_router.py            Single-name AI equity research: fan-out/fan-in multi-agent pipeline + chat
+  industry_research_router.py   Industry AI research: map-reduce pipeline (per-company digest -> Trends/Risks -> Chief),
+                                 strictly at AV `industry` grain, never sector (features/industry_research/SPEC.md)
+  industry_data.py               Industry research data layer: resolvers, aggregates, member financials, beat/miss, estimates
 dcf/
   assumptions.py       Dataclasses: YearForecast, UserOverrides, DcfResult, NwcAssumptions, HistoricalRow
   forecaster.py        Historical mean for P&L ratios; normalized mean for D&A and CapEx; DSO/DPO/DIO
@@ -409,6 +429,7 @@ web/                   Next.js frontend (port 3000)
     AvDcfViewer.tsx          AV-data-powered DCF valuation
     FundamentalsViewer.tsx   PE/FCF/EV/EBITDA history, goal prices, valuation signals
     EquityResearchViewer.tsx AI-generated equity research report
+    IndustryResearchViewer.tsx AI-generated industry research report: industry/custom-basket picker, live status, clickable ticker cells
     EarningsSummaryViewer.tsx Analyst earnings estimates + revenue consensus
     StatementViewer.tsx      SEC XBRL financials table with FY/Q toggle
     DcfViewer.tsx            DCF container: state management, Reset/Update actions

@@ -62,6 +62,9 @@ _MODEL_OPTIONS = [
     {"label": "GLM 5.2",                     "value": "z-ai/glm-5.2"},
     {"label": "Qwen3.7 Max",                 "value": "qwen/qwen3.7-max"},
     {"label": "Grok 4.5",                    "value": "x-ai/grok-4.5"},
+    {"label": "Hunyuan 3 (Free)",            "value": "tencent/hy3:free"},
+    {"label": "DeepSeek V4 Flash",           "value": "deepseek/deepseek-v4-flash"},
+    {"label": "MiniMax M3",                  "value": "minimax/minimax-m3"},
 ]
 
 
