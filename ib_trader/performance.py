@@ -69,6 +69,23 @@ def _get_benchmark_monthly(benchmark: str, start: date, end: date) -> pd.Series:
     return monthly.pct_change().dropna()
 
 
+def _get_benchmark_daily(benchmark: str, start: date, end: date) -> pd.Series:
+    """Fetch daily close prices for the benchmark ticker via yfinance."""
+    import yfinance as yf
+
+    data = yf.download(
+        benchmark,
+        start=str(start - timedelta(days=5)),
+        end=str(end + timedelta(days=1)),
+        auto_adjust=True,
+        progress=False,
+        actions=False,
+    )
+    if data.empty:
+        return pd.Series(dtype=float)
+    return data["Close"].squeeze().sort_index()
+
+
 def _nav_to_daily(conn: duckdb.DuckDBPyConnection, strategy: str) -> pd.Series:
     df = conn.execute(
         "SELECT date, nav FROM daily_nav WHERE strategy = ? ORDER BY date",
@@ -190,17 +207,29 @@ def get_performance_stats(
     monthly = nav.resample("ME").last().pct_change().dropna()
     stats = _calc_stats(monthly)
     stats["period"] = period
+    # Total return since inception from raw daily NAV — unlike CAGR/Sharpe/etc.,
+    # this doesn't need 2+ monthly buckets, so it's available from day 2 onward.
+    stats["total_return"] = float(nav.iloc[-1] / nav.iloc[0] - 1)
 
-    # Beta vs benchmark
+    bmark_ticker = conn.execute(
+        "SELECT benchmark FROM strategies WHERE name = ?", [strategy]
+    ).fetchone()
+    benchmark = bmark_ticker[0] if bmark_ticker else "SPY"
+
+    # Benchmark total return over the same daily window (same day-2-onward availability).
+    try:
+        bmark_daily = _get_benchmark_daily(benchmark, nav.index[0].date(), nav.index[-1].date())
+        if len(bmark_daily) >= 2:
+            stats["benchmark"] = benchmark
+            stats["benchmark_total_return"] = float(bmark_daily.iloc[-1] / bmark_daily.iloc[0] - 1)
+    except Exception:
+        pass
+
+    # Beta/alpha need 2+ monthly observations for a meaningful regression.
     if len(monthly) >= 2:
-        bmark_ticker = conn.execute(
-            "SELECT benchmark FROM strategies WHERE name = ?", [strategy]
-        ).fetchone()
-        benchmark = bmark_ticker[0] if bmark_ticker else "SPY"
         try:
             bmark_ret = _get_benchmark_monthly(benchmark, nav.index[0].date(), nav.index[-1].date())
-            aligned = monthly.align(bmark_ret, join="inner")[0], monthly.align(bmark_ret, join="inner")[1]
-            strat_a, bmark_a = aligned
+            strat_a, bmark_a = monthly.align(bmark_ret, join="inner")
             if len(strat_a) >= 2:
                 cov = np.cov(strat_a.values, bmark_a.values)
                 stats["beta"] = cov[0, 1] / cov[1, 1] if cov[1, 1] != 0 else float("nan")
