@@ -161,6 +161,18 @@ def main() -> None:
                 sys.exit(1)
             log.info("Using strategy NAV from tracker: $%s", f"{nav_override:,.0f}")
 
+        # Snapshot the price each ticker was scored/ranked at, so sync_fills.py can
+        # later compute execution slippage (fill_price vs this reference price).
+        # Recorded under args.strategy (not the score_live.py default) so it lines
+        # up with the strategy key fills/tax_lots actually use.
+        if not args.dry_run and tracker_conn:
+            try:
+                from ib_trader.tracker import record_score_snapshot
+                record_score_snapshot(tracker_conn, args.strategy, ranked_df, snapshot_date=date.today())
+                log.info("Recorded score snapshot (%d tickers) for slippage tracking.", len(ranked_df))
+            except Exception as exc:
+                log.warning("Could not record score snapshot: %s", exc)
+
         run_rebalance(ranked_df, client, order_type=args.order_type,
                       dry_run=args.dry_run, strategy=args.strategy,
                       tracker_conn=tracker_conn, nav_override=nav_override)
