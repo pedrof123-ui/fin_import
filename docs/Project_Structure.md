@@ -11,7 +11,21 @@ fin_import2/
 │   │                                    value (NCAV = current assets - total liabilities, Security Analysis Ch. XLIII)
 │   ├── sector_router.py                 Sector dashboard: GET /sector/snapshot, /sector/history, /sector/companies
 │   ├── earnings_router.py               Earnings call transcripts: GET /earnings/report, POST /earnings/import-url, GET /earnings/models
-│   ├── research_router.py               AI equity research: GET /research/{ticker}
+│   ├── research_router.py               AI equity research: GET /research/{ticker}. Valuation Analyst sub-agent context now includes
+│   │                                    a second, independent AI-authored DCF (via ai_dcf_router.get_or_run_ai_dcf) alongside the
+│   │                                    mechanical bear/base/bull scenarios; neutral reconciliation rule in dcf_reconciliation
+│   │                                    (features/ai_dcf/SPEC.md 6.8). Cache: research_cache.duckdb
+│   ├── ai_dcf_router.py                 Agentic AI DCF Valuator: GET /research/ai-dcf{,/status}, POST /research/ai-dcf/cancel.
+│   │                                    Evidence team (Fundamentals Historian / Industry & Competitors / Guidance & MD&A, parallel)
+│   │                                    -> DCF Architect (senior valuation persona authors per-year bear/base/bull revenue growth,
+│   │                                    cogs_pct, EBIT margin, capex%, TG) -> guardrails -> dcf.run_dcf_av x3 (LLM never computes the
+│   │                                    valuation itself). get_or_run_ai_dcf is the in-process, cache-aware entry point shared with
+│   │                                    research_router (joins an in-flight task instead of double-starting). Cache: ai_dcf_cache.duckdb.
+│   │                                    See features/ai_dcf/SPEC.md and PLAN.md.
+│   ├── ai_dcf_data.py                   Agentic AI DCF Valuator data layer: get_fundamentals_history, get_mda_history (mda_filings.duckdb,
+│   │                                    currently unused elsewhere), get_industry_report (14-day read window into
+│   │                                    industry_research_cache.duckdb, bypasses that router's 24h TTL), get_competitor_transcripts
+│   │                                    (cached-only, zero new Alpha Vantage calls), get_engine_context, get_historical_margin_bounds.
 │   ├── industry_research_router.py      Industry AI research: GET /industry-research/{industries,models,report,status}, POST /industry-research/cancel
 │   │                                    Map-reduce multi-agent pipeline (per-company digest -> Trends/Risks specialists -> Chief) at strict AV
 │   │                                    `industry` grain (never sector — see features/industry_research/SPEC.md 2.1). Cache: industry_research_cache.duckdb
@@ -100,6 +114,8 @@ fin_import2/
 │   │                                    char_count, status (ok/empty/error). See PLAN_MDA.md.
 │   ├── industry_research_cache.duckdb   Industry AI research report cache: scope_key (industry name, or a stable hash of a custom ticker
 │   │                                    basket), model, report_markdown, generated_at. 24h TTL, mirrors research_cache.duckdb's shape.
+│   ├── ai_dcf_cache.duckdb              Agentic AI DCF Valuator cache: ticker, model, result_json (full AiDcfResult, for
+│   │                                    get_or_run_ai_dcf's in-process reuse), report_markdown, generated_at. 24h TTL.
 │   ├── xbrl_mappings_multi.duckdb       AI-discovered concept mapping store
 │   └── ib_tracker.duckdb               Portfolio tracker: fills, tax lots, daily NAV, score snapshots, backtest benchmarks
 │                                        Created automatically when IB_TRACKER_DB env var is set.

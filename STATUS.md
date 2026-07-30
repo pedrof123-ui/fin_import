@@ -1,5 +1,92 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## Agentic AI DCF Valuator (complete, 2026-07-30)
+
+New second, independent DCF source feeding the single-name AI Research tab's Valuation Analyst,
+alongside the existing mechanical bear/base/bull scenarios. Full spec, architecture, and phased
+build record: `features/ai_dcf/SPEC.md` and `features/ai_dcf/PLAN.md` (all 8 phases complete,
+extensively live-verified, not just unit-tested).
+
+### Architecture — evidence team + DCF Architect
+
+```
+gather data in parallel (fundamentals history, MD&A, cached Industry Researcher report
+  if <=14d old, cached competitor transcripts, target transcripts/estimates, peer table)
+  -> Stage 1: 3 evidence sub-agents in parallel (Fundamentals Historian, Industry &
+     Competitors, Guidance & MD&A) each produce a structured brief
+  -> Stage 2: DCF Architect (senior valuation persona) authors per-year bear/base/bull
+     revenue growth, COGS%, EBIT margin, capex% + terminal growth, citing brief evidence
+  -> guardrails (range checks, cogs/margin internal consistency) -> dcf.run_dcf_av x3
+  -> AiDcfResult (assumptions + engine output + QC warnings), cached, rendered to markdown
+```
+
+The LLM only authors assumptions; the SAME deterministic `dcf.run_dcf_av` engine that powers the
+mechanical scenarios computes the actual valuation — never the LLM. The Valuation Analyst sees
+both DCFs and reconciles them under a neutral preference rule (no hard-coded favorite) in a new
+`dcf_reconciliation` field.
+
+### Infrastructure added
+
+- `api/ai_dcf_data.py` — data layer: fundamentals history, MD&A history (`mda_filings.duckdb`,
+  previously unused by the researcher), cached Industry Researcher report lookup (own 14-day
+  freshness window, bypasses that router's 24h TTL), cached-only competitor transcripts (zero
+  extra Alpha Vantage calls), engine context (risk-free rate, beta, tax rate, `reports_cogs` flag).
+- `api/ai_dcf_router.py` — assumption schemas + guardrails, the engine bridge, evidence-agent
+  fan-out, DCF Architect call, orchestrator, DuckDB cache (`ai_dcf_cache.duckdb`, 24h TTL),
+  background-task/status/cancel scaffolding, 3 new endpoints under `/research/ai-dcf*`, plus
+  `get_or_run_ai_dcf` — an in-process, cache-aware entry point shared with the research pipeline
+  that joins an in-flight run instead of double-starting one.
+- 4 new prompts (`api/prompts/ai_dcf_{fundamentals,industry,guidance,architect}.md`).
+- `api/research_router.py` changes: new `running_ai_dcf` status phase; Valuation Analyst context
+  gains the AI DCF summary; `ValuationOutput` gains `ai_dcf_intrinsic_value` (echo, QC-checked)
+  and `dcf_reconciliation`; new "DCF (AI-authored)" triangulation row and "AI vs. Mechanical DCF
+  Assumptions" comparison table (both reuse the existing single mechanical DCF computation — the
+  AI DCF's own engine never runs twice).
+- 122 new tests across 3 files (`test_ai_dcf.py`, `test_ai_dcf_orchestration.py`,
+  `test_research_ai_dcf_integration.py`), all passing, zero regressions in the existing suite
+  (424 total passing project-wide).
+
+### Key findings / bugs fixed (live, not hypothetical)
+
+- **`ebit_margin_pct` alone is silently capped at `1 - cogs_pct - sga_pct - rd_pct`** for
+  companies that report COGS explicitly — found live on UPS (historical COGS ~81%): requesting
+  a 35% EBIT margin silently produced 18.7% instead, no error. Root cause: the engine's EBIT-
+  margin control plugs the gap via `other_opex_pct`, which can't go negative, and gives up
+  rather than touching `cogs_pct`. Fix: the assumption schema gained a `cogs_pct` lever
+  alongside `ebit_margin_pct`; the Architect prompt explains the constraint explicitly; a
+  guardrail warns when the pair is internally inconsistent. Verified live on UPS afterward: the
+  Architect correctly held `cogs_pct` near the historical level and stayed under the ceiling in
+  all three scenarios, zero guardrail warnings, achieved margins matching authored targets
+  exactly.
+- The same literal-backslash-n `google/gemini-3.5-flash` quirk documented in the Industry AI
+  Researcher section below hit this feature's evidence briefs too, AND separately hit a brand-
+  new field added to the existing single-name researcher (`ValuationOutput.dcf_reconciliation`)
+  — every other field in a real generated report was clean, isolating the issue to that one new
+  field. Both fixed by reusing the existing `_sanitize_prose` helper.
+- Live 5-ticker sweep (TXN, UPS, STRZ, NUE, CRWV) confirmed the AI DCF's divergence from the
+  mechanical baseline is genuinely company-specific, not a fixed offset: from +0.7% (NUE, a
+  mature cyclical business where the Architect's assumptions closely tracked the engine's own
+  historical defaults) to +532% (STRZ, evidence-driven margin thesis vs. a historical-percentile
+  approach on a company mid-transition post-spinoff). CRWV (pre-profit AI-infrastructure
+  buildout) produced a degenerate, deeply negative value under BOTH the mechanical and AI DCF —
+  confirms vanilla FCFF DCF is a poor methodological fit for that business model, not an
+  artifact of AI-authored assumptions; guardrails correctly surfaced 14 warnings (including a
+  genuine bear>bull scenario-ordering violation) rather than hiding the mismatch.
+
+### Verification
+
+Live-verified at every layer: individual evidence-agent and Architect calls against real TXN/UPS/
+CRWV data (including one full run against `anthropic/claude-sonnet-4-6` to confirm no compiled-
+grammar issue, unlike the single-name researcher's Chief schema which needed splitting); a full
+mocked-agent end-to-end pipeline test; standalone-endpoint HTTP checks (cold/warm/cancel) via an
+isolated test app (the project's own long-running dev server was left untouched rather than
+risking a port/lock conflict); two full real research-report generations for TXN (one cold, one
+with a warm AI DCF cache — AI DCF step measured at 0.01s warm vs. the full cold-run cost,
+confirming the "near-zero added latency when cached" design goal); and the 5-ticker live sweep
+above.
+
+---
+
 ## Industry AI Researcher (complete, 2026-07-27)
 
 New FinView tab: cross-company industry research, complementing the existing single-name AI
