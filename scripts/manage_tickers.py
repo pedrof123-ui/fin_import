@@ -48,6 +48,7 @@ What 'add' does per ticker (8 Alpha Vantage API calls)
   Step 7  Analyst estimates    → historic_fundamentals.duckdb / earnings_estimates
   Step 8  Forward multiples    → historic_fundamentals.duckdb / pe_stats
           (forward P/E, P/FCF, EV/EBITDA, P/S, market cap)
+  Step 9  MD&A (20yr 10-K + 20qtr 10-Q) → mda_filings.duckdb  (SEC EDGAR, not AV — see --skip-mda)
 
 What 'delete' does per ticker (no API calls)
 --------------------------------------------
@@ -57,6 +58,7 @@ What 'delete' does per ticker (no API calls)
                                 cash_flow_statements, shares_outstanding,
                                 dividends, company_overview, import_log
     historic_fundamentals.duckdb monthly_pe, pe_stats, earnings_estimates
+    mda_filings.duckdb           mda_filings
 
 Rate limits
 -----------
@@ -108,6 +110,12 @@ from historic_fundamentals.estimates import (  # noqa: E402
     normalize_estimates,
     compute_forward_eps,
     compute_ntm_revenue,
+)
+from historic_fundamentals.mda import (  # noqa: E402
+    DEFAULT_DB_PATH as MDA_DB_PATH,
+    delete_ticker as delete_mda,
+    fetch_all_mda_for_ticker,
+    open_db as open_mda_db,
 )
 
 log = logging.getLogger(__name__)
@@ -484,6 +492,7 @@ def _add_ticker(
     limiter: RateLimiter,
     force: bool,
     skip_estimates: bool,
+    skip_mda: bool = False,
 ) -> bool:
     """Run the full add pipeline for one ticker. Returns True on success."""
 
@@ -569,6 +578,19 @@ def _add_ticker(
     finally:
         prices_conn.close()
 
+    # Step 9 — MD&A (20yr 10-K + 20qtr 10-Q, from SEC EDGAR — not an AV call, not rate-limited
+    # against the 75/min AV budget above)
+    if not skip_mda:
+        try:
+            mda_conn = open_mda_db()
+            try:
+                summary = fetch_all_mda_for_ticker(ticker, force=force, conn=mda_conn)
+            finally:
+                mda_conn.close()
+            log.debug("  mda: %s", summary)
+        except Exception as exc:
+            log.warning("  mda: failed — %s", exc)
+
     return True
 
 
@@ -601,7 +623,7 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
             log.info("[%d/%d] %s", i, len(tickers), ticker)
             success = _add_ticker(
                 ticker, av_db, hf_db, prices_db_path,
-                api_key, limiter, args.force, args.skip_estimates,
+                api_key, limiter, args.force, args.skip_estimates, args.skip_mda,
             )
             if success:
                 ok += 1
@@ -692,9 +714,14 @@ def cmd_delete(args: argparse.Namespace, tickers: list[str]) -> int:
                 prices_deleted = _delete_prices(ticker, prices_db_path)
                 av_deleted = av_db.delete_ticker(ticker)
                 hf_deleted = hf_db.delete_ticker(ticker)
+                mda_conn = open_mda_db()
+                try:
+                    mda_deleted = delete_mda(mda_conn, ticker)
+                finally:
+                    mda_conn.close()
                 log.info(
-                    "[%d/%d] %s — deleted: %d price rows, %d av rows, %d hf rows",
-                    i, len(tickers), ticker, prices_deleted, av_deleted, hf_deleted,
+                    "[%d/%d] %s — deleted: %d price rows, %d av rows, %d hf rows, %d mda rows",
+                    i, len(tickers), ticker, prices_deleted, av_deleted, hf_deleted, mda_deleted,
                 )
                 ok += 1
             except Exception as exc:
@@ -753,6 +780,8 @@ def parse_args() -> argparse.Namespace:
     add_p.add_argument("--csv", metavar="FILE", help="CSV file with tickers in first column")
     add_p.add_argument("--force", action="store_true", help="Re-import even if already in AV database")
     add_p.add_argument("--skip-estimates", action="store_true", help="Skip EARNINGS_ESTIMATES API call")
+    add_p.add_argument("--skip-mda", action="store_true",
+                       help="Skip MD&A backfill (EDGAR, ~1-2 min/ticker — catch up later with mda_backfill.py)")
     add_p.add_argument("--dry-run", action="store_true", help="Print plan without modifying any database")
     add_p.add_argument("--verbose", action="store_true", help="Show DEBUG-level output")
 

@@ -587,9 +587,10 @@ Quarter strings use calendar quarters derived from `fiscal_date_ending` via `(mo
 | `downloaded_at` | TIMESTAMP | When the row was fetched |
 
 Populated by `mda_backfill.py` (one-time, 20yr 10-K + 20qtr 10-Q per ticker), `mda_update.py`
-(weekly, latest 1 10-K + 1 10-Q per ticker), and `manage_tickers.py add` (new tickers, unless
-`--skip-mda`). See `PLAN_MDA.md` for design/rationale, including the ~85% `ok` extraction rate
-and the DuckDB single-writer-lock interaction with concurrent `add`/backfill runs.
+(weekly cron, Sunday 20:30 ET, latest 1 10-K + 1 10-Q per ticker), and `manage_tickers.py add`
+(new tickers, unless `--skip-mda`). Full-universe backfill completed 2026-07-29: 2,477 tickers,
+79,469 rows, 0 errors, 83.5% `ok`. See `PLAN_MDA.md` for design/rationale, including the
+DuckDB single-writer-lock interaction with concurrent `add`/backfill runs.
 
 ### `data/xbrl_mappings_multi.duckdb`
 
