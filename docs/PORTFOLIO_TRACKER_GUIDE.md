@@ -65,7 +65,7 @@ The `benchmark` field controls which ticker is used for beta and alpha calculati
 
 ## Monthly Workflow
 
-Run on the last trading day of each month before 15:50 ET. Use `--tracker-db` to target the correct database explicitly.
+Run on the first trading day of each month before 15:50 ET — not the last trading day. This is automated via cron: the data/scoring pipeline fires at 2:00 AM ET on the 1st, and the rebalance fires at 15:30 ET on whichever of the 1st-4th is the actual first trading day (`rebalance.py` gates on this internally). Trading same-day as the refresh keeps the score's price/fundamentals basis to hours old instead of letting it go stale for weeks. Use `--tracker-db` to target the correct database explicitly.
 
 ### Paper trading — `vw_gr_top_n_25`
 

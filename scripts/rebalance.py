@@ -19,7 +19,7 @@ Monthly workflow:
     uv run scripts/hf_update.py
     # 2. Score
     uv run scripts/score_live.py --top 25
-    # 3. Rebalance (before 15:50 ET on last trading day of month)
+    # 3. Rebalance (before 15:50 ET on first trading day of month)
     uv run scripts/rebalance.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb --use-strategy-nav --no-dry-run
     # 4. Sync fills (after close)
     uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_tracker_paper.duckdb
@@ -52,14 +52,12 @@ from ib_trader.rebalance import run_rebalance
 log = logging.getLogger(__name__)
 
 
-def _is_last_trading_day_of_month() -> bool:
-    """True if today is the last weekday (Mon-Fri) of the current month."""
+def _is_first_trading_day_of_month() -> bool:
+    """True if today is the first weekday (Mon-Fri) of the current month."""
     today = date.today()
-    next_month = today.replace(day=28) + timedelta(days=4)
-    last_calendar_day = next_month - timedelta(days=next_month.day)
-    d = last_calendar_day
+    d = today.replace(day=1)
     while d.weekday() >= 5:
-        d -= timedelta(days=1)
+        d += timedelta(days=1)
     return today == d
 
 
@@ -89,13 +87,13 @@ def main() -> None:
     parser.add_argument("--status", action="store_true",
                         help="Show account status and exit")
     parser.add_argument("--force", action="store_true",
-                        help="Bypass the last-trading-day-of-month guard")
+                        help="Bypass the first-trading-day-of-month guard")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     if (not args.dry_run and not args.force and not args.status and not args.cancel_all
-            and not _is_last_trading_day_of_month()):
-        print("Not the last trading day of the month — skipping live rebalance. Use --force to override.")
+            and not _is_first_trading_day_of_month()):
+        print("Not the first trading day of the month — skipping live rebalance. Use --force to override.")
         return
 
     logging.basicConfig(

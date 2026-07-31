@@ -36,19 +36,21 @@ This runbook describes how to operate the fundamentals-alpha stock-selection pip
 
 ## Monthly Workflow — Quick Reference
 
-Run once per month on the last trading day of the month.
+Run once per month on the first trading day of the month, right after that morning's data refresh — not the last trading day. Scoring off the first trading day means the score is computed from the prior month's true, complete month-end close and fundamentals, then traded same-day; the old last-trading-day convention let the scores file go stale for up to ~30 days by the time of execution.
 
-### Part 1 — Refresh data (morning, any day after earnings season)
+This whole cycle is automated via cron (`crontab -l`): the pipeline (`run_pipeline.py --av-update --enable-ml-comps`, which runs `av_update` + `hf_update` + validate + train + backtest + `score_live`) fires at 2:00 AM ET on the 1st of the month; the rebalance cron fires at 15:30 ET on the 1st-4th (Mon-Fri), gated internally by `rebalance.py`'s first-trading-day-of-month check, so it actually executes on whichever of those days is the real first trading day. The manual steps below are the same steps, for running by hand or debugging.
+
+### Part 1 — Refresh data (automated 2:00 AM ET on the 1st; run by hand only to debug or re-run)
 
 ```bash
-# Refresh raw AV data: statements, shares, dividends, company overview (~115 min)
+# Refresh raw AV data: statements, shares, dividends, company overview (~4h13m measured)
 uv run scripts/av_update.py
 
 # Recompute derived metrics + analyst estimates + sector stats (~20 min)
 uv run scripts/hf_update.py
 ```
 
-### Part 2 — Score and rebalance (last trading day of the month, before 15:50 ET)
+### Part 2 — Score and rebalance (first trading day of the month, before 15:50 ET)
 
 ```bash
 # Step 1 — Generate ranked scores; note the exact filename produced (e.g. docs/live_scores_20260529_rf_vw_gr_top_n_25.csv)
@@ -68,12 +70,12 @@ uv run scripts/sync_fills.py --strategy vw_gr_top_n_25 --tracker-db data/ib_trac
 
 | Step | Script | When | Time |
 |------|--------|------|------|
-| Refresh raw AV data | `av_update.py` | Early month | ~115 min |
+| Refresh raw AV data | `av_update.py` | 2:00 AM ET, 1st of month | ~4h13m measured |
 | Recompute metrics | `hf_update.py` | After av_update | ~20 min |
-| Score universe | `score_live.py --top 25` | Rebalance morning | seconds |
+| Score universe | `score_live.py --top 25` | Same morning | seconds |
 | Review CSV + regime signal | — | Before orders | manual |
-| Preview orders | `rebalance.py` (dry run) | Midday | seconds |
-| Submit MOC orders | `rebalance.py --no-dry-run` | Before 15:50 ET | seconds |
+| Preview orders | `rebalance.py` (dry run) | Midday, first trading day | seconds |
+| Submit MOC orders | `rebalance.py --no-dry-run` | Before 15:50 ET, first trading day | seconds |
 | Sync confirmed fills | `sync_fills.py` | After close | seconds |
 
 **Recommended portfolio:** `vw_gr_top_n_25` — vol-weighted, guardrails on, top 25, sector-neutral scoring.
@@ -316,7 +318,7 @@ Use separate tracker databases for paper and live so the ledgers never mix. The 
 
 ### Paper trading pipeline — `vw_gr_top_n_25`
 
-Run on the last trading day of each month (before 15:50 ET for steps 3–4). Set `IB_PORT=7497` in `.env` for all paper commands.
+Run on the first trading day of each month (before 15:50 ET for steps 3–4). Set `IB_PORT=7497` in `.env` for all paper commands.
 
 | Step | When | Command |
 |---|---|---|
@@ -348,7 +350,7 @@ load_backtest_benchmarks(conn, "vw_gr_top_n_25", "vw_gr_top_n_25", {
 conn.close()
 ```
 
-**Start at month-end.** The strategy is calibrated on month-end to month-end returns. Starting mid-month creates a partial first period that does not match the backtest methodology.
+**Start on the first-trading-day cycle.** The strategy trades on the first trading day of the month, using scores computed that same morning from the prior month's true, complete month-end close and fundamentals — so the underlying return series stays month-end-to-month-end even though the order is submitted a few days later. Starting mid-cycle creates a partial first period that does not match the backtest methodology.
 
 ---
 

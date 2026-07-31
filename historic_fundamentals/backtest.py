@@ -105,6 +105,7 @@ def run_monthly_backtest(
     use_vol_weighting: bool = False,
     vol_lookback: int = 12,
     regime_exposure: Optional[pd.Series] = None,
+    score_lag_months: int = 0,
 ) -> dict[str, pd.DataFrame]:
     """
     Run a true monthly portfolio backtest with non-overlapping 1-month returns.
@@ -150,6 +151,14 @@ def run_monthly_backtest(
         (always fully invested). Regime is determined at t0 (rebalance date) and
         applies to the [t0, t1] holding period — PIT safe when the series is built
         from information available at t0.
+    score_lag_months : int
+        Number of extra months to lag the score/selection date behind the
+        entry/exit price dates. 0 (default) = current behavior: score and buy
+        both use t0. With N > 0, the stocks held over [t0, t1] are selected
+        using the cross-section from N periods before t0 instead of t0 itself,
+        while entry/exit prices are unchanged. Models a real-world formation-
+        to-execution delay (e.g. scores computed once a month but trades
+        executed weeks later on stale rankings).
 
     Returns
     -------
@@ -195,7 +204,11 @@ def run_monthly_backtest(
             should_rebalance = (i % rebalance_months == 0)
 
             if should_rebalance:
-                universe_t0 = df[df[date_col] == t0].copy()
+                score_idx = i - score_lag_months
+                if score_idx < 0:
+                    continue
+                score_date = sorted_dates[score_idx]
+                universe_t0 = df[df[date_col] == score_date].copy()
                 selected = _select_top(
                     universe_t0, score_col, config_val,
                     sector_col=sector_col, max_sector_pct=max_sector_pct,
