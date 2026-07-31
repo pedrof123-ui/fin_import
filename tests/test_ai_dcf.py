@@ -844,3 +844,101 @@ def test_run_ai_dcf_status_callback_receives_all_phases(monkeypatch):
     result = asyncio.run(adr.run_ai_dcf("TXN", "test-model", status_cb=lambda phase, msg: seen.append(phase)))
     assert seen == ["gathering_data", "running_evidence", "running_architect", "computing_dcf"]
     assert result.engine["base"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — DCF reconciliation audit trail
+# ---------------------------------------------------------------------------
+
+def test_compute_divergence_pct_basic():
+    assert adr.compute_divergence_pct(100.0, 120.0) == pytest.approx(0.20)
+    assert adr.compute_divergence_pct(100.0, 80.0) == pytest.approx(-0.20)
+    assert adr.compute_divergence_pct(100.0, 100.0) == pytest.approx(0.0)
+
+
+def test_compute_divergence_pct_none_when_missing_or_zero():
+    assert adr.compute_divergence_pct(None, 120.0) is None
+    assert adr.compute_divergence_pct(100.0, None) is None
+    assert adr.compute_divergence_pct(None, None) is None
+    assert adr.compute_divergence_pct(0.0, 120.0) is None
+
+
+def test_compute_dcf_anchor_picks_closer_side():
+    assert adr.compute_dcf_anchor(fair_value_base=55.0, mechanical_base=53.0, ai_base=90.0) == "mechanical"
+    assert adr.compute_dcf_anchor(fair_value_base=85.0, mechanical_base=53.0, ai_base=90.0) == "ai"
+
+
+def test_compute_dcf_anchor_tied():
+    assert adr.compute_dcf_anchor(fair_value_base=60.0, mechanical_base=50.0, ai_base=70.0) == "tied"
+
+
+def test_compute_dcf_anchor_only_one_available():
+    assert adr.compute_dcf_anchor(fair_value_base=55.0, mechanical_base=None, ai_base=90.0) == "ai_only"
+    assert adr.compute_dcf_anchor(fair_value_base=55.0, mechanical_base=53.0, ai_base=None) == "mechanical_only"
+
+
+def test_compute_dcf_anchor_neither_available():
+    assert adr.compute_dcf_anchor(fair_value_base=55.0, mechanical_base=None, ai_base=None) == "neither_available"
+
+
+def test_log_dcf_reconciliation_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "log.duckdb")
+    adr.log_dcf_reconciliation(
+        "TXN", "test-model", mechanical_base=53.48, ai_base=60.79,
+        fair_value_base=58.0, reconciliation_text="anchored on the AI DCF because of guidance",
+    )
+    rows = adr.get_reconciliation_log("TXN")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["ticker"] == "TXN"
+    assert row["mechanical_base"] == pytest.approx(53.48)
+    assert row["ai_base"] == pytest.approx(60.79)
+    assert row["divergence_pct"] == pytest.approx((60.79 - 53.48) / 53.48)
+    assert row["anchor"] in ("mechanical", "ai", "tied")
+    assert row["reconciliation_text"] == "anchored on the AI DCF because of guidance"
+
+
+def test_log_dcf_reconciliation_handles_missing_bases(tmp_path, monkeypatch):
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "log.duckdb")
+    adr.log_dcf_reconciliation(
+        "CRWV", "test-model", mechanical_base=None, ai_base=None,
+        fair_value_base=0.0, reconciliation_text="",
+    )
+    rows = adr.get_reconciliation_log("CRWV")
+    assert len(rows) == 1
+    assert rows[0]["mechanical_base"] is None
+    assert rows[0]["ai_base"] is None
+    assert rows[0]["divergence_pct"] is None
+    assert rows[0]["anchor"] == "neither_available"
+
+
+def test_log_dcf_reconciliation_never_raises_on_db_failure(tmp_path, monkeypatch):
+    """A logging failure must never propagate — research report generation must not break
+    because of an audit-trail write error."""
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "nonexistent_dir" / "sub" / "log.duckdb")
+
+    def _boom():
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(adr, "_init_reconciliation_log", _boom)
+    adr.log_dcf_reconciliation(
+        "TXN", "test-model", mechanical_base=50.0, ai_base=60.0,
+        fair_value_base=55.0, reconciliation_text="x",
+    )  # must not raise
+
+
+def test_get_reconciliation_log_empty_when_no_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "nonexistent.duckdb")
+    assert adr.get_reconciliation_log() == []
+
+
+def test_get_reconciliation_log_respects_limit_and_ordering(tmp_path, monkeypatch):
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "log.duckdb")
+    for i in range(3):
+        adr.log_dcf_reconciliation(
+            "TXN", "test-model", mechanical_base=50.0 + i, ai_base=60.0 + i,
+            fair_value_base=55.0, reconciliation_text=f"reconciliation {i}",
+        )
+    rows = adr.get_reconciliation_log("TXN", limit=2)
+    assert len(rows) == 2
+    # newest first
+    assert rows[0]["reconciliation_text"] == "reconciliation 2"

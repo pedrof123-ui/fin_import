@@ -374,5 +374,42 @@ Live (manual, per phase gates in PLAN.md):
   the Valuation Analyst's reconciliation already carries the signal downstream.)
 - A DCF-viewer frontend panel (AI vs. default assumptions, one-click standalone run) — follow-up
   feature once real outputs have been observed for a while.
-- Persisting AI DCF history (assumption drift over time per ticker) for later audit — v1 keeps
-  only the latest per (ticker, model); revisit if drift tracking proves interesting.
+- ~~Persisting AI DCF history (assumption drift over time per ticker) for later audit~~ —
+  **resolved by section 11 below** (2026-07-31): a lighter-weight reconciliation-decision log
+  was built instead of full assumption-history tracking, per user request after discussing
+  hedge-fund model-governance norms. `AiDcfResult` itself still keeps only the latest per
+  (ticker, model) in `ai_dcf_cache.duckdb` — full assumption-drift-over-time tracking remains a
+  distinct, still-deferred follow-up if this lighter log proves valuable enough to extend.
+
+## 11. Addendum: DCF reconciliation audit trail (added 2026-07-31)
+
+**Motivation**: section 6.8's neutral-preference reconciliation rule is enforced entirely by
+prompt instruction — nothing previously verified the Valuation Analyst actually engaged with a
+large (>20%) disagreement between the two DCFs, and nothing persisted *which* DCF ended up
+anchoring `fair_value_base` or whether that choice was later borne out. This mirrors a real
+model-governance gap: hedge funds and institutional research desks don't grade the prose
+quality of a reconciliation write-up (an LLM judging another LLM's reasoning was explicitly
+rejected as low-value and circular) — they log the decision and its inputs, so the choice can
+be evaluated retrospectively against what actually happened.
+
+**What was added**:
+- `api/ai_dcf_router.py` gains `compute_divergence_pct(mechanical_base, ai_base) ->
+  Optional[float]` and `compute_dcf_anchor(fair_value_base, mechanical_base, ai_base) -> str`
+  (`"mechanical"` / `"ai"` / `"tied"` / `"mechanical_only"` / `"ai_only"` / `"neither_available"`
+  — a deterministic proxy for which DCF the Valuation Analyst's own output ended up numerically
+  closer to, not a semantic judgment of the reconciliation text), plus
+  `log_dcf_reconciliation(ticker, model, mechanical_base, ai_base, fair_value_base,
+  reconciliation_text)` writing one row to a new `dcf_reconciliation_log.duckdb` (ticker, model,
+  generated_at, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text). Never
+  raises — a logging failure must not break report generation.
+- `api/research_router.py`: `_build_post_subagent_tables` now also returns the **ground-truth**
+  mechanical base intrinsic value (from the same shared `compute_dcf_scenarios` call already
+  used for the tables — no second DCF run) so both the log and the new QC check use real engine
+  output, not the Valuation Analyst's own echoed `dcf_intrinsic_value` field. `_run_research_agent`
+  calls `log_dcf_reconciliation` once per real generation (never on a cache hit), wrapped so a
+  logging failure degrades silently. `_validate_report` gains one more deterministic check: if
+  the two base values diverge by more than 20% and `dcf_reconciliation` is empty or near-empty
+  (<20 chars), a QC warning fires — catching silent non-compliance with the reconciliation rule
+  without attempting to grade reconciliations that ARE present.
+- Deliberately NOT built: an LLM-based grader scoring whether the reconciliation text
+  substantively engages with the disagreement. Rejected per the same reasoning as above.

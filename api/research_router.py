@@ -1592,11 +1592,16 @@ def render_market_share_table(ticker: str, scenarios: Optional[dict], competitiv
 
 def _build_post_subagent_tables(
     ticker: str, valuation_out, competitive_out, ai_dcf_result=None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, Optional[float]]:
     """Builds the three deterministic tables that depend on sub-agent output (valuation model
     detail, direct competitors, market size & share), sharing a single DCF scenario computation
     between the two that need it. `ai_dcf_result` (Agentic AI DCF Valuator output, or None) is
-    threaded into the valuation table only — it never triggers a second mechanical DCF run."""
+    threaded into the valuation table only — it never triggers a second mechanical DCF run.
+
+    Also returns the ground-truth mechanical base intrinsic value (from this same scenarios
+    computation, not the Valuation Analyst's echoed `dcf_intrinsic_value` field) for the
+    reconciliation audit trail (features/ai_dcf/SPEC.md 11) — reuses the one DCF run above
+    rather than computing it again."""
     needs_valuation = valuation_out.fair_value_base != 0.0
     needs_market_share = competitive_out.tam_current_low is not None or competitive_out.tam_projected_low is not None
 
@@ -1618,7 +1623,11 @@ def _build_post_subagent_tables(
     direct_competitors_md = render_direct_competitors_table(competitive_out)
     market_share_md = render_market_share_table(ticker, scenarios, competitive_out) if needs_market_share else ""
 
-    return valuation_tables_md, direct_competitors_md, market_share_md
+    mechanical_base = None
+    if scenarios is not None and scenarios.get("base") is not None:
+        mechanical_base = scenarios["base"].intrinsic_value_per_share
+
+    return valuation_tables_md, direct_competitors_md, market_share_md, mechanical_base
 
 
 # ---------------------------------------------------------------------------
@@ -1684,13 +1693,16 @@ def _format_specialist_outputs(
 
 def _validate_report(
     report: EquityResearchReport, technical_out: TechnicalOutput, valuation_out: ValuationOutput,
-    ai_dcf_result=None,
+    ai_dcf_result=None, mechanical_base: Optional[float] = None,
 ) -> list[str]:
     """Deterministic coherence checks on the Chief's output. Never blocks generation —
     findings are logged and surfaced as a QC footer on the rendered report. `ai_dcf_result`
     (Agentic AI DCF Valuator output, or None) adds one more check: the Valuation Analyst's
     echoed ai_dcf_intrinsic_value must match the AI DCF's own base-scenario value exactly —
-    same pattern as the existing mechanical fair_value checks below."""
+    same pattern as the existing mechanical fair_value checks below. `mechanical_base` (ground-
+    truth mechanical DCF base value, from the same shared compute_dcf_scenarios call used for
+    the report's tables) adds one more: a deterministic (not semantic) check that the Valuation
+    Analyst didn't silently skip the >20%-divergence reconciliation rule (SPEC 11)."""
     findings: list[str] = []
     h, v = report.header, report.valuation
 
@@ -1721,15 +1733,29 @@ def _validate_report(
                     f"output (${agent_val})"
                 )
 
-    if ai_dcf_result is not None and valuation_out.ai_dcf_intrinsic_value is not None:
+    ai_base = None
+    if ai_dcf_result is not None:
         base_extract = ai_dcf_result.engine.get("base")
         if base_extract is not None:
-            actual = base_extract["intrinsic_value_per_share"]
-            if abs(valuation_out.ai_dcf_intrinsic_value - actual) > 0.01:
-                findings.append(
-                    f"valuation.ai_dcf_intrinsic_value (${valuation_out.ai_dcf_intrinsic_value}) "
-                    f"does not match the AI DCF's own base-scenario intrinsic value (${actual})"
-                )
+            ai_base = base_extract["intrinsic_value_per_share"]
+
+    if ai_base is not None and valuation_out.ai_dcf_intrinsic_value is not None:
+        if abs(valuation_out.ai_dcf_intrinsic_value - ai_base) > 0.01:
+            findings.append(
+                f"valuation.ai_dcf_intrinsic_value (${valuation_out.ai_dcf_intrinsic_value}) "
+                f"does not match the AI DCF's own base-scenario intrinsic value (${ai_base})"
+            )
+
+    from api.ai_dcf_router import _DIVERGENCE_WARN_THRESHOLD, _MIN_RECONCILIATION_CHARS, compute_divergence_pct
+    divergence = compute_divergence_pct(mechanical_base, ai_base)
+    if divergence is not None and abs(divergence) > _DIVERGENCE_WARN_THRESHOLD:
+        if len(valuation_out.dcf_reconciliation.strip()) < _MIN_RECONCILIATION_CHARS:
+            findings.append(
+                f"mechanical DCF (${mechanical_base:.2f}) and AI DCF (${ai_base:.2f}) base "
+                f"values diverge by {divergence * 100:.0f}% but dcf_reconciliation is "
+                "empty/near-empty — the >20% divergence adjudication rule "
+                "(research_valuation.md) does not appear to have been followed"
+            )
 
     return findings
 
@@ -1941,7 +1967,7 @@ async def _run_research_agent(
     )
     t_llm = datetime.now()
     try:
-        core_result, (valuation_tables_md, direct_competitors_md, market_share_md) = await asyncio.gather(
+        core_result, (valuation_tables_md, direct_competitors_md, market_share_md, mechanical_base) = await asyncio.gather(
             asyncio.wait_for(
                 Runner.run(core_agent, f"Generate the rating, target price, and financial synthesis for {ticker.upper()}."),
                 timeout=_LLM_TIMEOUT,
@@ -1991,9 +2017,30 @@ async def _run_research_agent(
              (datetime.now() - t0).total_seconds())
 
     report = EquityResearchReport(**core_out.model_dump(), **narrative_out.model_dump())
-    findings = _validate_report(report, technical_out, valuation_out, ai_dcf_result=ai_dcf_result)
+    findings = _validate_report(
+        report, technical_out, valuation_out, ai_dcf_result=ai_dcf_result, mechanical_base=mechanical_base,
+    )
     if findings:
         log.warning("[%s] research: QC found %d inconsistencies: %s", ticker, len(findings), findings)
+
+    # DCF reconciliation audit trail (features/ai_dcf/SPEC.md 11) — one row per real generation,
+    # never on a cache hit (this function only runs on an actual generation). log_dcf_reconciliation
+    # never raises on its own, but this call site is wrapped anyway as defense in depth: a logging
+    # bug must never take down report generation.
+    from api.ai_dcf_router import log_dcf_reconciliation
+    ai_base_for_log = None
+    if ai_dcf_result is not None:
+        base_extract = ai_dcf_result.engine.get("base")
+        if base_extract is not None:
+            ai_base_for_log = base_extract["intrinsic_value_per_share"]
+    try:
+        log_dcf_reconciliation(
+            ticker, model, mechanical_base, ai_base_for_log,
+            valuation_out.fair_value_base, valuation_out.dcf_reconciliation,
+        )
+    except Exception as e:
+        log.error("[%s] research: DCF reconciliation logging failed: %s", ticker, e)
+
     return (
         report, findings, valuation_tables_md, direct_competitors_md, market_share_md,
         valuation_out.dcf_reconciliation,

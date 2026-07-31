@@ -23,6 +23,14 @@ import api.ai_dcf_router as adr
 import api.research_router as rr
 
 
+@pytest.fixture(autouse=True)
+def _isolate_reconciliation_log(tmp_path, monkeypatch):
+    """_run_research_agent (Phase 8) writes one audit-trail row per real generation — every test
+    in this file that exercises it for real must not pollute the project's actual
+    dcf_reconciliation_log.duckdb."""
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "dcf_reconciliation_log.duckdb")
+
+
 # ---------------------------------------------------------------------------
 # Fixture AiDcfResult (mirrors tests/test_ai_dcf.py's fixture, kept self-contained here)
 # ---------------------------------------------------------------------------
@@ -139,7 +147,7 @@ def test_render_valuation_model_tables_no_ai_dcf():
 # 6.5 — _validate_report additions
 # ---------------------------------------------------------------------------
 
-def _fixture_report_and_valuation(ai_dcf_intrinsic_value):
+def _fixture_report_and_valuation(ai_dcf_intrinsic_value, dcf_reconciliation=""):
     header = rr.ResearchHeader(
         company_name="Texas Instruments", ticker="TXN", prepared_date="2026-07-30",
         ai_model="test-model", rating="HOLD", target_low=55.0, target_high=75.0, thesis_summary="t",
@@ -154,7 +162,7 @@ def _fixture_report_and_valuation(ai_dcf_intrinsic_value):
     )
     valuation_out = rr.ValuationOutput(
         fair_value_low=55.0, fair_value_base=62.0, fair_value_high=70.0,
-        ai_dcf_intrinsic_value=ai_dcf_intrinsic_value,
+        ai_dcf_intrinsic_value=ai_dcf_intrinsic_value, dcf_reconciliation=dcf_reconciliation,
         valuation_methodology="m", dcf_assessment="d", relative_valuation="r", valuation_risks=[],
     )
     technical_out = rr.TechnicalOutput(technical_analysis="t", technical_rating="NEUTRAL")
@@ -179,6 +187,87 @@ def test_validate_report_skips_ai_dcf_check_when_unavailable():
     report, valuation_out, technical_out = _fixture_report_and_valuation(ai_dcf_intrinsic_value=None)
     findings = rr._validate_report(report, technical_out, valuation_out, ai_dcf_result=None)
     assert not any("ai_dcf" in f for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# _validate_report — Phase 8's >20%-divergence + empty-reconciliation guardrail
+# ---------------------------------------------------------------------------
+
+def test_validate_report_flags_large_divergence_with_empty_reconciliation():
+    result = _fixture_ai_dcf_result()  # ai base = 62.0
+    # mechanical=50.0, ai=62.0 -> divergence = (62-50)/50 = 24% > 20%
+    report, valuation_out, technical_out = _fixture_report_and_valuation(
+        ai_dcf_intrinsic_value=62.0, dcf_reconciliation="",
+    )
+    findings = rr._validate_report(
+        report, technical_out, valuation_out, ai_dcf_result=result, mechanical_base=50.0,
+    )
+    assert any("divergence" in f.lower() or "diverge" in f.lower() for f in findings)
+
+
+def test_validate_report_silent_on_large_divergence_with_real_reconciliation():
+    result = _fixture_ai_dcf_result()  # ai base = 62.0
+    report, valuation_out, technical_out = _fixture_report_and_valuation(
+        ai_dcf_intrinsic_value=62.0,
+        dcf_reconciliation="Anchored on the AI DCF because Q2 2026 guidance implies higher growth.",
+    )
+    findings = rr._validate_report(
+        report, technical_out, valuation_out, ai_dcf_result=result, mechanical_base=50.0,
+    )
+    assert not any("diverge" in f.lower() for f in findings)
+
+
+def test_validate_report_silent_when_divergence_under_threshold():
+    result = _fixture_ai_dcf_result()  # ai base = 62.0
+    # mechanical=55.0, ai=62.0 -> divergence = (62-55)/55 = 12.7% < 20%
+    report, valuation_out, technical_out = _fixture_report_and_valuation(
+        ai_dcf_intrinsic_value=62.0, dcf_reconciliation="",
+    )
+    findings = rr._validate_report(
+        report, technical_out, valuation_out, ai_dcf_result=result, mechanical_base=55.0,
+    )
+    assert not any("diverge" in f.lower() for f in findings)
+
+
+def test_validate_report_silent_when_mechanical_base_unavailable():
+    result = _fixture_ai_dcf_result()
+    report, valuation_out, technical_out = _fixture_report_and_valuation(
+        ai_dcf_intrinsic_value=62.0, dcf_reconciliation="",
+    )
+    findings = rr._validate_report(
+        report, technical_out, valuation_out, ai_dcf_result=result, mechanical_base=None,
+    )
+    assert not any("diverge" in f.lower() for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# _build_post_subagent_tables — 4th return value (ground-truth mechanical base)
+# ---------------------------------------------------------------------------
+
+def test_build_post_subagent_tables_returns_mechanical_base():
+    """Uses the real compute_dcf_scenarios("TXN") — read-only, DB-only, no LLM/network — since
+    a fake DcfResult would need to satisfy the full interface _dcf_assumptions_table/_comps_table
+    traverse (year_forecasts, fcff_series, wacc_detail, ...), not just intrinsic_value_per_share."""
+    from api.valuation_data import compute_dcf_scenarios
+    competitive = rr.CompetitiveOutput(competitive_analysis="c", industry_outlook="i", strategic_framework_analysis="s")
+    valuation_out = rr.ValuationOutput(
+        fair_value_low=50.0, fair_value_base=60.0, fair_value_high=70.0,
+        valuation_methodology="m", dcf_assessment="d", relative_valuation="r", valuation_risks=[],
+    )
+    _, _, _, mechanical_base = rr._build_post_subagent_tables("TXN", valuation_out, competitive)
+    expected = compute_dcf_scenarios("TXN")["base"].intrinsic_value_per_share
+    assert mechanical_base == pytest.approx(expected)
+
+
+def test_build_post_subagent_tables_mechanical_base_none_when_scenarios_unavailable(monkeypatch):
+    monkeypatch.setattr(rr, "compute_dcf_scenarios", lambda ticker: (_ for _ in ()).throw(RuntimeError("boom")))
+    competitive = rr.CompetitiveOutput(competitive_analysis="c", industry_outlook="i", strategic_framework_analysis="s")
+    valuation_out = rr.ValuationOutput(
+        fair_value_low=50.0, fair_value_base=60.0, fair_value_high=70.0,
+        valuation_methodology="m", dcf_assessment="d", relative_valuation="r", valuation_risks=[],
+    )
+    _, _, _, mechanical_base = rr._build_post_subagent_tables("TXN", valuation_out, competitive)
+    assert mechanical_base is None
 
 
 # ---------------------------------------------------------------------------

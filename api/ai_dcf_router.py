@@ -1111,3 +1111,105 @@ def format_ai_dcf_summary(result: Optional[AiDcfResult]) -> str:
     if result.qc_warnings:
         lines += ["", f"QC WARNINGS ({len(result.qc_warnings)}): " + "; ".join(result.qc_warnings[:5])]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 8 — DCF reconciliation audit trail (features/ai_dcf/SPEC.md 11). Deliberately deterministic,
+# not a semantic grade of the Valuation Analyst's reconciliation prose — see SPEC 11 for why an
+# LLM-graded check was rejected (low-value, circular: an LLM judging another LLM's compliance
+# with an LLM's own instruction).
+# ---------------------------------------------------------------------------
+
+_RECONCILIATION_LOG_DB = _DATA_DIR / "dcf_reconciliation_log.duckdb"
+_DIVERGENCE_WARN_THRESHOLD = 0.20   # >20% base-value disagreement, mirrors research_valuation.md
+_MIN_RECONCILIATION_CHARS = 20      # below this, treat dcf_reconciliation as empty/near-empty
+
+
+def compute_divergence_pct(mechanical_base: Optional[float], ai_base: Optional[float]) -> Optional[float]:
+    """(ai_base - mechanical_base) / abs(mechanical_base). None if either value is missing or
+    mechanical_base is 0 (divergence is undefined, not infinite)."""
+    if mechanical_base is None or ai_base is None or mechanical_base == 0:
+        return None
+    return (ai_base - mechanical_base) / abs(mechanical_base)
+
+
+def compute_dcf_anchor(
+    fair_value_base: float, mechanical_base: Optional[float], ai_base: Optional[float],
+) -> str:
+    """Deterministic proxy for which DCF the Valuation Analyst's actual fair_value_base ended up
+    numerically closer to — NOT a semantic judgment of its reconciliation reasoning. One of:
+    "mechanical", "ai", "tied" (exactly equidistant), "mechanical_only", "ai_only" (only one DCF
+    available), "neither_available"."""
+    if mechanical_base is None and ai_base is None:
+        return "neither_available"
+    if mechanical_base is None:
+        return "ai_only"
+    if ai_base is None:
+        return "mechanical_only"
+    dist_mech = abs(fair_value_base - mechanical_base)
+    dist_ai = abs(fair_value_base - ai_base)
+    if dist_mech < dist_ai:
+        return "mechanical"
+    if dist_ai < dist_mech:
+        return "ai"
+    return "tied"
+
+
+def _init_reconciliation_log() -> None:
+    _RECONCILIATION_LOG_DB.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(_RECONCILIATION_LOG_DB))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dcf_reconciliation_log (
+            ticker              VARCHAR,
+            model               VARCHAR,
+            generated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            mechanical_base     DOUBLE,
+            ai_base             DOUBLE,
+            divergence_pct      DOUBLE,
+            anchor              VARCHAR,
+            reconciliation_text VARCHAR
+        )
+    """)
+    conn.close()
+
+
+def log_dcf_reconciliation(
+    ticker: str, model: str, mechanical_base: Optional[float], ai_base: Optional[float],
+    fair_value_base: float, reconciliation_text: str,
+) -> None:
+    """Persists one audit-trail row per real research-report generation (never on a cache hit —
+    callers only invoke this from the actual generation path): the two DCF base values (ground
+    truth, not the Valuation Analyst's echoed fields), their divergence, a deterministic anchor
+    label, and the raw reconciliation text. Never raises — a logging failure must not break
+    report generation, matching this feature's failure-isolation contract elsewhere."""
+    try:
+        divergence_pct = compute_divergence_pct(mechanical_base, ai_base)
+        anchor = compute_dcf_anchor(fair_value_base, mechanical_base, ai_base)
+        _init_reconciliation_log()
+        conn = duckdb.connect(str(_RECONCILIATION_LOG_DB))
+        conn.execute("""
+            INSERT INTO dcf_reconciliation_log
+                (ticker, model, generated_at, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text)
+            VALUES (?, ?, now(), ?, ?, ?, ?, ?)
+        """, [ticker.upper(), model, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text])
+        conn.close()
+    except Exception as e:
+        log.error("[%s] ai_dcf: failed to log DCF reconciliation (model=%s): %s", ticker, model, e)
+
+
+def get_reconciliation_log(ticker: Optional[str] = None, limit: int = 100) -> list[dict]:
+    """Ad-hoc read helper for future analysis (e.g. "when the two DCFs disagreed a lot, which
+    one was closer to how the stock actually performed") — not used by the live pipeline."""
+    if not _RECONCILIATION_LOG_DB.exists():
+        return []
+    conn = duckdb.connect(str(_RECONCILIATION_LOG_DB), read_only=True)
+    where = "WHERE ticker = ?" if ticker else ""
+    params = [ticker.upper()] if ticker else []
+    rows = conn.execute(f"""
+        SELECT ticker, model, generated_at, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text
+        FROM dcf_reconciliation_log {where}
+        ORDER BY generated_at DESC LIMIT ?
+    """, params + [limit]).fetchall()
+    conn.close()
+    cols = ["ticker", "model", "generated_at", "mechanical_base", "ai_base", "divergence_pct", "anchor", "reconciliation_text"]
+    return [dict(zip(cols, r)) for r in rows]

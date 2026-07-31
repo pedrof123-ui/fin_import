@@ -569,6 +569,77 @@ Phase 6 since Phase 7 added no new code, only live verification and docs).
 
 ---
 
+## Phase 8 — DCF reconciliation audit trail  [x] Complete (2026-07-31)
+
+Added post-launch, 2026-07-31, after a discussion of hedge-fund model-governance norms for
+reconciling two disagreeing valuation models. Resolves SPEC.md's open question on persisting
+reconciliation history; SPEC.md section 11 has the full design rationale. Explicitly does NOT
+add a semantic/LLM-graded check on reconciliation quality — that was discussed and rejected as
+low-value and circular (an LLM judging another LLM's compliance with an LLM's own instruction).
+
+- [x] 8.1 `api/ai_dcf_router.py`: `compute_divergence_pct(mechanical_base, ai_base) ->
+      Optional[float]` (returns None if either input is None or `mechanical_base == 0`) and
+      `compute_dcf_anchor(fair_value_base, mechanical_base, ai_base) -> str` — a deterministic
+      proxy (NOT semantic grading) for which DCF the Valuation Analyst's actual output ended up
+      numerically closer to: `"mechanical"` / `"ai"` / `"tied"` (exactly equidistant) /
+      `"mechanical_only"` / `"ai_only"` (only one DCF available) / `"neither_available"`.
+- [x] 8.2 `api/ai_dcf_router.py`: new `dcf_reconciliation_log.duckdb` — `_init_reconciliation_log`
+      (schema: ticker, model, generated_at, mechanical_base, ai_base, divergence_pct, anchor,
+      reconciliation_text) and `log_dcf_reconciliation(ticker, model, mechanical_base, ai_base,
+      fair_value_base, reconciliation_text)` — computes divergence/anchor internally, writes one
+      row, **never raises** (a logging failure must not break report generation). Small read
+      helper `get_reconciliation_log(limit=100)` for future ad-hoc analysis.
+- [x] 8.3 `api/research_router.py`: `_build_post_subagent_tables` gains a 4th return value — the
+      **ground-truth** mechanical base intrinsic value from the same shared `compute_dcf_scenarios`
+      call already used for the tables (no second DCF run). Call site's unpacking updated.
+- [x] 8.4 `_validate_report` gains a `mechanical_base: Optional[float] = None` parameter and one
+      more deterministic check: using `compute_divergence_pct` against the AI DCF's real base
+      value (from `ai_dcf_result.engine`, not the Valuation Analyst's echoed field), if
+      divergence > 20% and `valuation_out.dcf_reconciliation.strip()` is under ~20 chars, append
+      a QC finding — same "warn, never block" pattern as the existing checks in this function.
+- [x] 8.5 `_run_research_agent`: after computing `findings`, calls `log_dcf_reconciliation` with
+      the ground-truth mechanical base (from 8.3), the AI DCF's real base value, the Valuation
+      Analyst's actual `fair_value_base`, and `dcf_reconciliation` text — wrapped in
+      `try/except Exception` so a logging failure degrades silently. Only fires on a real
+      generation (this function is never invoked on a cache hit).
+- [x] 8.6 Tests: 17 new tests across two files.
+      `tests/test_ai_dcf.py` (+11): `compute_divergence_pct`/`compute_dcf_anchor` — every branch
+      (both available/close, divergent picks mechanical, picks ai, exact tie, mechanical-only,
+      ai-only, neither-available, `mechanical_base == 0` edge case); `log_dcf_reconciliation`
+      round-trip via `get_reconciliation_log` against a fixture tmp_path DB, missing-bases case,
+      and a never-raises-on-DB-failure case; `get_reconciliation_log` empty-when-no-db and
+      limit/ordering.
+      `tests/test_research_ai_dcf_integration.py` (+6): `_validate_report`'s new check fires on
+      a crafted >20%-gap + empty-reconciliation case, stays silent with a real reconciliation
+      present, stays silent under the 20% threshold, stays silent when `mechanical_base` is
+      unavailable; `_build_post_subagent_tables` returns the correct ground-truth mechanical
+      base (verified against a real `compute_dcf_scenarios("TXN")` call — a fake `DcfResult`
+      wasn't viable since `_dcf_assumptions_table`/`_comps_table` traverse the full
+      `year_forecasts`/`fcff_series` interface, not just `intrinsic_value_per_share`) and `None`
+      when scenarios are unavailable.
+      **Found and fixed a test-hygiene bug during this phase**: the two full
+      `_run_research_agent` end-to-end tests (already existing from Phase 6) call the real
+      logging path, and running them polluted the actual project `dcf_reconciliation_log.duckdb`
+      with `model='test-model'` rows — added an autouse fixture isolating
+      `adr._RECONCILIATION_LOG_DB` to a `tmp_path` for every test in that file, and cleaned the
+      6 polluted rows from the real DB (scoped `DELETE ... WHERE model = 'test-model'`, not a
+      wholesale wipe — see `feedback_scope_destructive_plan_steps` memory from the Phase 7.4
+      incident).
+- [x] 8.7 Live check: one real report generation for TXN (`google/gemini-3.5-flash`, cold AI DCF
+      cache, 224.1s). QC findings clean. Logged row: mechanical base $52.30, AI base $51.52,
+      divergence -1.5% (correctly under the 20% threshold, so the guardrail correctly stayed
+      silent), `anchor="ai"` — correctly detected, since the rendered reconciliation explicitly
+      read *"The fair-value estimate is anchored on the AI-authored base scenario of $51.52 per
+      share [AI DCF]"* and the analyst's actual `fair_value_base` landed numerically closer to
+      that figure. Confirms the deterministic anchor-detection heuristic tracks real reconciliation
+      decisions correctly, not just in fixture tests.
+
+Acceptance met: `uv run pytest tests/` — 441 passed, 3 skipped (424 -> 441, +17), no regressions.
+One live-verified log row, values cross-checked against the rendered report's own reconciliation
+text.
+
+---
+
 ## Cross-cutting acceptance criteria
 
 - No LLM-authored number ever appears in a rendered table — every figure traces to
