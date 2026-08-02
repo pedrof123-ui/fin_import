@@ -92,12 +92,12 @@ class IBClient:
         return dict(zip(tickers, contracts))
 
     def get_live_prices(self, tickers: list[str], timeout: float = 5.0) -> dict[str, float]:
-        """Batch snapshot prices. Falls back through last → close → ask → bid."""
+        """Batch streaming prices. Falls back through last → close → ask → bid."""
         if not tickers:
             return {}
         contracts = self.qualify_contracts(tickers)
         ticker_data = {
-            sym: self.ib.reqMktData(c, "", True, False)
+            sym: self.ib.reqMktData(c, "", False, False)
             for sym, c in contracts.items()
         }
         self.ib.sleep(timeout)
@@ -108,6 +108,8 @@ class IBClient:
                 if val is not None and math.isfinite(val) and val > 0:
                     result[sym] = float(val)
                     break
+        for c in contracts.values():
+            self.ib.cancelMktData(c)
         return result
 
     def get_live_midprices(self, tickers: list[str], timeout: float = 5.0) -> dict[str, float]:
