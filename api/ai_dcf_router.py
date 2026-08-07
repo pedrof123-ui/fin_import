@@ -32,7 +32,10 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, field_validator, model_validator
 
 from api.industry_research_router import _sanitize_prose
-from api.research_router import _coerce_optional_float, _DEFAULT_MODEL, _load_prompt, _md_table, _STYLE_GUIDE
+from api.research_router import (
+    _coerce_optional_float, _DEFAULT_MODEL, _load_prompt, _md_table, _STYLE_GUIDE, log_llm_usage,
+    resolve_agent_model,
+)
 from dcf.assumptions import DcfResult, UserOverrides, YearOverride
 from dcf.model import run_dcf_av
 
@@ -688,6 +691,7 @@ async def _run_evidence_agent(name: str, prompt_name: str, ticker: str, model_la
         result = await asyncio.wait_for(
             Runner.run(agent, f"Produce your brief for {ticker.upper()}."), timeout=_LLM_TIMEOUT,
         )
+        log_llm_usage(ticker, name, model_label, result)
         return result.final_output
     except asyncio.TimeoutError:
         log.error("[%s] ai_dcf: %s evidence agent timed out after %ds", ticker, name, _LLM_TIMEOUT)
@@ -708,20 +712,28 @@ async def run_evidence_agents(
         raise RuntimeError("OPENROUTER_API_KEY not set")
 
     client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-    llm = OpenAIChatCompletionsModel(model=model, openai_client=client)
+
+    def _llm_for(role: str) -> OpenAIChatCompletionsModel:
+        return OpenAIChatCompletionsModel(model=resolve_agent_model(role, model), openai_client=client)
 
     fundamentals, industry, guidance = await asyncio.gather(
         _run_evidence_agent(
-            "fundamentals_historian", "ai_dcf_fundamentals.md", ticker, model,
-            fundamentals_context, FundamentalsBrief, _fallback_fundamentals_brief(ticker), llm,
+            "fundamentals_historian", "ai_dcf_fundamentals.md", ticker,
+            resolve_agent_model("fundamentals_historian", model),
+            fundamentals_context, FundamentalsBrief, _fallback_fundamentals_brief(ticker),
+            _llm_for("fundamentals_historian"),
         ),
         _run_evidence_agent(
-            "industry_competitors_analyst", "ai_dcf_industry.md", ticker, model,
-            industry_context, IndustryBrief, _fallback_industry_brief(ticker), llm,
+            "industry_competitors_analyst", "ai_dcf_industry.md", ticker,
+            resolve_agent_model("industry_competitors_analyst", model),
+            industry_context, IndustryBrief, _fallback_industry_brief(ticker),
+            _llm_for("industry_competitors_analyst"),
         ),
         _run_evidence_agent(
-            "guidance_mda_analyst", "ai_dcf_guidance.md", ticker, model,
-            guidance_context, GuidanceBrief, _fallback_guidance_brief(ticker), llm,
+            "guidance_mda_analyst", "ai_dcf_guidance.md", ticker,
+            resolve_agent_model("guidance_mda_analyst", model),
+            guidance_context, GuidanceBrief, _fallback_guidance_brief(ticker),
+            _llm_for("guidance_mda_analyst"),
         ),
     )
     return fundamentals, industry, guidance
@@ -762,14 +774,16 @@ async def run_architect(ticker: str, model: str, context: str) -> AiDcfAssumptio
     if not openrouter_key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
 
+    architect_model = resolve_agent_model("dcf_architect", model)
     client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-    llm = OpenAIChatCompletionsModel(model=model, openai_client=client)
-    instructions = _fill_prompt("ai_dcf_architect.md", ticker, model, context)
+    llm = OpenAIChatCompletionsModel(model=architect_model, openai_client=client)
+    instructions = _fill_prompt("ai_dcf_architect.md", ticker, architect_model, context)
     agent = Agent(name="dcf_architect", instructions=instructions, model=llm, output_type=AiDcfAssumptions)
     result = await asyncio.wait_for(
         Runner.run(agent, f"Author bear/base/bull DCF assumptions for {ticker.upper()}."),
         timeout=_LLM_TIMEOUT,
     )
+    log_llm_usage(ticker, "dcf_architect", architect_model, result)
     return result.final_output
 
 
@@ -871,7 +885,7 @@ async def run_ai_dcf(ticker: str, model: str, status_cb=None) -> AiDcfResult:
     }
 
     return AiDcfResult.build(
-        ticker=ticker, model=model, assumptions=assumptions,
+        ticker=ticker, model=resolve_agent_model("dcf_architect", model), assumptions=assumptions,
         fundamentals_brief=fundamentals_brief, industry_brief=industry_brief, guidance_brief=guidance_brief,
         engine_results=engine_results, qc_warnings=qc_warnings, inputs_available=inputs_available,
     )

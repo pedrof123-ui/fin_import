@@ -437,8 +437,8 @@ async def test_run_research_agent_with_ai_dcf_success(monkeypatch):
     key = ("TXN", "test-model")
     monkeypatch.setattr(rr, "_set_status", lambda k, phase, msg, error=None: statuses.append(phase))
 
-    report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation = \
-        await rr._run_research_agent("TXN", "test-model", status_key=key)
+    report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation, \
+        usage_tracker = await rr._run_research_agent("TXN", "test-model", status_key=key)
 
     assert "running_ai_dcf" in statuses
     assert dcf_reconciliation == "anchored on the AI DCF because of cited guidance"
@@ -467,8 +467,8 @@ async def test_run_research_agent_with_ai_dcf_failure_degrades_cleanly(monkeypat
     key = ("TXN", "test-model")
     monkeypatch.setattr(rr, "_set_status", lambda k, phase, msg, error=None: None)
 
-    report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation = \
-        await rr._run_research_agent("TXN", "test-model", status_key=key)
+    report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation, \
+        usage_tracker = await rr._run_research_agent("TXN", "test-model", status_key=key)
 
     assert "DCF (AI-authored)" not in valuation_tables_md
     assert "AI vs. Mechanical DCF Assumptions" not in valuation_tables_md

@@ -21,6 +21,7 @@ failure/timeout degrades the report to its pre-feature shape — never blocks ge
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import math
@@ -51,7 +52,8 @@ _HIST_FUND_DB = _DATA_DIR / "historic_fundamentals.duckdb"
 _RESEARCH_DB  = _DATA_DIR / "research_cache.duckdb"
 _EARNINGS_DB  = _DATA_DIR / "earnings_transcripts.duckdb"
 
-_DEFAULT_MODEL    = "google/gemini-3.5-flash"
+_TIERED_MODEL     = "tiered"
+_DEFAULT_MODEL    = _TIERED_MODEL
 _MAX_EDGAR_CHARS  = 8000
 _MAX_TRANSCRIPT_CHARS = 7000
 _CACHE_TTL_HOURS  = 24
@@ -70,16 +72,112 @@ _AI_DCF_TIMEOUT   = 300  # whole-pipeline cap for the Agentic AI DCF Valuator (e
                           # a legitimately slow-but-working AI DCF blocking the report forever.
 
 _MODEL_OPTIONS = [
-    {"label": "Claude Sonnet 4.6",           "value": "anthropic/claude-sonnet-4-6"},
+    {"label": "Tiered — cost-optimized (Default)", "value": _TIERED_MODEL},
+    {"label": "Claude Sonnet 5",              "value": "anthropic/claude-sonnet-5"},
+    {"label": "DeepSeek V4 Pro",              "value": "deepseek/deepseek-v4-pro"},
+    {"label": "DeepSeek V4 Flash 0731",       "value": "deepseek/deepseek-v4-flash-0731"},
     {"label": "Qwen3 235B",                  "value": "qwen/qwen3-235b-a22b-2507"},
-    {"label": "Gemini 3.5 Flash (Default)",  "value": "google/gemini-3.5-flash"},
+    {"label": "Gemini 3.5 Flash",            "value": "google/gemini-3.5-flash"},
     {"label": "GLM 5.2",                     "value": "z-ai/glm-5.2"},
     {"label": "Qwen3.7 Max",                 "value": "qwen/qwen3.7-max"},
     {"label": "Grok 4.5",                    "value": "x-ai/grok-4.5"},
     {"label": "MiMo V2.5",                   "value": "xiaomi/mimo-v2.5"},
-    {"label": "DeepSeek V4 Flash",           "value": "deepseek/deepseek-v4-flash"},
     {"label": "MiniMax M3",                  "value": "minimax/minimax-m3"},
 ]
+
+# Per-agent model tiering used when the request selects _TIERED_MODEL ("tiered", the default).
+# Any other selection overrides every agent uniformly, same as pre-tiering behavior. Roles are
+# split into three tiers by how much a bad call can hurt and how much volume the role sees:
+#   Tier A (Claude Sonnet 5) - originates numbers nothing downstream checks for correctness
+#     (only for internal consistency): DCF assumptions, fair-value synthesis, final rating.
+#   Tier B (DeepSeek V4 Pro) - qualitative synthesis/narrative; either checked for consistency
+#     downstream or has no numeric stakes of its own.
+#   Tier C (DeepSeek V4 Flash 0731) - extraction/summarization of already-assembled context,
+#     including the highest-volume fan-out roles (one call per industry member).
+_ROLE_MODELS = {
+    # equity research specialist fan-out + chief (research_router.py)
+    "competitive_strategy_analyst": "deepseek/deepseek-v4-pro",
+    "earnings_mda_historian":       "openai/gpt-5.6-luna",
+    "technical_analyst":            "deepseek/deepseek-v4-flash-0731",
+    "valuation_analyst":            "anthropic/claude-sonnet-5",
+    "chief_analyst_core":           "anthropic/claude-sonnet-5",
+    "chief_analyst_narrative":      "openai/gpt-5.6-luna",
+    # agentic AI DCF pipeline (ai_dcf_router.py)
+    "fundamentals_historian":       "deepseek/deepseek-v4-flash-0731",
+    "industry_competitors_analyst": "deepseek/deepseek-v4-flash-0731",
+    "guidance_mda_analyst":         "deepseek/deepseek-v4-flash-0731",
+    "dcf_architect":                "anthropic/claude-sonnet-5",
+    # industry research (industry_research_router.py)
+    "company_digest":              "deepseek/deepseek-v4-flash-0731",
+    "trends_developments_analyst": "deepseek/deepseek-v4-pro",
+    "risks_outlook_analyst":       "deepseek/deepseek-v4-pro",
+    "chief_industry_strategist":   "anthropic/claude-sonnet-5",
+    # follow-up chat about an already-generated report (single interactive call, live-in-front-
+    # of-the-user tool-calling accuracy matters directly for UX) — Tier A.
+    "chat":                        "anthropic/claude-sonnet-5",
+}
+
+
+def resolve_agent_model(role: str, model: str) -> str:
+    """Maps a per-report model selection to the OpenRouter model string for one agent role.
+    model == _TIERED_MODEL picks the cost-optimized default for that role; any other value
+    (from _MODEL_OPTIONS) overrides every role uniformly."""
+    return _ROLE_MODELS[role] if model == _TIERED_MODEL else model
+
+
+# $ per million tokens (input, output), OpenRouter list price — only used for the cost logged
+# alongside real usage in log_llm_usage; keep in sync with _ROLE_MODELS/_MODEL_OPTIONS. A model
+# not listed here (e.g. one picked from the dropdown that was since retired) logs $0.00 rather
+# than raising.
+_MODEL_PRICING = {
+    "anthropic/claude-sonnet-5":       (2.00, 10.00),
+    "deepseek/deepseek-v4-pro":        (0.435, 0.87),
+    "deepseek/deepseek-v4-flash-0731": (0.09, 0.18),
+    "openai/gpt-5.6-luna":             (0.10, 0.60),
+}
+
+
+class UsageTracker:
+    """Accumulates cost/tokens across every agent call in one report generation. Held by a
+    ContextVar (see below) rather than threaded through every function signature in
+    research_router.py/ai_dcf_router.py/industry_research_router.py — safe because asyncio
+    context-copies a mutable object by reference, so concurrent sub-tasks spawned via
+    asyncio.gather() from within one report's call tree all mutate the same instance, while two
+    unrelated report generations (each its own top-level background task) each get their own."""
+    def __init__(self):
+        self.cost = 0.0
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    def add(self, cost: float, input_tokens: int, output_tokens: int) -> None:
+        self.cost += cost
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+
+
+_usage_tracker_var: "contextvars.ContextVar[Optional[UsageTracker]]" = contextvars.ContextVar(
+    "usage_tracker", default=None,
+)
+
+
+def log_llm_usage(ticker: str, role: str, model: str, result) -> None:
+    """Logs real input/output token counts and $ cost for one agent call, read from the Agents
+    SDK's aggregated Usage (result.context_wrapper.usage) rather than estimated. Also feeds the
+    current UsageTracker (if one is set for this report generation) so the total can be shown on
+    the report itself. Never raises — telemetry, same "logging bug must never take down report
+    generation" contract as log_dcf_reconciliation — so a test double or SDK shape change here
+    degrades to a skipped log line, not a failed sub-agent."""
+    try:
+        usage = result.context_wrapper.usage
+        price_in, price_out = _MODEL_PRICING.get(model, (0.0, 0.0))
+        cost = usage.input_tokens * price_in / 1e6 + usage.output_tokens * price_out / 1e6
+        log.info("[%s] usage: %s (%s) — %d in / %d out / %d total — $%.4f",
+                 ticker, role, model, usage.input_tokens, usage.output_tokens, usage.total_tokens, cost)
+        tracker = _usage_tracker_var.get()
+        if tracker is not None:
+            tracker.add(cost, usage.input_tokens, usage.output_tokens)
+    except Exception as e:
+        log.warning("[%s] usage: failed to log usage for %s: %s", ticker, role, e)
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +415,7 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 def render_to_markdown(
     report: EquityResearchReport, valuation_tables_md: str = "",
     direct_competitors_md: str = "", market_share_md: str = "", dcf_reconciliation: str = "",
+    usage_tracker: Optional[UsageTracker] = None,
 ) -> str:
     h = report.header
     v = report.valuation
@@ -326,6 +425,11 @@ def render_to_markdown(
 
     price_prefix = f"**Current Price:** ${v.current_price:.2f}  |  " if v.current_price is not None else ""
 
+    prepared_line = f"**Prepared:** {h.prepared_date}  |  **Model:** {h.ai_model}"
+    if usage_tracker is not None and (usage_tracker.input_tokens or usage_tracker.output_tokens):
+        total_tok = usage_tracker.input_tokens + usage_tracker.output_tokens
+        prepared_line += f"  |  **Generation Cost:** ${usage_tracker.cost:.3f} ({total_tok:,} tokens)"
+
     lines += [
         f"# {h.company_name} ({h.ticker})",
         "## Equity Research Report",
@@ -334,7 +438,7 @@ def render_to_markdown(
         f"**Rating:** {rating_fmt.get(h.rating, h.rating)}  |  "
         f"**Technical:** {report.technical_rating}  |  "
         f"**Target:** ${h.target_low:.2f} – ${h.target_high:.2f}",
-        f"**Prepared:** {h.prepared_date}  |  **Model:** {h.ai_model}",
+        prepared_line,
         "",
         f"> {h.thesis_summary}",
         "",
@@ -1762,7 +1866,9 @@ def _validate_report(
 
 async def _run_research_agent(
     ticker: str, model: str, status_key: Optional[tuple[str, str]] = None,
-) -> tuple[EquityResearchReport, list[str], str, str, str, str]:
+) -> tuple[EquityResearchReport, list[str], str, str, str, str, UsageTracker]:
+    usage_tracker = UsageTracker()
+    _usage_tracker_var.set(usage_tracker)
     loop = asyncio.get_event_loop()
     t0 = datetime.now()
     log.info("[%s] research: starting data gathering (model=%s)", ticker, model)
@@ -1842,22 +1948,23 @@ async def _run_research_agent(
         raise RuntimeError("OPENROUTER_API_KEY not set")
 
     client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-    llm    = OpenAIChatCompletionsModel(model=model, openai_client=client)
     date_str = datetime.now().strftime("%Y-%m-%d")
 
-    def _fill(prompt_name: str, context: str) -> str:
+    def _fill(prompt_name: str, context: str, agent_model: str) -> str:
         return (
             _load_prompt(prompt_name)
             .replace("{style_guide}", _STYLE_GUIDE)
             .replace("{ticker}", ticker.upper())
             .replace("{date}", date_str)
-            .replace("{model}", model)
+            .replace("{model}", agent_model)
             .replace("{context}", context)
         )
 
     async def _run_subagent(name, prompt_name, context, output_type, fallback):
-        instructions = _fill(prompt_name, context)
-        agent = Agent(name=name, instructions=instructions, model=llm, output_type=output_type)
+        agent_model = resolve_agent_model(name, model)
+        agent_llm = OpenAIChatCompletionsModel(model=agent_model, openai_client=client)
+        instructions = _fill(prompt_name, context, agent_model)
+        agent = Agent(name=name, instructions=instructions, model=agent_llm, output_type=output_type)
         t_sub = datetime.now()
         try:
             result = await asyncio.wait_for(
@@ -1865,6 +1972,7 @@ async def _run_research_agent(
             )
             log.info("[%s] research: %s done in %.1fs", ticker, name,
                      (datetime.now() - t_sub).total_seconds())
+            log_llm_usage(ticker, name, agent_model, result)
             return result.final_output
         except asyncio.TimeoutError:
             log.error("[%s] research: %s sub-agent timed out after %ds", ticker, name, _LLM_TIMEOUT)
@@ -1958,10 +2066,11 @@ async def _run_research_agent(
         f"{_format_specialist_outputs(competitive_out, earnings_out, technical_out, valuation_out)}"
     )
 
+    core_model = resolve_agent_model("chief_analyst_core", model)
     core_agent = Agent(
         name="chief_analyst_core",
-        instructions=_fill("research_chief_core.md", chief_context),
-        model=llm,
+        instructions=_fill("research_chief_core.md", chief_context, core_model),
+        model=OpenAIChatCompletionsModel(model=core_model, openai_client=client),
         output_type=ChiefCoreOutput,
         model_settings=ModelSettings(max_tokens=16000),
     )
@@ -1983,6 +2092,9 @@ async def _run_research_agent(
         raise RuntimeError(f"Chief Core timed out after {_LLM_TIMEOUT}s")
     core_out = core_result.final_output
     log.info("[%s] research: Chief Core done in %.1fs", ticker, (datetime.now() - t_llm).total_seconds())
+    log_llm_usage(ticker, "chief_analyst_core", core_model, core_result)
+    if status_key:
+        _set_status(status_key, "writing_narrative", "Chief Analyst writing the narrative sections...")
 
     h, v = core_out.header, core_out.valuation
     core_context = (
@@ -1996,10 +2108,12 @@ async def _run_research_agent(
         f"goal_low / goal_high: {v.goal_low} / {v.goal_high}\n"
         f"analyst_target_price: {v.analyst_target_price}"
     )
+    narrative_model = resolve_agent_model("chief_analyst_narrative", model)
     narrative_agent = Agent(
         name="chief_analyst_narrative",
-        instructions=_fill("research_chief_narrative.md", chief_context).replace("{core_context}", core_context),
-        model=llm,
+        instructions=_fill("research_chief_narrative.md", chief_context, narrative_model)
+            .replace("{core_context}", core_context),
+        model=OpenAIChatCompletionsModel(model=narrative_model, openai_client=client),
         output_type=ChiefNarrativeOutput,
         model_settings=ModelSettings(max_tokens=32000),
     )
@@ -2015,6 +2129,7 @@ async def _run_research_agent(
     log.info("[%s] research: Chief Narrative done in %.1fs — total %.1fs", ticker,
              (datetime.now() - t_llm2).total_seconds(),
              (datetime.now() - t0).total_seconds())
+    log_llm_usage(ticker, "chief_analyst_narrative", narrative_model, narrative_result)
 
     report = EquityResearchReport(**core_out.model_dump(), **narrative_out.model_dump())
     findings = _validate_report(
@@ -2043,7 +2158,7 @@ async def _run_research_agent(
 
     return (
         report, findings, valuation_tables_md, direct_competitors_md, market_share_md,
-        valuation_out.dcf_reconciliation,
+        valuation_out.dcf_reconciliation, usage_tracker,
     )
 
 
@@ -2124,10 +2239,11 @@ async def _background_generate(ticker: str, model: str):
     key = (ticker, model)
     log.info("[%s] research: background task started (model=%s)", ticker, model)
     try:
-        report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation = \
-            await _run_research_agent(ticker, model, status_key=key)
+        report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation, \
+            usage_tracker = await _run_research_agent(ticker, model, status_key=key)
         markdown = render_to_markdown(
             report, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation,
+            usage_tracker,
         )
         if findings:
             markdown += f"\n\n---\n\n*QC: {len(findings)} inconsistency(ies) detected — " + \
@@ -2530,7 +2646,7 @@ async def _chat_stream(req: ChatRequest):
 
         try:
             stream = await client.chat.completions.create(
-                model=req.model,
+                model=resolve_agent_model("chat", req.model),
                 messages=messages,
                 tools=_CHAT_TOOLS,
                 tool_choice="auto",

@@ -417,7 +417,8 @@ def _sample_chief() -> ChiefOutput:
 async def test_run_industry_synthesis_happy_path(monkeypatch):
     call_log = []
 
-    async def fake_stage_agent(name, prompt_name, context, output_type, llm, extra=None):
+    async def fake_stage_agent(name, prompt_name, context, output_type, llm, industry_label,
+                                model_label, extra=None):
         call_log.append(name)
         if output_type is TrendsOutput:
             return _sample_trends()
@@ -443,7 +444,8 @@ async def test_run_industry_synthesis_happy_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_industry_synthesis_partial_failure_degrades_not_crashes(monkeypatch):
-    async def fake_stage_agent(name, prompt_name, context, output_type, llm, extra=None):
+    async def fake_stage_agent(name, prompt_name, context, output_type, llm, industry_label,
+                                model_label, extra=None):
         if output_type is TrendsOutput:
             return None  # simulates a timed-out/failed specialist
         if output_type is RisksOutput:

@@ -43,7 +43,10 @@ from agents import Agent, OpenAIChatCompletionsModel, Runner
 
 import api.industry_data as ind
 from api.industry_data import format_estimates, format_member_financials, is_missing
-from api.research_router import _DEFAULT_MODEL, _MODEL_OPTIONS, _STYLE_GUIDE, _load_prompt, _md_table
+from api.research_router import (
+    _DEFAULT_MODEL, _MODEL_OPTIONS, _STYLE_GUIDE, _load_prompt, _md_table, log_llm_usage,
+    resolve_agent_model,
+)
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +176,8 @@ async def _run_digest_subagent(ticker: str, context: str, model: str, llm) -> Op
     error — the caller treats a None the same as a skipped member, so a single bad call can
     never take down the rest of the fan-out. Extracted as a standalone module-level function
     (not a closure) so tests can monkeypatch it directly instead of mocking the full
-    Agent/Runner/OpenAIChatCompletionsModel chain."""
+    Agent/Runner/OpenAIChatCompletionsModel chain. `model` is the already-resolved model string
+    (used for usage/cost logging), not a raw request value."""
     instructions = (
         _load_prompt("industry_company_digest.md")
         .replace("{style_guide}", _STYLE_GUIDE)
@@ -189,6 +193,7 @@ async def _run_digest_subagent(ticker: str, context: str, model: str, llm) -> Op
         result = await asyncio.wait_for(
             Runner.run(agent, f"Produce the digest for {ticker.upper()}."), timeout=_LLM_TIMEOUT,
         )
+        log_llm_usage(ticker, "company_digest", model, result)
         return result.final_output
     except asyncio.TimeoutError:
         log.error("[%s] industry digest: sub-agent timed out after %ds", ticker, _LLM_TIMEOUT)
@@ -224,16 +229,17 @@ async def run_company_digests(
     if not eligible:
         return {}
 
+    resolved_model = resolve_agent_model("company_digest", model)
     if llm is None:
         openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
         if not openrouter_key:
             raise RuntimeError("OPENROUTER_API_KEY not set")
         client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-        llm = OpenAIChatCompletionsModel(model=model, openai_client=client)
+        llm = OpenAIChatCompletionsModel(model=resolved_model, openai_client=client)
 
     async def _one(t: str):
         context = _build_digest_context(t, transcripts[t], beat_miss_raw, fin_by_ticker.get(t))
-        digest = await _run_digest_subagent(t, context, model, llm)
+        digest = await _run_digest_subagent(t, context, resolved_model, llm)
         return t, digest
 
     results = await asyncio.gather(*[_one(t) for t in eligible])
@@ -484,8 +490,8 @@ def _format_digests_for_prompt(digests: dict[str, CompanyDigest]) -> str:
 
 
 async def _run_stage_agent(
-    name: str, prompt_name: str, context: str, output_type, llm,
-    extra: Optional[dict[str, str]] = None,
+    name: str, prompt_name: str, context: str, output_type, llm, industry_label: str,
+    model_label: str, extra: Optional[dict[str, str]] = None,
 ):
     """One Stage 2/3 sub-agent call (not a fan-out — one call per stage). Returns None (never
     raises) on timeout or provider error, same never-raise contract as _run_digest_subagent, so a
@@ -501,6 +507,7 @@ async def _run_stage_agent(
     agent = Agent(name=name, instructions=instructions, model=llm, output_type=output_type)
     try:
         result = await asyncio.wait_for(Runner.run(agent, "Produce your section."), timeout=_LLM_TIMEOUT)
+        log_llm_usage(industry_label, name, model_label, result)
         return result.final_output
     except asyncio.TimeoutError:
         log.error("industry %s: sub-agent timed out after %ds", name, _LLM_TIMEOUT)
@@ -531,7 +538,19 @@ async def run_industry_synthesis(
         if not openrouter_key:
             raise RuntimeError("OPENROUTER_API_KEY not set")
         client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
-        llm = OpenAIChatCompletionsModel(model=model, openai_client=client)
+
+        def _llm_for(role: str) -> OpenAIChatCompletionsModel:
+            return OpenAIChatCompletionsModel(model=resolve_agent_model(role, model), openai_client=client)
+
+        def _model_for(role: str) -> str:
+            return resolve_agent_model(role, model)
+    else:
+        # test injection path (see run_company_digests' docstring) — one dummy llm for every role.
+        def _llm_for(role: str):
+            return llm
+
+        def _model_for(role: str) -> str:
+            return "test"
 
     digests_text = _format_digests_for_prompt(digests)
     member_financials_text = format_member_financials(financials_df)
@@ -547,9 +566,11 @@ async def run_industry_synthesis(
 
     trends, risks = await asyncio.gather(
         _run_stage_agent("trends_developments_analyst", "industry_trends.md", shared_context,
-                          TrendsOutput, llm, extra),
+                          TrendsOutput, _llm_for("trends_developments_analyst"), industry_label,
+                          _model_for("trends_developments_analyst"), extra),
         _run_stage_agent("risks_outlook_analyst", "industry_risks.md", shared_context,
-                          RisksOutput, llm, extra),
+                          RisksOutput, _llm_for("risks_outlook_analyst"), industry_label,
+                          _model_for("risks_outlook_analyst"), extra),
     )
 
     chief_context = (
@@ -563,7 +584,9 @@ async def run_industry_synthesis(
         f"=== ESTIMATE REVISIONS ===\n{format_estimates(members, estimates_df)}"
     )
     chief = await _run_stage_agent(
-        "chief_industry_strategist", "industry_chief.md", chief_context, ChiefOutput, llm, extra,
+        "chief_industry_strategist", "industry_chief.md", chief_context, ChiefOutput,
+        _llm_for("chief_industry_strategist"), industry_label,
+        _model_for("chief_industry_strategist"), extra,
     )
 
     return trends, risks, chief
