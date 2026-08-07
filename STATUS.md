@@ -1,5 +1,94 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## AI Researcher LLM Tiering + Cost Tracking (complete, 2026-08-07)
+
+Replaces the single global OpenRouter model previously threaded through the whole AI Researcher
+(equity report, Agentic AI DCF sub-pipeline, Industry Research) with per-agent model tiering, and
+adds real (not estimated) per-report cost visibility.
+
+### Per-agent tiering
+
+`_ROLE_MODELS` + `resolve_agent_model(role, model)` in `api/research_router.py`: the dropdown's
+new default `"tiered"` resolves a different model per agent role; any other explicit dropdown
+pick still overrides every agent uniformly (old behavior, preserved for testing/comparison).
+
+- **Tier A** (`anthropic/claude-sonnet-5`, $2/$10 per M) — numeric-originating roles nothing
+  downstream checks for correctness: `dcf_architect`, `valuation_analyst`, `chief_analyst_core`,
+  `chief_industry_strategist`, `chat`.
+- **Tier B** (`deepseek/deepseek-v4-pro`, $0.435/$0.87) — qualitative synthesis/narrative, either
+  downstream-checked or no numeric stakes: `competitive_strategy_analyst`,
+  `trends_developments_analyst`, `risks_outlook_analyst`.
+- **Tier C** (`deepseek/deepseek-v4-flash-0731`, $0.09/$0.18) — extraction/summarization,
+  including the highest-volume fan-out roles: `technical_analyst`, the 3 AI DCF evidence briefs
+  (`fundamentals_historian`, `industry_competitors_analyst`, `guidance_mda_analyst`),
+  `company_digest` (Industry Research, one call per member ticker).
+- **Luna** (`openai/gpt-5.6-luna`, $0.10/$0.60) — `chief_analyst_narrative` and
+  `earnings_mda_historian` only, swapped off DeepSeek after a live latency finding below.
+
+### DeepSeek latency finding -> Luna swap
+
+A live AAPL run (uncached) showed every DeepSeek-served call ran notably slow while every
+Sonnet-5 call was fast: `chief_analyst_narrative` hit 399.8s of its 400s per-agent timeout cap,
+and `earnings_mda_historian` hit 371.1s. A second, independent data point (JNJ, same day, before
+any of these changes) actually **hit** the timeout on `chief_analyst_narrative`. This mattered
+more than "slow" — Chief Core/Narrative are the only two agents in the pipeline with no fallback
+(every specialist and AI DCF evidence agent degrades to a typed `[ERROR]` placeholder on
+timeout instead), so a Chief-stage timeout discards the entire ~10-16 min report with nothing
+cached, forcing a full re-run from scratch.
+
+Swapped just those two roles to `openai/gpt-5.6-luna` (cheaper than DeepSeek V4 Pro on both
+axes, comparable to V4 Flash) and live-tested before committing: `chief_analyst_narrative`
+399.8s -> 50.9s, `earnings_mda_historian` 371.1s -> 14.6s, full pipeline 986.2s -> 306.8s. Read
+the resulting AAPL report end to end — no quality regression found. Every other role (including
+the 3 genuinely qualitative DeepSeek Pro roles and all Tier A roles) left untouched.
+
+### Real usage/cost tracking
+
+`log_llm_usage(ticker, role, model, result)` reads the OpenAI Agents SDK's aggregated
+`result.context_wrapper.usage` after every `Runner.run()` call (all three routers — equity
+report fan-out + Chief Core/Narrative, the 3 AI DCF evidence agents + `dcf_architect`, and
+Industry Research's digest/trends/risks/chief) and logs real input/output tokens and $ cost.
+Never raises — same "logging must never break generation" contract as the existing
+`log_dcf_reconciliation` — so an SDK shape change or test double degrades to a skipped log line,
+not a failed sub-agent.
+
+A `UsageTracker`, held in a `contextvars.ContextVar` and shared by reference across a report's
+parallel `asyncio.gather` fan-out (works because asyncio context-copies a *mutable* value by
+reference into child tasks, so sibling tasks all mutate the same instance while two different
+reports each get their own), accumulates cost/tokens across the whole call tree.
+`render_to_markdown` prints the total on the report header itself:
+`**Generation Cost:** $0.315 (119,200 tokens)`.
+
+**Measured real cost per report** (previously only estimated from context sizes, at ~$0.12 —
+3-4x too low, mainly from underestimating output tokens): **~$0.31-0.46 uncached**, ~94% of it
+the 3 Sonnet-5 calls (`valuation_analyst` alone runs $0.16-0.18; `chief_analyst_core` $0.12-0.14;
+`dcf_architect` ~$0.08). All 6 DeepSeek/Luna calls combined cost 2-3 cents. Cached views (24h
+TTL) are free. Not wired up: `/research/chat` — it bypasses the Agents SDK with a raw streaming
+`client.chat.completions.create()` call and would need separate plumbing.
+
+### Also fixed along the way
+
+- `/research/chat` bypassed `resolve_agent_model` entirely, sending the `"tiered"` sentinel
+  straight to OpenRouter as a literal model ID whenever the frontend's dev server hot-reloaded
+  ahead of a `uvicorn` restart — root cause of a live incident (every sub-agent 400'd). Fixed by
+  adding a `"chat"` role to `_ROLE_MODELS` (Tier A) and resolving it in `_chat_stream`.
+- `api/main.py` never called `logging.basicConfig()`, so every `log.info(...)` phase-timing
+  milestone was silently dropped at the default WARNING level — including all the new usage
+  logs above. Fixed; journal now shows real per-call timings and costs.
+- Chief Core and Chief Narrative previously shared one status label (`"synthesizing"`), so a
+  stall looked like one undifferentiated black box up to ~800s. Added a `"writing_narrative"`
+  phase between them.
+
+### Verification
+
+Two full live AAPL report generations (one with a cold Agentic AI DCF sub-pipeline, one with it
+cache-hit) plus the pre-swap DeepSeek baseline run — all read end to end for quality, not just
+timed. Full 190-test suite across the 5 touched files (`api/research_router.py`,
+`api/ai_dcf_router.py`, `api/industry_research_router.py`, plus 2 test files updated for the new
+`_run_stage_agent`/`_run_research_agent` signatures) passes. Committed `a75be83`.
+
+---
+
 ## Agentic AI DCF Valuator (complete, 2026-07-30)
 
 New second, independent DCF source feeding the single-name AI Research tab's Valuation Analyst,

@@ -19,13 +19,30 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 
 ### Web app
 
+Runs as systemd user services (`finview-api`, `finview-web`), auto-started on boot/login:
+
 ```bash
+systemctl --user status finview-api finview-web
+systemctl --user restart finview-api finview-web   # apply code changes
+systemctl --user stop finview-api finview-web
+systemctl --user start finview-api finview-web
+journalctl --user -u finview-api -f                # tail logs (also finview-web)
+```
+
+For active development with hot reload, stop the services first, then run manually:
+
+```bash
+systemctl --user stop finview-api finview-web
+
 # Terminal 1 — backend (port 8000)
 uv run uvicorn api.main:app --reload
 
 # Terminal 2 — frontend (port 3000)
 cd web && npm run dev
 ```
+
+`scripts/start.sh`/`scripts/stop.sh` also still work, but only while the systemd services
+are stopped — otherwise both fight over ports 8000/3000.
 
 Open http://localhost:3000, enter a ticker, set periods (default: 10 FY), click Import.
 
@@ -230,7 +247,11 @@ Two LLM-generated research features, both in the Finview UI, both cached (24h TT
 - **Agentic AI DCF Valuator** (`api/ai_dcf_router.py`, data layer in `api/ai_dcf_data.py`) — a second, independent DCF source: three evidence sub-agents (Fundamentals Historian, Industry & Competitors, Guidance & MD&A) feed a senior DCF Architect persona that authors per-year bear/base/bull revenue growth, margin, and capex assumptions grounded in company history, industry trends, competitor transcripts, and multi-year MD&A/guidance. The LLM only authors assumptions; the same deterministic `dcf.run_dcf_av` engine that powers the mechanical scenarios computes the actual valuation. Standalone endpoints (`GET /research/ai-dcf{,/status}`, `POST /research/ai-dcf/cancel`) plus an in-process, cache-aware entry point (`get_or_run_ai_dcf`) shared with the AI Research tab above. Full design rationale, architecture, and phased build record (including two real bugs found and fixed during live verification): `features/ai_dcf/SPEC.md` and `features/ai_dcf/PLAN.md`.
 - **Industry Research tab** (`api/industry_research_router.py`, data layer in `api/industry_data.py`) — cross-company industry research report: pick an AV `industry` (e.g. "Semiconductors" — deliberately finer-grained than sector, since a sector like Technology can span industries on very different cycles) or supply a custom ticker basket. A map-reduce pipeline digests each company's trailing earnings calls individually, then two specialists (Trends & Developments, Risks & Outlook) and a Chief Strategist synthesize industry-wide themes and a ranked table of relative (over/neutral/underweight) ideas across the analyzed companies. Every number in the report — valuation, growth, EPS surprises, the ranked-ideas metrics — is computed in Python from the database, never authored by the LLM. Full design rationale, architecture, and phased build record: `features/industry_research/SPEC.md` and `features/industry_research/PLAN.md`.
 
-Both models are user-selectable per report (Claude, Gemini, Qwen, GLM, Grok via OpenRouter).
+Both default to per-agent model tiering (Claude Sonnet 5 for numeric/high-stakes roles, DeepSeek/
+GPT-5.6 Luna for qualitative synthesis and extraction — see `STATUS.md`), or a single explicit
+model (Claude, Gemini, Qwen, GLM, Grok via OpenRouter) can be picked per report, overriding every
+agent uniformly. Each generated report shows its own real generation cost and token count,
+computed from the OpenRouter API's actual per-call usage.
 
 ---
 
