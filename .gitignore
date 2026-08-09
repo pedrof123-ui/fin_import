@@ -70,3 +70,4 @@ data/earnings_calls_audio/
 
 # Claude Code runtime files
 .claude/scheduled_tasks.lock
+data/mda_sweep_status.json
