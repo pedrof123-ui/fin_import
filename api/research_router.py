@@ -1004,10 +1004,21 @@ def get_web_search(ticker: str) -> str:
 
 def get_market_size_search(ticker: str) -> str:
     """Targeted search for TAM/market-size figures, grounding the Competitive Analyst's TAM
-    estimate in citable sources rather than trained-knowledge recall alone."""
+    estimate in citable sources rather than trained-knowledge recall alone.
+
+    Keyed off the ticker's classified industry (company_overview.industry) rather than the bare
+    ticker symbol: Tavily doesn't reliably resolve small/mid-cap tickers to their actual company,
+    so a ticker-only query drifts to whatever "TAM forecast 2030" content is currently dominant
+    on the web instead of the ticker's own industry (confirmed live: NUTX, a hospital operator,
+    returned AI-chip TAM figures — same query pattern already fixed this way for
+    get_industry_web_search, SPEC 2.1). Falls back to the ticker if unclassified.
+    """
+    from api.ai_dcf_data import get_industry_name
+    industry = get_industry_name(ticker)
+    subject = f"{industry} industry" if industry else ticker
     return _tavily_search(
-        f"{ticker} industry total addressable market size TAM forecast 2030",
-        f"MARKET SIZE / TAM SEARCH RESULTS — {ticker}",
+        f"{subject} total addressable market size TAM forecast 2030",
+        f"MARKET SIZE / TAM SEARCH RESULTS — {ticker}" + (f" ({industry})" if industry else ""),
     )
 
 
