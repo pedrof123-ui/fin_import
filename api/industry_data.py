@@ -18,15 +18,13 @@ import hashlib
 import math
 import os
 import statistics
-import time
-from collections import deque
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
 import duckdb
 import pandas as pd
 
+from av_financials_db import RateLimiter
 import historic_fundamentals.earnings_transcripts as et
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
@@ -41,37 +39,9 @@ N_QUARTERS = 4
 # ---------------------------------------------------------------------------
 # Rate limiting for Alpha Vantage transcript/surprise probes (CLAUDE.md rule 7: <=75 calls/min)
 # ---------------------------------------------------------------------------
-
-class _RateLimiter:
-    """At most max_calls per period seconds, with minimum inter-call spacing. Local copy of
-    av_financials_db.RateLimiter's behavior (that class lives in a module built around a single
-    long-lived AVFinancialsDB instance; this feature needs a standalone limiter shared across a
-    handful of module-level probe functions, so it is reimplemented here rather than importing
-    an unrelated class's instance-bound state)."""
-
-    def __init__(self, max_calls: int = 70, period: float = 60.0) -> None:
-        self._max = max_calls
-        self._period = period
-        self._min_interval = period / max_calls
-        self._calls: deque[float] = deque()
-
-    def wait(self) -> None:
-        now = time.monotonic()
-        if self._calls:
-            since_last = now - self._calls[-1]
-            if since_last < self._min_interval:
-                time.sleep(self._min_interval - since_last)
-                now = time.monotonic()
-        while self._calls and now - self._calls[0] >= self._period:
-            self._calls.popleft()
-        if len(self._calls) >= self._max:
-            sleep_for = self._period - (now - self._calls[0])
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            now = time.monotonic()
-            while self._calls and now - self._calls[0] >= self._period:
-                self._calls.popleft()
-        self._calls.append(time.monotonic())
+# Uses av_financials_db.RateLimiter directly (it's a standalone class with no dependency on
+# AVFinancialsDB — earnings_backfill.py/earnings_update.py already import it the same way) at
+# max_calls=70, comfortably under the 75/min ceiling, shared across a whole batch call.
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +371,7 @@ def get_beat_miss_raw(tickers: list[str]) -> dict[str, Optional[list[dict]]]:
     if not tickers:
         return {}
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    limiter = _RateLimiter() if api_key else None
+    limiter = RateLimiter(max_calls=70, period=60.0) if api_key else None
     conn = et.open_db(_EARNINGS_DB)
     per_member: dict[str, Optional[list[dict]]] = {}
     try:
@@ -543,45 +513,23 @@ def get_industry_transcripts(
 ) -> dict[str, list[tuple[str, str]]]:
     """{ticker: [(quarter, text), ...]} newest-first, up to n quarters each.
 
-    Probes AV for a quarter newer than the local cache per ticker (mirrors the probe-list logic
-    in research_router.get_earnings_trend_summary — duplicated locally rather than imported so
-    this feature does not couple to the single-name router's internals), then reads whatever is
-    cached. A shared rate limiter caps AV calls across the whole batch at <=70/min, comfortably
-    under the 75/min ceiling (CLAUDE.md rule 7) even in the worst case (every ticker's cache is
-    cold and every quarter must be probed).
+    Probes AV for a quarter newer than the local cache per ticker (et.refresh_latest_transcript,
+    shared with research_router.get_earnings_trend_summary), then reads whatever is cached. A
+    shared rate limiter caps AV calls across the whole batch at <=70/min, comfortably under the
+    75/min ceiling (CLAUDE.md rule 7) even in the worst case (every ticker's cache is cold and
+    every quarter must be probed).
 
     Degrades to fewer/zero quarters per ticker silently — never raises for a missing member.
     Phase 0 confirmed this is a real case, not hypothetical: TSM (Semiconductors, ADR) has zero
     cached transcripts in earnings_transcripts.duckdb.
     """
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    limiter = _RateLimiter() if api_key else None
+    limiter = RateLimiter(max_calls=70, period=60.0) if api_key else None
     conn = et.open_db(_EARNINGS_DB)
     result: dict[str, list[tuple[str, str]]] = {}
     try:
         for ticker in tickers:
-            best_quarter = et.get_latest_cached_quarter(conn, ticker)
-            if api_key:
-                today = date.today()
-                base = today.year * 4 + (today.month - 1) // 3
-                all_quarters = []
-                for offset in range(4, -7, -1):
-                    total = base + offset
-                    y, q = divmod(total, 4)
-                    all_quarters.append(f"{y}Q{q + 1}")
-                to_probe = (
-                    [q for q in all_quarters if q > best_quarter] if best_quarter else all_quarters
-                )
-                for q_str in to_probe:
-                    limiter.wait()
-                    try:
-                        fetched = et.fetch_from_av(ticker, q_str, api_key)
-                    except Exception:
-                        fetched = None
-                    if fetched is not None:
-                        text, api_json = fetched
-                        et.save_transcript(conn, ticker, q_str, text, api_json)
-                        break
+            et.refresh_latest_transcript(conn, ticker, api_key, limiter=limiter)
             result[ticker] = et.get_last_n_transcripts(conn, ticker, n)
     finally:
         conn.close()

@@ -27,6 +27,8 @@ from historic_fundamentals.earnings_transcripts import (
     open_db,
     save_transcript,
     fetch_from_av as _av_fetch,
+    refresh_latest_transcript,
+    AVError,
 )
 from historic_fundamentals.audio_transcriber import convert_to_mp3, transcribe_audio
 from api.research_router import _CHAT_TOOLS, _execute_tool
@@ -109,7 +111,10 @@ def _fetch_from_av(symbol: str, quarter: str) -> str:
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="ALPHA_VANTAGE_API_KEY not configured")
-    result = _av_fetch(symbol, quarter, api_key)
+    try:
+        result = _av_fetch(symbol, quarter, api_key)
+    except AVError as exc:
+        raise HTTPException(status_code=503, detail=f"Alpha Vantage error: {exc}")
     if result is None:
         raise HTTPException(status_code=404, detail=f"No transcript found for {symbol} {quarter}")
     transcript_text, api_json = result
@@ -146,23 +151,6 @@ def _extract_from_url(url: str) -> str:
     return text
 
 
-def _search_quarters(today: date) -> list[str]:
-    """
-    Quarters to probe for 'latest', newest first.
-    Centers on today's calendar quarter with a 4-quarter lookahead so companies
-    with fiscal years that lead the calendar (e.g. NVDA FY ends Jan, whose
-    Q1 FY2027 call lands in May 2026) are still found without burning 7+
-    wasted AV calls on distant future quarters that cannot possibly exist yet.
-    """
-    base = today.year * 4 + (today.month - 1) // 3
-    result = []
-    for offset in range(4, -7, -1):
-        total = base + offset
-        y, q = divmod(total, 4)
-        result.append(f"{y}Q{q + 1}")
-    return result
-
-
 async def _run_llm(transcript: str, ticker: str, quarter: str, model: str) -> str:
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if not openrouter_key:
@@ -197,28 +185,17 @@ async def earnings_report(
     ticker = ticker.upper()
 
     if quarter == "latest":
+        api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+        conn = open_db(_DB_PATH)
+        try:
+            refresh_latest_transcript(conn, ticker, api_key)
+        finally:
+            conn.close()
+
         best = _latest_cached_quarter(ticker)
-        best_quarter = best[0] if best else None
-
-        all_quarters = _search_quarters(date.today())
-        to_probe = [q for q in all_quarters if q > best_quarter] if best_quarter else all_quarters
-
-        transcript = None
-        resolved_quarter = None
-        for q_str in to_probe:
-            try:
-                transcript = _fetch_from_av(ticker, q_str)
-                resolved_quarter = q_str
-                break
-            except Exception:
-                continue
-
-        if transcript is None:
-            if best:
-                resolved_quarter, transcript = best
-            else:
-                raise HTTPException(status_code=404, detail=f"No recent transcript found for {ticker}")
-        quarter = resolved_quarter
+        if best is None:
+            raise HTTPException(status_code=404, detail=f"No recent transcript found for {ticker}")
+        quarter, transcript = best
     else:
         if not re.match(r"^\d{4}Q[1-4]$", quarter):
             raise HTTPException(

@@ -10,8 +10,8 @@ Usage:
     uv run scripts/earnings_calendar_update.py
     uv run scripts/earnings_calendar_update.py --verbose
 
-Cron (weekly, Monday 6 AM):
-    0 6 * * 1 cd /home/pedro/projects/fin_import2 && uv run scripts/earnings_calendar_update.py >> logs/earnings_calendar.log 2>&1
+Cron (weekly, Monday 5:45 AM ET, via crontab -l on the trade_systems host):
+    45 5 * * 1 cron_wrap.sh earnings_calendar_update uv run --project fin_import2 scripts/earnings_calendar_update.py >> logs/earnings_calendar.log 2>&1
 """
 
 import argparse

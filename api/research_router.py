@@ -38,6 +38,7 @@ from pydantic import BaseModel, field_validator
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner
 
 import historic_fundamentals.earnings_transcripts as et
+from av_financials_db import RateLimiter
 from historic_fundamentals.technical_indicators import get_technical_summary
 from historic_fundamentals.quote import fetch_live_price
 from historic_fundamentals.estimates import compute_ntm_revenue
@@ -910,30 +911,8 @@ def get_earnings_trend_summary(ticker: str, n_quarters: int = 4) -> str:
 
     conn = et.open_db(_EARNINGS_DB)
     try:
-        best_quarter = et.get_latest_cached_quarter(conn, ticker)
-
-        if api_key:
-            today = date.today()
-            # Same smarter quarter list as earnings_router: 4 ahead → 6 behind today's
-            # calendar quarter. Reduces wasted AV calls from 7+ to ≤3 for typical companies.
-            base = today.year * 4 + (today.month - 1) // 3
-            all_quarters = []
-            for offset in range(4, -7, -1):
-                total = base + offset
-                y, q = divmod(total, 4)
-                all_quarters.append(f"{y}Q{q + 1}")
-            to_probe = [q for q in all_quarters if q > best_quarter] if best_quarter else all_quarters
-
-            for q_str in to_probe:
-                try:
-                    fetched = et.fetch_from_av(ticker, q_str, api_key)
-                except Exception:
-                    fetched = None
-                if fetched is not None:
-                    transcript_text, api_json = fetched
-                    et.save_transcript(conn, ticker, q_str, transcript_text, api_json)
-                    break
-
+        limiter = RateLimiter(max_calls=70, period=60.0) if api_key else None
+        et.refresh_latest_transcript(conn, ticker, api_key, limiter=limiter)
         quarters = et.get_last_n_transcripts(conn, ticker, n_quarters)
     finally:
         conn.close()
@@ -2072,7 +2051,11 @@ async def _run_research_agent(
         instructions=_fill("research_chief_core.md", chief_context, core_model),
         model=OpenAIChatCompletionsModel(model=core_model, openai_client=client),
         output_type=ChiefCoreOutput,
-        model_settings=ModelSettings(max_tokens=16000),
+        # Must match chief_analyst_narrative's budget below — 16000 silently truncated JSON
+        # output on tickers with a longer peak_earnings_analysis/financial_performance section
+        # (e.g. COHR), same failure mode as the pre-split Chief call documented in
+        # AI_RESEARCHER_IMPROVEMENT_PLAN.md.
+        model_settings=ModelSettings(max_tokens=32000),
     )
     t_llm = datetime.now()
     try:

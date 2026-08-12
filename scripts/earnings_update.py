@@ -3,7 +3,8 @@
 Weekly update: check the latest 1-2 earnings call transcript quarters for every
 ticker in av_financials.duckdb and fetch any that are not yet cached.
 
-Intended to run once per week (e.g. Sunday night via cron).
+Cron (weekly, Sunday 19:30 ET, via crontab -l on the trade_systems host):
+    30 19 * * 0 cron_wrap.sh earnings_update uv run --project fin_import2 scripts/earnings_update.py >> logs/earnings_update.log 2>&1
 
 Usage:
     uv run scripts/earnings_update.py

@@ -4,11 +4,13 @@ Shared utilities for the earnings call transcript database.
 Used by:
   - api/earnings_router.py  (on-demand Finview fetch)
   - api/research_router.py  (AI Researcher integration)
+  - api/industry_data.py    (Industry AI Researcher integration)
   - scripts/earnings_backfill.py
   - scripts/earnings_update.py
 """
 
 import json
+import logging
 import os
 from datetime import date
 from pathlib import Path
@@ -17,9 +19,20 @@ from typing import Optional
 import duckdb
 import requests
 
+from av_financials_db import RateLimiter
+
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "earnings_transcripts.duckdb"
 
 _AV_URL = "https://www.alphavantage.co/query"
+
+log = logging.getLogger(__name__)
+
+
+class AVError(RuntimeError):
+    """Alpha Vantage returned an error/throttle response (Error Message/Note/Information),
+    as opposed to a normal empty result. Distinguishing this from "no transcript for this
+    quarter" matters: an AVError means something is systemically wrong (rate limit, entitlement)
+    and probing further quarters would just waste more calls for the same reason."""
 
 
 # ---------------------------------------------------------------------------
@@ -38,18 +51,16 @@ def open_db(db_path: Path = DEFAULT_DB_PATH) -> duckdb.DuckDBPyConnection:
             fetched_date       DATE    NOT NULL,
             api_response_json  TEXT,
             source             VARCHAR DEFAULT 'av',
-            earnings_call_date DATE,
             PRIMARY KEY (symbol, quarter)
         )
     """)
-    cols = {row[0] for row in conn.execute(
-        "SELECT column_name FROM information_schema.columns "
-        "WHERE table_name = 'earnings_transcripts'"
-    ).fetchall()}
-    if "source" not in cols:
-        conn.execute("ALTER TABLE earnings_transcripts ADD COLUMN source VARCHAR DEFAULT 'av'")
-    if "earnings_call_date" not in cols:
-        conn.execute("ALTER TABLE earnings_transcripts ADD COLUMN earnings_call_date DATE")
+    # IF NOT EXISTS / IF EXISTS make these migrations atomic, so concurrent open_db()
+    # calls (e.g. multiple AI Researcher sub-agents) can't race each other into a
+    # "column already exists" catalog error the way a check-then-act pattern would.
+    conn.execute("ALTER TABLE earnings_transcripts ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT 'av'")
+    # earnings_call_date is dead weight from an earlier design: nothing ever populated it
+    # (AV's transcript response carries no call-date field), and no reader ever selected it.
+    conn.execute("ALTER TABLE earnings_transcripts DROP COLUMN IF EXISTS earnings_call_date")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS earnings_surprises (
             symbol           VARCHAR NOT NULL,
@@ -100,21 +111,19 @@ def save_transcript(
     transcript_text: str,
     api_json: Optional[str],
     source: str = "av",
-    earnings_call_date: Optional[date] = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO earnings_transcripts
-            (symbol, quarter, transcript_text, fetched_date, api_response_json, source, earnings_call_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (symbol, quarter, transcript_text, fetched_date, api_response_json, source)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (symbol, quarter) DO UPDATE SET
             transcript_text    = EXCLUDED.transcript_text,
             fetched_date       = EXCLUDED.fetched_date,
             api_response_json  = EXCLUDED.api_response_json,
-            source             = EXCLUDED.source,
-            earnings_call_date = EXCLUDED.earnings_call_date
+            source             = EXCLUDED.source
         """,
-        [symbol, quarter, transcript_text, date.today(), api_json, source, earnings_call_date],
+        [symbol, quarter, transcript_text, date.today(), api_json, source],
     )
     conn.commit()
 
@@ -223,8 +232,11 @@ def fetch_from_av(
     """
     Fetch an earnings call transcript from Alpha Vantage.
 
-    Returns (transcript_text, api_response_json) on success, or None if the
-    transcript does not exist for this symbol/quarter (404 / empty response).
+    Returns (transcript_text, api_response_json) on success, or None if the transcript
+    genuinely does not exist for this symbol/quarter (empty response).
+    Raises AVError if AV responds with an error/throttle payload (rate limit, entitlement,
+    bad symbol) — a distinct case from "no transcript for this quarter" because it means
+    further quarter probes will fail for the same reason, not that this one is empty.
     Raises requests.HTTPError on network/server errors.
     """
     if api_key is None:
@@ -245,8 +257,9 @@ def fetch_from_av(
     resp.raise_for_status()
     data = resp.json()
 
-    if any(k in data for k in ("Error Message", "Note", "Information")):
-        return None
+    for key in ("Error Message", "Note", "Information"):
+        if key in data:
+            raise AVError(f"AV API [EARNINGS_CALL_TRANSCRIPT] {symbol} {quarter}: {data[key]}")
     if not data.get("transcript"):
         return None
 
@@ -307,3 +320,63 @@ def fiscal_date_to_quarters(
         y, rem = divmod(total, 4)
         result.append(f"{y}Q{rem + 1}")
     return result
+
+
+def probe_quarters(today: date) -> list[str]:
+    """
+    Quarters to probe for "latest", newest first: 4 quarters ahead of today's calendar
+    quarter down through 6 quarters behind it (11 candidates). The lookahead covers
+    fiscal years that lead the calendar (e.g. NVDA FY ends Jan, so its Q1 FY2027 call
+    lands in a calendar quarter that is nominally "future" relative to today).
+
+    Shared by every live on-demand lookup site (earnings_router, research_router,
+    industry_data) so the candidate-quarter logic only needs fixing in one place.
+    """
+    base = today.year * 4 + (today.month - 1) // 3
+    result = []
+    for offset in range(4, -7, -1):
+        total = base + offset
+        y, q = divmod(total, 4)
+        result.append(f"{y}Q{q + 1}")
+    return result
+
+
+def refresh_latest_transcript(
+    conn: duckdb.DuckDBPyConnection,
+    symbol: str,
+    api_key: Optional[str],
+    limiter: Optional[RateLimiter] = None,
+    today: Optional[date] = None,
+) -> Optional[str]:
+    """
+    Probe AV for a transcript newer than whatever is cached for `symbol`, caching whatever
+    is found (write-through). Returns the newly-resolved quarter string, or None if nothing
+    new was found (including when api_key is falsy).
+
+    Stops probing as soon as AV returns an AVError or a network error, rather than working
+    through the whole candidate list — that error means something is systemically wrong
+    (rate limit, entitlement, connectivity), not that this one quarter lacks a transcript,
+    so continuing would just burn more of the 75-calls/min budget for the same failure.
+    """
+    if not api_key:
+        return None
+
+    best_quarter = get_latest_cached_quarter(conn, symbol)
+    candidates = probe_quarters(today or date.today())
+    to_probe = [q for q in candidates if q > best_quarter] if best_quarter else candidates
+
+    for quarter in to_probe:
+        if limiter is not None:
+            limiter.wait()
+        try:
+            result = fetch_from_av(symbol, quarter, api_key)
+        except (AVError, requests.RequestException) as exc:
+            log.warning("Stopped probing %s at %s: %s", symbol, quarter, exc)
+            return None
+        if result is None:
+            continue
+        transcript_text, api_json = result
+        save_transcript(conn, symbol, quarter, transcript_text, api_json)
+        return quarter
+
+    return None
