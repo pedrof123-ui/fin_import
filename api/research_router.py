@@ -104,7 +104,12 @@ _MODEL_OPTIONS = [
 #     including the highest-volume fan-out roles (one call per industry member).
 _ROLE_MODELS = {
     # equity research specialist fan-out + chief (research_router.py)
-    "competitive_strategy_analyst": "deepseek/deepseek-v4-pro",
+    "competitive_strategy_analyst": "openai/gpt-5.6-luna",  # was deepseek-v4-pro, swapped
+                                                              # 2026-08-12 after a live 400s
+                                                              # timeout (NUTX) — 3rd DeepSeek
+                                                              # role to hit this, same fix as
+                                                              # earnings_mda_historian/
+                                                              # chief_analyst_narrative below
     "earnings_mda_historian":       "openai/gpt-5.6-luna",
     "technical_analyst":            "deepseek/deepseek-v4-flash-0731",
     "valuation_analyst":            "anthropic/claude-sonnet-5",
