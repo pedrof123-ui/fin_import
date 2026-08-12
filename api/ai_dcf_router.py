@@ -964,7 +964,7 @@ _GENERATING_MD = (
     "## Generating AI DCF Valuation for {ticker}...\n\n"
     "Gathering fundamentals, MD&A, industry & competitor data, running the evidence team "
     "and DCF Architect, then computing the DCF.\n"
-    "This takes approximately 60-130 seconds.\n"
+    "This typically takes 2-5 minutes.\n"
 )
 
 

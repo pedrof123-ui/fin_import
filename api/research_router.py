@@ -67,10 +67,17 @@ _LLM_TIMEOUT      = 400  # per-agent LLM call cap — well above the slowest obs
                           # (Claude Sonnet 4.6, 268s for one call) so it won't kill a legitimately
                           # slow-but-working model; catches a genuine provider stall instead of
                           # relying solely on the user noticing and clicking Cancel.
-_AI_DCF_TIMEOUT   = 300  # whole-pipeline cap for the Agentic AI DCF Valuator (evidence fan-out +
-                          # Architect + engine runs) — live-observed worst case ~127s (Phase 4
-                          # of features/ai_dcf/PLAN.md), this gives ample margin without risking
-                          # a legitimately slow-but-working AI DCF blocking the report forever.
+_AI_DCF_TIMEOUT   = 600  # whole-pipeline cap for the Agentic AI DCF Valuator (evidence fan-out +
+                          # Architect + engine runs). Must clear the pipeline's own per-agent
+                          # budgets, not just historical wall-clock observations: Stage 1 runs 3
+                          # evidence agents in parallel and Stage 2 (Architect) runs sequentially
+                          # after, each individually capped at ai_dcf_router._LLM_TIMEOUT (400s) —
+                          # so up to ~800s is legitimate, not a stall. The 3 evidence agents are
+                          # tiered onto deepseek/deepseek-v4-flash-0731, which is independently
+                          # observed to take 130-370s+ on a single call (see
+                          # project_ai_researcher_llm_tiering memory) — a former 300s cap here
+                          # regularly cut off a working-but-slow run before Stage 2 could even
+                          # start (confirmed live 2026-08-12, NUTX).
 
 _MODEL_OPTIONS = [
     {"label": "Tiered — cost-optimized (Default)", "value": _TIERED_MODEL},
