@@ -122,8 +122,14 @@ _ROLE_MODELS = {
     "dcf_architect":                "anthropic/claude-sonnet-5",
     # industry research (industry_research_router.py)
     "company_digest":              "deepseek/deepseek-v4-flash-0731",
-    "trends_developments_analyst": "deepseek/deepseek-v4-pro",
-    "risks_outlook_analyst":       "deepseek/deepseek-v4-pro",
+    "trends_developments_analyst": "openai/gpt-5.6-luna",  # was deepseek-v4-pro, swapped
+                                                              # 2026-08-12 after a live 400s
+                                                              # timeout — 4th DeepSeek role to
+                                                              # hit this, same fix as
+                                                              # competitive_strategy_analyst above
+    "risks_outlook_analyst":       "openai/gpt-5.6-luna",  # swapped proactively alongside
+                                                              # trends_developments_analyst — same
+                                                              # model, same stage, same pipeline
     "chief_industry_strategist":   "anthropic/claude-sonnet-5",
     # follow-up chat about an already-generated report (single interactive call, live-in-front-
     # of-the-user tool-calling accuracy matters directly for UX) — Tier A.
