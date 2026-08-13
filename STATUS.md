@@ -1,5 +1,124 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## ML Comps Valuation — Calibration Monitoring + Pipeline Fix (complete, 2026-08-13)
+
+Closes a real gap discovered while reviewing the roadmap: `validate_ml_comps_valuation.py`
+(the Phase 3 go/no-go gate's script) only wrote `docs/ml_comps_validation_report.md` and
+`docs/ml_comps_validation_folds.csv`, both overwritten on every run — so no month-over-month
+calibration history accumulated anywhere queryable, which is the actual prerequisite for a real
+Phase 9 decision (replacing `goal_pe`/`goal_low`/`goal_high` with this model — see
+`features/historic_fundamentals/ml_comps_valuation_plan.md`).
+
+### What shipped
+
+- `historic_fundamentals/db.py::update_active_ml_model_oos_metrics()` — targeted column update
+  on the currently-active `model_version` row in `ml_model_metadata` (not the full-row `INSERT
+  OR REPLACE` the training-time upsert uses, which would null out `trained_at`/`feature_cols`).
+  No-ops cleanly for a target with no active row (`evebitda`, which never cleared Phase 3 and so
+  is never trained).
+- `validate_ml_comps_valuation.py` calls it for every evaluated multiple after each walk-forward
+  run.
+- `scripts/report_ml_comps_calibration.py` — new monthly Telegram report (mirrors the existing
+  `mda_sweep_report.py` pattern): reads the metrics above, re-checks the current month against
+  the Phase 3 thresholds, computes a consecutive-months-holding streak per production multiple
+  by walking `model_version` history newest-first, and flags "ready for a real Phase 9 review"
+  once all three (P/E, P/FCF, P/S) hold for `READY_FOR_REVIEW_MONTHS` (6, adjustable) months
+  straight.
+- `scripts/run_pipeline.py` wired both into `--enable-ml-comps` as new steps after train/score.
+
+### A real bug caught before it shipped
+
+`_run()` (the pipeline's step runner) calls `sys.exit()` on any non-zero return code —  but
+`validate_ml_comps_valuation.py` deliberately returns 1 when the month's re-validation gate
+fails, which is an expected outcome for an additive, non-trading-critical experimental
+sub-model, not a pipeline error. Wired in as originally written, a single bad `ml_comps` month
+would have silently aborted the *entire* monthly pipeline before `train_model`/`run_backtest`/
+`score_live` ever ran — the actual live-trading refresh, which has nothing to do with
+`ml_comps`. Added `_run(..., fatal=False)` and used it for both the validation and report steps
+(a Telegram outage shouldn't kill the trading pipeline either); `fatal=True` stays the default
+for every other step. 5 new tests cover the regression directly.
+
+### Also found: this feature was already live and undocumented as such
+
+While investigating, found `--enable-ml-comps` was already in the production crontab (monthly,
+1st, was `02:00` ET) and had been running successfully since at least 2026-07-20 — contradicting
+the "opt-in, not yet enabled" line in this doc's original ML Comps Valuation entry below, which
+was stale for at least two monthly cycles. Corrected in place. Also moved the cron start to
+`00:05` ET for headroom against the newly-added ~90min validation step, though confirmed this
+isn't actually time-critical — the only same-day consumer (`fundamentals_rebalance`) doesn't run
+until 15:30 ET.
+
+### Verification
+
+Live-ran the full walk-forward gate manually rather than waiting for the next scheduled cron
+(`logs/validate_ml_comps_manual_20260813.log`) — completed in ~135 min (longer than the ~85 min
+the plan doc estimated; worth treating that figure as a soft floor going forward). Results
+nearly identical to the original 2026-07-20/07-21 gate: P/E +18.3%, P/FCF +19.0%, P/S +23.4%
+RMSE improvement (all PASS), EV/EBITDA +14.8% (still FAIL, just under the 15% bar — and won
+100% of its 36 folds individually, confirming it's a genuine small structural miss, not noise).
+Confirmed metrics persisted correctly to `ml_model_metadata` for the 3 production multiples and
+skipped cleanly for `evebitda`. Ran `report_ml_comps_calibration.py` for real (not `--dry-run`)
+— live Telegram message sent, all three multiples correctly reporting their first
+consecutive-month streak (1).
+
+---
+
+## Analyst Estimate Dispersion (complete, 2026-08-13)
+
+Follow-up to Barron's, "The Hidden Red Flag in Wall Street's Price Targets" (2026-08-13) on
+analyst price-target dispersion predicting weaker forward returns (Diether-Malloy-Scherbina
+2002 / Zhang et al. 2024). Alpha Vantage serves no per-analyst price targets or historical
+estimate snapshots, so this uses the EPS high/low/avg band already in `earnings_estimates` as a
+proxy — full writeup and phase-by-phase spec in `PLAN_DISPERSION.md` (all 7 phases complete).
+
+### What shipped
+
+- `historic_fundamentals/dispersion.py` — pure metric functions (`compute_metrics`,
+  `select_horizons`, `percentile`); a hard EPS floor (`< $0.10` → null, not a degenerate ratio)
+  and no hardcoded severity threshold (ranked cross-sectionally instead).
+- `estimates_dispersion` monthly snapshot table + `scripts/build_dispersion_snapshots.py`,
+  feeding a dormant `scripts/test_dispersion_factor.py` that refuses to run below 36 months of
+  history (currently 4) rather than produce a misleading result from a short archive.
+- `eps_dispersion`/`eps_dispersion_pctile`/`coverage`/`net_revisions_30d`/`eps_drift_30d` added
+  to `/av-fundamentals` and `/estimates`, all nullable, independent of the snapshot table having
+  run.
+- Finview: header chips, a coverage/spread sub-line on the Price Targets table's Analyst
+  Consensus row, and a Spread column on the Estimates tab — colored by cross-sectional
+  percentile, not an absolute threshold.
+- The AI Researcher chief's `target_price_validation` now cites FY1 dispersion/coverage/net
+  revisions and explicitly discounts the consensus anchor when dispersion is top-quintile or
+  revisions are negative — naming which condition applies rather than a blanket discount.
+- Installed the `estimates_update.py` weekly cron, which the script had documented but was never
+  actually scheduled.
+
+### Real bugs caught during implementation, not by inspection
+
+- `select_horizons` compared a pandas `Timestamp` against `datetime.date` — a `.df()` vs
+  `.fetchall()` type mismatch caught by the snapshot-builder tests on first run.
+- An off-by-one column index in `research_router.py` swapped `eps_rev_up_30d`/
+  `eps_rev_down_30d` — caught by the test asserting the exact expected net-revisions value.
+- The consequential one: the snapshot builder assumed one shared `fetched_at` timestamp per
+  monthly run, but `estimates_update.py` stamps `fetched_at = now()` separately per ticker as a
+  ~37-minute rate-limited sweep processes them — so the original query only ever matched the
+  single last ticker processed each month. Found by running the builder against the real,
+  freshly-populated DB (not caught by unit tests using a same-timestamp fixture); fixed to take
+  each ticker's own latest fetch within the month, with a regression test modeling the real
+  per-ticker-timestamp behavior.
+
+### Verification
+
+54 tests passing. Live-verified end to end: full 2,656-ticker `estimates_update.py` run (2,637
+ok, 19 legitimate no-data, zero rate-limit errors, 37m9s); snapshot builder against the real DB
+(4 qualifying months, 1,214-2,603 tickers each, confirmed idempotent); `curl` against a running
+API across NVDA/MSFT/AVGO/BRSL/CHRN/ABCL (normal, thin-coverage, EPS-floor, and no-data cases);
+Playwright screenshots of all four UI scenarios; and two live AI Researcher report generations
+(NVDA, AEE) confirming the chief's discount logic fires correctly — NVDA (74th percentile,
+positive revisions) explicitly reasoned it was below the 80th-percentile discount threshold and
+gave consensus normal weight, AEE (8th percentile) called its spread "unremarkable." Reports
+saved to `docs/dispersion_test_report_{nvda,aee}_2026-08-13.md`.
+
+---
+
 ## AI Researcher LLM Tiering + Cost Tracking (complete, 2026-08-07)
 
 Replaces the single global OpenRouter model previously threaded through the whole AI Researcher
@@ -301,7 +420,7 @@ Adding P/S also closed a real coverage gap: full-universe scoring went from 2,12
 - `api/av_router.py` — 16 new `ml_fair_*` fields in `/av-fundamentals/{ticker}`, additive, `null` when unscored
 - `web/components/ValuationRangeBand.tsx` + new "ML Fair Value (Experimental)" panel in `FundamentalsViewer.tsx`, verified live in a browser
 - `notebooks/ml_comps_valuation.ipynb` — coverage/RMSE/win-rate-over-time monitoring, executes end-to-end
-- Wired into `scripts/run_pipeline.py` behind `--enable-ml-comps` (**opt-in, not yet enabled in the production cron** — that's a separate deploy decision)
+- Wired into `scripts/run_pipeline.py` behind `--enable-ml-comps`. **Correction (2026-08-13): this was enabled in the production cron at some point after this entry was written** — the "opt-in, not yet enabled" line below was stale for at least two monthly cycles (confirmed live runs 2026-07-20, 2026-08-01) before being caught. See "ML Comps Valuation — Calibration Monitoring" below for the fix that followed from that discovery.
 
 ### Key findings
 

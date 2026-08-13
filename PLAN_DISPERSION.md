@@ -1,5 +1,8 @@
 # PLAN — Analyst Dispersion & Estimate Staleness
 
+**Status: COMPLETE (2026-08-13).** All 7 phases done and live-verified — see STATUS.md
+"Analyst Estimate Dispersion" for the summary and the two real bugs found along the way.
+
 Source: Barron's, "The Hidden Red Flag in Wall Street's Price Targets" (2026-08-13), reporting
 Zhang et al. (2024) on price-target dispersion. The underlying anomaly is Diether, Malloy &
 Scherbina (2002): dispersion in analyst forecasts predicts *low* forward returns, via Miller

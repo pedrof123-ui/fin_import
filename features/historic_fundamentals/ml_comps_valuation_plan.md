@@ -144,3 +144,13 @@ Explicitly not part of this plan. Would require, at minimum, before even opening
 - N consecutive months of live-scored `ml_comps_valuation` predictions with maintained calibration (coverage staying in the 70-90% band, not drifting).
 - A forward comparison of `ml_fair_price_mid` vs. `goal_low`/`goal_high` accuracy against realized future prices, over a real holdout period — not backtested with hindsight.
 - Explicit sign-off, given the existing model in this module already shows what happens when a good-looking backtest substitutes for a real gate.
+
+**Infrastructure for the first bullet added 2026-08-13** (see STATUS.md "ML Comps Valuation —
+Calibration Monitoring + Pipeline Fix"): `validate_ml_comps_valuation.py` now persists each
+production multiple's monthly OOS metrics to `ml_model_metadata` instead of only overwriting a
+report file, and `scripts/report_ml_comps_calibration.py` tracks a consecutive-months-holding
+streak and Telegrams it monthly, flagging when all three multiples have held for
+`READY_FOR_REVIEW_MONTHS` (6, adjustable in that script) months straight. As of the first
+persisted month (2026-08-01, confirmed via a manual live run 2026-08-13): P/E, P/FCF, P/S all
+passing, streak = 1. This only addresses the first bullet — the forward-holdout comparison
+against realized prices (second bullet) still has no infrastructure and isn't started.
