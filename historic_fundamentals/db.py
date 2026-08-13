@@ -1130,6 +1130,32 @@ class HistoricFundamentalsDB:
             [model_name, target],
         )
 
+    def update_active_ml_model_oos_metrics(
+        self, target: str, oos_rmse_log: float | None, oos_rmse_vs_baseline_pct: float | None,
+        oos_coverage_p10_p90: float | None, model_name: str = "ml_comps_valuation",
+    ) -> bool:
+        """Attach a fresh walk-forward validation result to the currently active
+        model_version row for (model_name, target) — a targeted column UPDATE, not
+        the full-row INSERT OR REPLACE upsert_ml_model_metadata does, so the
+        trained_at/feature_cols/etc. columns written at training time survive.
+
+        Returns False (no-op) if no active row exists for this target — e.g. a
+        candidate multiple that never cleared the Phase 3 gate and so was never
+        trained (see historic_fundamentals.ml_comps_model.PASSING_MULTIPLES).
+        """
+        exists = self.conn.execute(
+            "SELECT 1 FROM ml_model_metadata WHERE model_name = ? AND target = ? AND is_active = TRUE",
+            [model_name, target],
+        ).fetchone()
+        if not exists:
+            return False
+        self.conn.execute("""
+            UPDATE ml_model_metadata
+            SET oos_rmse_log = ?, oos_rmse_vs_baseline_pct = ?, oos_coverage_p10_p90 = ?
+            WHERE model_name = ? AND target = ? AND is_active = TRUE
+        """, [oos_rmse_log, oos_rmse_vs_baseline_pct, oos_coverage_p10_p90, model_name, target])
+        return True
+
     def update_forward_pe(self, ticker: str, forward_pe: float | None, forward_12m_eps: float | None) -> None:
         self.conn.execute("""
             UPDATE pe_stats SET forward_pe = ?, forward_12m_eps = ?, updated_at = ?

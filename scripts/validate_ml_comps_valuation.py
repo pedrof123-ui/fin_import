@@ -20,6 +20,16 @@ historic_fundamentals.ml_comps_model.PASSING_MULTIPLES (wired into batch
 scoring/API/frontend) if it passes all three on its own — passing/failing is
 not decided relative to the other candidates.
 
+Each passing multiple's aggregate OOS metrics are also attached to its
+currently active model_version row in ml_model_metadata (a targeted column
+update, not a full-row replace — see HistoricFundamentalsDB.
+update_active_ml_model_oos_metrics), so a real month-over-month calibration
+history accumulates there instead of only living in the report/CSV below,
+which this script overwrites on every run. That history is the actual
+prerequisite for a future Phase 9 decision (replacing goal_pe/goal_low/
+goal_high with this model) — see features/historic_fundamentals/
+ml_comps_valuation_plan.md Phase 9.
+
 Usage:
     uv run scripts/validate_ml_comps_valuation.py
     uv run scripts/validate_ml_comps_valuation.py --train-years 5 --test-years 1
@@ -43,7 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from av_financials_db import DEFAULT_DB_PATH as AV_DB_PATH_DEFAULT  # noqa: E402
-from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB_PATH_DEFAULT  # noqa: E402
+from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB_PATH_DEFAULT, HistoricFundamentalsDB  # noqa: E402
 from historic_fundamentals.ml_comps_model import (  # noqa: E402
     FEATURE_COLS,
     MULTIPLE_TARGETS,
@@ -142,6 +152,35 @@ def build_report(evaluations: list[dict], overall_pass: bool) -> str:
     return "\n".join(lines)
 
 
+def persist_oos_metrics(hf_db: str, evaluations: list[dict]) -> None:
+    """Attach each multiple's aggregate OOS metrics to its currently active
+    model_version row in ml_model_metadata, so calibration history accumulates
+    across monthly runs instead of only living in the overwritten report/CSV
+    (see PLAN note: this is what actually lets a future Phase 9 decision — go/
+    no-go on replacing goal_pe/goal_low/goal_high — point to N consecutive
+    months of maintained calibration, not just "it looked fine today").
+
+    Silently skips multiples with no active row (e.g. evebitda, which never
+    cleared the Phase 3 gate and so was never trained) — nothing to attach to.
+    """
+    db = HistoricFundamentalsDB(hf_db)
+    try:
+        for ev in evaluations:
+            wrote = db.update_active_ml_model_oos_metrics(
+                target=ev["multiple"],
+                oos_rmse_log=ev.get("mean_rmse_log"),
+                oos_rmse_vs_baseline_pct=ev.get("pct_improvement_vs_baseline"),
+                oos_coverage_p10_p90=ev.get("mean_coverage_p10_p90"),
+            )
+            if wrote:
+                log.info("Persisted OOS metrics for %s to ml_model_metadata (active version)", ev["multiple"])
+            else:
+                log.info("No active model_version for %s — OOS metrics not persisted (report/CSV only)",
+                          ev["multiple"])
+    finally:
+        db.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="ML comps valuation go/no-go gate.")
     parser.add_argument("--train-years", type=int, default=5)
@@ -174,6 +213,8 @@ def main() -> int:
 
     n_passed = sum(1 for ev in evaluations if ev["passed"])
     overall_pass = n_passed >= N_MULTIPLES_REQUIRED
+
+    persist_oos_metrics(hf_db, evaluations)
 
     report = build_report(evaluations, overall_pass)
     print(report)

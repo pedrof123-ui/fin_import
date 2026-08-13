@@ -83,10 +83,12 @@ def main() -> None:
     parser.add_argument("--skip-dcf", action="store_true",
                         help="Skip DCF batch (saves ~15 min for the full universe)")
     parser.add_argument("--enable-ml-comps", action="store_true",
-                        help="Train + score the ML comps valuation model (P/E, P/FCF). "
-                             "Off by default — see features/historic_fundamentals/"
-                             "ml_comps_valuation_plan.md for the Phase 3 validation gate "
-                             "this passed before being wired in here.")
+                        help="Train + score + re-validate the ML comps valuation model "
+                             "(P/E, P/FCF, P/S; ~90 min total, ~85 of it the walk-forward "
+                             "re-validation). Off by default — see features/"
+                             "historic_fundamentals/ml_comps_valuation_plan.md for the "
+                             "Phase 3 gate this passed before being wired in here, and "
+                             "Phase 9 for why re-validating monthly matters.")
     parser.add_argument("--quarterly", action="store_true",
                         help="Run quarterly backtest in addition to monthly")
     parser.add_argument("--tc-bps", type=float, default=10.0,
@@ -146,12 +148,17 @@ def main() -> None:
     if args.enable_ml_comps:
         timings["train_ml_comps"] = _run(
             uv + ["scripts/train_ml_comps_valuation.py"],
-            "ML Comps Valuation — train quantile models (P/E, P/FCF)",
+            "ML Comps Valuation — train quantile models (P/E, P/FCF, P/S)",
             dry_run=args.dry_run,
         )
         timings["score_ml_comps"] = _run(
             uv + ["scripts/score_ml_comps_valuation.py"],
             "ML Comps Valuation — batch score current universe",
+            dry_run=args.dry_run,
+        )
+        timings["validate_ml_comps"] = _run(
+            uv + ["scripts/validate_ml_comps_valuation.py"],
+            "ML Comps Valuation — walk-forward gate + calibration history (~85 min)",
             dry_run=args.dry_run,
         )
 
