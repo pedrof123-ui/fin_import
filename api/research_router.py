@@ -42,6 +42,12 @@ from av_financials_db import RateLimiter
 from historic_fundamentals.technical_indicators import get_technical_summary
 from historic_fundamentals.quote import fetch_live_price
 from historic_fundamentals.estimates import compute_ntm_revenue
+from historic_fundamentals.dispersion import (
+    MIN_COVERAGE_FOR_PCTILE,
+    compute_metrics,
+    percentile,
+    select_horizons,
+)
 from api.valuation_data import get_dcf_summary, get_valuation_inputs, compute_dcf_scenarios
 
 log = logging.getLogger(__name__)
@@ -1120,6 +1126,11 @@ def get_price_and_analyst_data(ticker: str) -> str:
 
 
 def get_estimates_summary(ticker: str) -> str:
+    """Estimate revisions table plus a FY1 dispersion/staleness line (PLAN_DISPERSION.md
+    Phase 5), so the chief can discount a stale-looking consensus target instead of
+    treating it as one clean anchor — see target_price_validation in
+    research_chief_narrative.md.
+    """
     if not _HIST_FUND_DB.exists():
         return "[ERROR] historic_fundamentals.duckdb not found"
     ticker = ticker.upper()
@@ -1133,14 +1144,50 @@ def get_estimates_summary(ticker: str) -> str:
                 WHERE ticker = ?
             )
             SELECT
-                fiscal_date::VARCHAR, horizon,
-                eps_avg, eps_avg_7d, eps_avg_30d,
-                eps_rev_up_7d, eps_rev_down_7d,
+                fiscal_date, horizon,
+                eps_avg, eps_high, eps_low, eps_count, eps_avg_7d, eps_avg_30d,
+                eps_rev_up_7d, eps_rev_down_7d, eps_rev_up_30d, eps_rev_down_30d,
                 rev_avg
             FROM latest
             WHERE rn = 1 AND fiscal_date >= today()
             ORDER BY horizon DESC, fiscal_date
         """, [ticker]).fetchall()
+
+        dispersion_summary_line = None
+        try:
+            disp_rows = [{
+                "fiscal_date": r[0], "horizon": r[1],
+                "eps_avg": r[2], "eps_high": r[3], "eps_low": r[4], "eps_count": r[5],
+                "eps_avg_30d": r[7],
+                "eps_rev_up_30d": r[10], "eps_rev_down_30d": r[11],
+            } for r in rows]
+            fy1_row = select_horizons(disp_rows)["fy1"]
+            if fy1_row is not None:
+                metrics = compute_metrics(fy1_row)
+                if metrics["eps_dispersion"] is not None:
+                    pop_df = conn.execute("""
+                        SELECT eps_avg, eps_high, eps_low FROM estimates_dispersion
+                        WHERE horizon_slot = 'FY1' AND eps_count >= ?
+                          AND month_end_date = (
+                              SELECT MAX(month_end_date) FROM estimates_dispersion WHERE horizon_slot = 'FY1'
+                          )
+                    """, [MIN_COVERAGE_FOR_PCTILE]).df()
+                    population = [
+                        compute_metrics({"eps_avg": p[0], "eps_high": p[1], "eps_low": p[2]})["eps_dispersion"]
+                        for p in pop_df.itertuples(index=False)
+                    ]
+                    pctile = percentile(metrics["eps_dispersion"], population)
+                    pctile_clause = f", {pctile * 100:.0f}th percentile of covered universe" if pctile is not None else ""
+                    net_rev = metrics["net_revisions_30d"]
+                    net_rev_clause = f", net revisions {net_rev:+d} over 30d" if net_rev is not None else ""
+                    coverage_clause = f", {metrics['coverage']} analysts" if metrics["coverage"] is not None else ""
+                    dispersion_summary_line = (
+                        f"FY1 dispersion: {metrics['eps_dispersion'] * 100:.1f}%"
+                        f"{pctile_clause}{coverage_clause}{net_rev_clause}"
+                    )
+        except Exception as e:
+            log.warning("[%s] estimates dispersion summary failed: %s", ticker, e)
+
         conn.close()
     except Exception as e:
         return f"[ERROR] Estimates unavailable: {e}"
@@ -1159,18 +1206,28 @@ def get_estimates_summary(ticker: str) -> str:
     def _rev(v) -> str:
         return f"${float(v)/1e9:.1f}B" if v is not None else "n/a"
 
+    def _spread(eps_avg, eps_high, eps_low) -> str:
+        d = compute_metrics({"eps_avg": eps_avg, "eps_high": eps_high, "eps_low": eps_low})["eps_dispersion"]
+        return f"{d * 100:.0f}%" if d is not None else "n/a"
+
     lines = [f"ANALYST ESTIMATE REVISIONS — {ticker}", ""]
-    header = f"{'Period':<12} {'Type':<3} {'EPS Est':>8} {'vs 7d':>7} {'vs 30d':>7} {'Up/Dn 7d':>9} {'Rev Est':>9}"
+    header = (f"{'Period':<12} {'Type':<3} {'EPS Est':>8} {'vs 7d':>7} {'vs 30d':>7} "
+              f"{'Up/Dn 7d':>9} {'Spread':>7} {'N':>3} {'Rev Est':>9}")
     lines.append(header)
     lines.append("-" * len(header))
     for r in rows:
-        fiscal_date, horizon, eps_avg, eps_avg_7d, eps_avg_30d, rev_up, rev_dn, rev_avg = r
+        (fiscal_date, horizon, eps_avg, eps_high, eps_low, eps_count, eps_avg_7d, eps_avg_30d,
+         rev_up, rev_dn, _rev_up_30d, _rev_dn_30d, rev_avg) = r
         htype = "Q" if "quarter" in (horizon or "") else "FY"
         up_dn = f"{rev_up or 0}↑/{rev_dn or 0}↓"
         lines.append(
             f"{str(fiscal_date)[:10]:<12} {htype:<3} ${_f(eps_avg):>7} {_pct(eps_avg, eps_avg_7d):>7} "
-            f"{_pct(eps_avg, eps_avg_30d):>7} {up_dn:>9} {_rev(rev_avg):>9}"
+            f"{_pct(eps_avg, eps_avg_30d):>7} {up_dn:>9} {_spread(eps_avg, eps_high, eps_low):>7} "
+            f"{eps_count if eps_count is not None else '—':>3} {_rev(rev_avg):>9}"
         )
+    if dispersion_summary_line:
+        lines.append("")
+        lines.append(dispersion_summary_line)
     return "\n".join(lines)
 
 

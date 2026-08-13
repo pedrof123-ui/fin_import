@@ -10,6 +10,12 @@ from fastapi.responses import JSONResponse
 
 from dcf.model import run_dcf_av
 from api.dcf_router import RunRequest, _build_overrides, _sanitize
+from historic_fundamentals.dispersion import (
+    MIN_COVERAGE_FOR_PCTILE,
+    compute_metrics,
+    percentile,
+    select_horizons,
+)
 from historic_fundamentals.quote import fetch_live_price, fetch_live_quote
 
 router = APIRouter()
@@ -247,6 +253,49 @@ async def av_fundamentals_snapshot(ticker: str):
             [t, t],
         ).df()
 
+        # Dispersion metrics (PLAN_DISPERSION.md Phase 3) — FY1 pick from the same latest
+        # snapshot, with the raw high/low/avg/30d fields select_horizons/compute_metrics need
+        # (a superset of what est_df above carries, so kept as its own query).
+        disp_rows_df = hf.execute(
+            """SELECT fiscal_date, horizon, fetched_at,
+                      eps_avg, eps_high, eps_low, eps_count, eps_avg_30d,
+                      eps_rev_up_30d, eps_rev_down_30d,
+                      rev_avg, rev_high, rev_low
+               FROM earnings_estimates
+               WHERE ticker = ?
+                 AND fetched_at = (SELECT MAX(fetched_at) FROM earnings_estimates WHERE ticker = ?)
+                 AND fiscal_date > CURRENT_DATE""",
+            [t, t],
+        ).df()
+        disp_rows = disp_rows_df.to_dict("records")
+        for r in disp_rows:
+            if r.get("fiscal_date") is not None:
+                r["fiscal_date"] = r["fiscal_date"].date()
+        fy1_row = select_horizons(disp_rows)["fy1"]
+        dispersion_metrics = compute_metrics(fy1_row or {})
+
+        # Percentile source: current month's estimates_dispersion FY1 population (Phase 2).
+        # Table may be empty or not yet populated for the current month — degrade to a null
+        # percentile rather than fail the whole endpoint (this endpoint must not hard-depend
+        # on Phase 2 having run).
+        eps_dispersion_pctile = None
+        if dispersion_metrics["eps_dispersion"] is not None:
+            try:
+                pop_df = hf.execute("""
+                    SELECT eps_avg, eps_high, eps_low
+                    FROM estimates_dispersion
+                    WHERE horizon_slot = 'FY1' AND eps_count >= ?
+                      AND month_end_date = (
+                          SELECT MAX(month_end_date) FROM estimates_dispersion WHERE horizon_slot = 'FY1'
+                      )
+                """, [MIN_COVERAGE_FOR_PCTILE]).df()
+                population = [
+                    compute_metrics(r)["eps_dispersion"] for r in pop_df.to_dict("records")
+                ]
+                eps_dispersion_pctile = percentile(dispersion_metrics["eps_dispersion"], population)
+            except Exception:
+                eps_dispersion_pctile = None
+
         ov_df = av.execute(
             """SELECT name, sector, industry, market_cap,
                       analyst_target_price,
@@ -294,6 +343,15 @@ async def av_fundamentals_snapshot(ticker: str):
         "analyst_sell": _si(ov.get("analyst_rating_sell")),
         "analyst_strong_sell": _si(ov.get("analyst_rating_strong_sell")),
         "overview_updated_at": str(ov.get("fetch_date", "")),
+        # Dispersion / staleness context for the analyst target (PLAN_DISPERSION.md) — all
+        # null when no FY1 estimate row exists (thin/no coverage) or the EPS floor trips.
+        "eps_dispersion": _sf(dispersion_metrics["eps_dispersion"]),
+        "eps_dispersion_pctile": _sf(eps_dispersion_pctile),
+        "coverage": _si(dispersion_metrics["coverage"]),
+        "net_revisions_30d": _si(dispersion_metrics["net_revisions_30d"]),
+        "eps_drift_30d": _sf(dispersion_metrics["eps_drift_30d"]),
+        "dispersion_fiscal_date": str(fy1_row["fiscal_date"]) if fy1_row else None,
+        "dispersion_as_of": str(fy1_row["fetched_at"])[:10] if fy1_row else None,
         **{k: row.get(k) for k in _STAT_FIELDS},
         **{k: ml_comps.get(k) for k in _ML_COMPS_FIELDS},
         "ml_comps_model_version": ml_comps.get("model_version"),

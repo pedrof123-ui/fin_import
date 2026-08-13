@@ -64,6 +64,27 @@ function upsideColor(target: number | null | undefined, current: number | null |
   return (target as number) >= (current as number) ? "text-emerald-400" : "text-rose-400";
 }
 
+function ordinal(n: number): string {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1: return `${n}st`;
+    case 2: return `${n}nd`;
+    case 3: return `${n}rd`;
+    default: return `${n}th`;
+  }
+}
+
+// Color by where the spread ranks against the covered universe, not by an absolute
+// threshold — a 30% spread means something different for a mega-cap vs. a thin-coverage
+// small-cap (PLAN_DISPERSION.md: no hardcoded red-flag percentage).
+function dispersionColorClass(pctile: number | null | undefined): string {
+  if (pctile == null) return "text-zinc-400";
+  if (pctile >= 0.9) return "text-rose-400";
+  if (pctile >= 0.8) return "text-amber-400";
+  return "text-zinc-400";
+}
+
 function revFmt(v: number | null | undefined): string {
   if (v == null) return "—";
   const n = Math.abs(v as number);
@@ -271,6 +292,33 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
                   {fmtUpside(data.analyst_target_price, price)}
                 </span>
               </span>
+              {data.coverage != null && (
+                <>
+                  <span className="text-zinc-800 select-none">·</span>
+                  <span className="text-zinc-600">{data.coverage} analysts</span>
+                </>
+              )}
+              {data.eps_dispersion != null && (
+                <>
+                  <span className="text-zinc-800 select-none">·</span>
+                  <span
+                    className={dispersionColorClass(data.eps_dispersion_pctile)}
+                    title="Spread between the highest and lowest FY1 EPS estimates, relative to the average — wide spreads mean analysts disagree or some estimates are stale, and historically correlate with weaker forward returns."
+                  >
+                    Spread {fmtPct(data.eps_dispersion, 0)}
+                    {data.eps_dispersion_pctile != null &&
+                      ` (${ordinal(Math.round(data.eps_dispersion_pctile * 100))} pct)`}
+                  </span>
+                </>
+              )}
+              {data.net_revisions_30d != null && data.net_revisions_30d !== 0 && (
+                <>
+                  <span className="text-zinc-800 select-none">·</span>
+                  <span className={data.net_revisions_30d < 0 ? "text-rose-400" : "text-emerald-400"}>
+                    {Math.abs(data.net_revisions_30d)}{data.net_revisions_30d < 0 ? "↓" : "↑"} net 30d
+                  </span>
+                </>
+              )}
             </>
           )}
           {data.stats_updated_at && (
@@ -474,18 +522,30 @@ export default function FundamentalsViewer({ ticker }: { ticker: string }) {
             <TableHeader cols={["Method", "Target", "Upside vs Current"]} />
             <tbody>
               {[
-                { label: "5yr Median P/E",    target: data.goal_pe  },
-                { label: "5yr Median P/FCF",  target: data.goal_pcf },
-                { label: "PEG Implied",        target: data.goal_peg },
-                { label: "Book Value",         target: data.goal_bv  },
-                { label: "Analyst Consensus",  target: data.analyst_target_price },
+                { label: "5yr Median P/E",    target: data.goal_pe,  sub: null as string | null },
+                { label: "5yr Median P/FCF",  target: data.goal_pcf, sub: null as string | null },
+                { label: "PEG Implied",        target: data.goal_peg, sub: null as string | null },
+                { label: "Book Value",         target: data.goal_bv,  sub: null as string | null },
+                {
+                  label: "Analyst Consensus",
+                  target: data.analyst_target_price,
+                  // Coverage/spread context — the consensus row is a market opinion, not a
+                  // model output, so it's visibly different in kind from the rows above it.
+                  sub: [
+                    data.coverage != null ? `${data.coverage} analysts` : null,
+                    data.eps_dispersion != null ? `${fmtPct(data.eps_dispersion, 0)} spread` : null,
+                  ].filter(Boolean).join(" · ") || null,
+                },
               ]
                 .filter((r) => r.target != null)
                 .map((r, i) => {
                   const bg = i % 2 === 0 ? "oklch(0.09 0.006 265)" : "oklch(0.105 0.008 265)";
                   return (
                     <tr key={r.label} style={{ background: bg }}>
-                      <td className="sticky left-0 z-10 px-4 py-2 text-zinc-400" style={{ background: bg }}>{r.label}</td>
+                      <td className="sticky left-0 z-10 px-4 py-2 text-zinc-400" style={{ background: bg }}>
+                        {r.label}
+                        {r.sub && <div className="text-[9px] text-zinc-600 mt-0.5">{r.sub}</div>}
+                      </td>
                       <td className="px-4 py-2 text-right tabular-nums text-zinc-100">{fmtDollar(r.target)}</td>
                       <td className={`px-4 py-2 text-right tabular-nums ${upsideColor(r.target, price)}`}>
                         {fmtUpside(r.target, price)}

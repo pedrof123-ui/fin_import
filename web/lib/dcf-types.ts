@@ -206,6 +206,15 @@ export interface FundamentalsData {
   analyst_strong_sell: number | null;
   overview_updated_at: string | null;
 
+  // Dispersion / staleness context for the analyst target (PLAN_DISPERSION.md)
+  eps_dispersion: number | null;
+  eps_dispersion_pctile: number | null;
+  coverage: number | null;
+  net_revisions_30d: number | null;
+  eps_drift_30d: number | null;
+  dispersion_fiscal_date: string | null;
+  dispersion_as_of: string | null;
+
   // Valuation multiples
   current_pe: number | null;
   forward_pe: number | null;

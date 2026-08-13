@@ -16,6 +16,8 @@ interface EstimatePeriod {
   eps_high: number | null;
   eps_low: number | null;
   eps_count: number | null;
+  eps_dispersion: number | null;
+  rev_dispersion: number | null;
   eps_avg_7d: number | null;
   eps_avg_30d: number | null;
   eps_chg_7d: number | null;
@@ -82,6 +84,13 @@ function fmtChgPct(v: number | null): React.ReactNode {
   if (v == null) return <span className="text-zinc-600">—</span>;
   const cls = v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-400";
   return <span className={cls}>{v > 0 ? "+" : ""}{v.toFixed(1)}%</span>;
+}
+
+// eps_dispersion/rev_dispersion are raw ratios ((high-low)/avg), not deltas — no sign,
+// no red/green (see PLAN_DISPERSION.md: no hardcoded severity threshold at this level).
+function fmtSpread(v: number | null): string {
+  if (v == null) return "—";
+  return `${(v * 100).toFixed(0)}%`;
 }
 
 export default function EstimatesViewer({ ticker }: { ticker: string }) {
@@ -192,6 +201,7 @@ export default function EstimatesViewer({ ticker }: { ticker: string }) {
                 <th className="text-right px-3 py-2">vs 7d</th>
                 <th className="text-right px-3 py-2">vs 30d</th>
                 <th className="text-right px-3 py-2">Analysts</th>
+                <th className="text-right px-3 py-2" title="(High − Low) / Avg EPS estimate">Spread</th>
                 <th className="text-right px-3 py-2">Rev Est</th>
                 <th className="text-right px-3 py-2">Rev vs 30d</th>
                 <th className="text-right px-3 py-2">Rev Analysts</th>
@@ -209,6 +219,7 @@ export default function EstimatesViewer({ ticker }: { ticker: string }) {
                   <td className="px-3 py-2 text-right">{fmtChgPct(p.eps_chg_pct_7d)}</td>
                   <td className="px-3 py-2 text-right">{fmtChgPct(p.eps_chg_pct_30d)}</td>
                   <td className="px-3 py-2 text-right text-zinc-400">{p.eps_count ?? "—"}</td>
+                  <td className="px-3 py-2 text-right text-zinc-400">{fmtSpread(p.eps_dispersion)}</td>
                   <td className="px-3 py-2 text-right">{fmtRev(p.rev_avg)}</td>
                   <td className="px-3 py-2 text-right">{fmtChgPct(p.rev_chg_pct_30d)}</td>
                   <td className="px-3 py-2 text-right text-zinc-400">{p.rev_count ?? "—"}</td>

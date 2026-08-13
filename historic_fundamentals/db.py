@@ -412,6 +412,28 @@ class HistoricFundamentalsDB:
         """)
 
         self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS estimates_dispersion (
+                ticker           VARCHAR   NOT NULL,
+                month_end_date   DATE      NOT NULL,
+                horizon_slot     VARCHAR   NOT NULL,   -- 'FY1' | 'Q1'
+                fiscal_date      DATE,
+                snapshot_at      TIMESTAMP NOT NULL,   -- the source earnings_estimates.fetched_at
+                eps_avg          DOUBLE,
+                eps_high         DOUBLE,
+                eps_low          DOUBLE,
+                eps_count        INTEGER,
+                eps_avg_30d      DOUBLE,
+                eps_rev_up_30d   INTEGER,
+                eps_rev_down_30d INTEGER,
+                rev_avg          DOUBLE,
+                rev_high         DOUBLE,
+                rev_low          DOUBLE,
+                rev_count        INTEGER,
+                PRIMARY KEY (ticker, month_end_date, horizon_slot)
+            )
+        """)
+
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS sector_stats (
                 group_type              VARCHAR NOT NULL,
                 group_name              VARCHAR NOT NULL,
@@ -967,6 +989,25 @@ class HistoricFundamentalsDB:
                 row.get("eps_avg"), row.get("eps_high"), row.get("eps_low"), row.get("eps_count"),
                 row.get("eps_avg_7d"), row.get("eps_avg_30d"), row.get("eps_avg_60d"), row.get("eps_avg_90d"),
                 row.get("eps_rev_up_7d"), row.get("eps_rev_down_7d"), row.get("eps_rev_up_30d"), row.get("eps_rev_down_30d"),
+                row.get("rev_avg"), row.get("rev_high"), row.get("rev_low"), row.get("rev_count"),
+            ])
+            count += 1
+        return count
+
+    def upsert_dispersion_snapshots(self, rows: list[dict]) -> int:
+        count = 0
+        for row in rows:
+            self.conn.execute("""
+                INSERT OR REPLACE INTO estimates_dispersion
+                (ticker, month_end_date, horizon_slot, fiscal_date, snapshot_at,
+                 eps_avg, eps_high, eps_low, eps_count, eps_avg_30d,
+                 eps_rev_up_30d, eps_rev_down_30d, rev_avg, rev_high, rev_low, rev_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [
+                row["ticker"], row["month_end_date"], row["horizon_slot"],
+                row.get("fiscal_date"), row["snapshot_at"],
+                row.get("eps_avg"), row.get("eps_high"), row.get("eps_low"), row.get("eps_count"),
+                row.get("eps_avg_30d"), row.get("eps_rev_up_30d"), row.get("eps_rev_down_30d"),
                 row.get("rev_avg"), row.get("rev_high"), row.get("rev_low"), row.get("rev_count"),
             ])
             count += 1

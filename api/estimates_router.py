@@ -16,6 +16,8 @@ from typing import Any
 import duckdb
 from fastapi import APIRouter, HTTPException
 
+from historic_fundamentals.dispersion import compute_metrics
+
 router = APIRouter(prefix="/estimates", tags=["estimates"])
 
 _HF_DB = Path(os.environ.get("HF_DB_PATH", str(Path(__file__).parent.parent / "data" / "historic_fundamentals.duckdb")))
@@ -95,6 +97,11 @@ def _get_periods(conn: duckdb.DuckDBPyConnection, ticker: str) -> list[dict]:
         rev_avg_p7 = _f(rev_avg_p7)
         rev_avg_p30 = _f(rev_avg_p30)
 
+        dispersion = compute_metrics({
+            "eps_avg": eps_avg, "eps_high": _f(eps_high), "eps_low": _f(eps_low),
+            "rev_avg": rev_avg, "rev_high": _f(rev_high), "rev_low": _f(rev_low),
+        })
+
         result.append({
             "fiscal_date": fiscal_date,
             "horizon": horizon,
@@ -103,6 +110,8 @@ def _get_periods(conn: duckdb.DuckDBPyConnection, ticker: str) -> list[dict]:
             "eps_high": _f(eps_high),
             "eps_low": _f(eps_low),
             "eps_count": eps_count,
+            "eps_dispersion": dispersion["eps_dispersion"],
+            "rev_dispersion": dispersion["rev_dispersion"],
             "eps_avg_7d": eps_avg_7d,
             "eps_avg_30d": eps_avg_30d,
             "eps_chg_7d": round(eps_avg - eps_avg_7d, 4) if eps_avg is not None and eps_avg_7d is not None else None,

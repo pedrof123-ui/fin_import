@@ -113,6 +113,15 @@ target_price_validation: 4 bold-header bullet clusters (2-3 bullets each) triang
     the rating distribution signal about conviction? Identify the largest likely driver of any
     gap between the three anchors (differences in assumed growth rates, multiple expansion,
     near-term catalysts, or margin assumptions the models may not fully capture).
+    State the FY1 EPS estimate spread from the estimates data (the "FY1 dispersion" line and
+    its Spread/N columns) and its percentile if given. A wide spread often reflects stale,
+    un-updated targets rather than genuine disagreement — not every analyst has repriced
+    since the last catalyst. Discount how much weight the consensus anchor carries when
+    EITHER the dispersion is in the top quintile (roughly 80th percentile or higher) OR net
+    30-day revisions are negative — name explicitly which of the two applies, and treat a
+    wide spread combined with negative net revisions as the strongest case for discounting
+    consensus (stale bulls masking a deteriorating picture). When dispersion is unremarkable
+    and revisions are flat or positive, treat consensus as a normal-weight anchor.
   **Confidence Assessment** — provide a calibrated confidence level (High/Medium/Low) for
     the target price range, citing specific risks to the upside or downside case (draw on
     valuation_risks from the Valuation Analyst where relevant). State whether the degree of

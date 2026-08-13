@@ -12,8 +12,8 @@ Usage:
     uv run scripts/estimates_update.py --dry-run        # fetch but don't write
     uv run scripts/estimates_update.py --verbose
 
-Cron (weekly, Monday 6 AM):
-    0 6 * * 1 cd /home/pedro/projects/fin_import2 && uv run scripts/estimates_update.py >> logs/estimates_update.log 2>&1
+Cron (weekly, Monday 6:15 AM ET — after earnings_calendar_update at 5:45):
+    15 6 * * 1 /home/pedro/projects/trade_systems/scripts/cron_wrap.sh estimates_update /home/pedro/.local/bin/uv run --project /home/pedro/projects/fin_import2 /home/pedro/projects/fin_import2/scripts/estimates_update.py >> /home/pedro/projects/fin_import2/logs/estimates_update.log 2>&1
 """
 
 import argparse
