@@ -47,8 +47,19 @@ ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger(__name__)
 
 
-def _run(cmd: list[str], label: str, dry_run: bool = False) -> float:
-    """Run a command, stream output, return elapsed seconds. Exits on failure."""
+def _run(cmd: list[str], label: str, dry_run: bool = False, fatal: bool = True) -> float:
+    """Run a command, stream output, return elapsed seconds.
+
+    fatal=True (default): non-zero exit aborts the whole pipeline — right for
+    anything the live trading pipeline (train_model/run_backtest/score_live)
+    actually depends on.
+    fatal=False: log and continue. Use for steps whose exit code encodes a
+    pass/fail judgment about themselves, not a real error — e.g.
+    validate_ml_comps_valuation.py deliberately returns 1 when this month's
+    re-validation gate fails, which must not block train_model/score_live
+    (the actual live-trading refresh) from running just because an additive,
+    non-trading-critical experimental sub-model's calibration dipped.
+    """
     print(f"\n{'=' * 70}")
     print(f"STEP: {label}")
     print(f"CMD:  {' '.join(cmd)}")
@@ -63,8 +74,12 @@ def _run(cmd: list[str], label: str, dry_run: bool = False) -> float:
     elapsed = time.time() - t0
 
     if result.returncode != 0:
-        print(f"\nFAILED: {label} exited with code {result.returncode}. Pipeline stopped.")
-        sys.exit(result.returncode)
+        if fatal:
+            print(f"\nFAILED: {label} exited with code {result.returncode}. Pipeline stopped.")
+            sys.exit(result.returncode)
+        print(f"\nWARNING: {label} exited with code {result.returncode} — continuing "
+              f"(non-fatal step) ({elapsed:.1f}s)")
+        return elapsed
 
     print(f"\nDone: {label} ({elapsed:.1f}s)")
     return elapsed
@@ -159,7 +174,12 @@ def main() -> None:
         timings["validate_ml_comps"] = _run(
             uv + ["scripts/validate_ml_comps_valuation.py"],
             "ML Comps Valuation — walk-forward gate + calibration history (~85 min)",
-            dry_run=args.dry_run,
+            dry_run=args.dry_run, fatal=False,
+        )
+        timings["report_ml_comps"] = _run(
+            uv + ["scripts/report_ml_comps_calibration.py"],
+            "ML Comps Valuation — Telegram calibration report",
+            dry_run=args.dry_run, fatal=False,
         )
 
     # Step 2: walk-forward validation
