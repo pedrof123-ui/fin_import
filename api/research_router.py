@@ -116,9 +116,15 @@ _ROLE_MODELS = {
     "chief_analyst_core":           "anthropic/claude-sonnet-5",
     "chief_analyst_narrative":      "openai/gpt-5.6-luna",
     # agentic AI DCF pipeline (ai_dcf_router.py)
-    "fundamentals_historian":       "deepseek/deepseek-v4-flash-0731",
+    "fundamentals_historian":       "openai/gpt-5.6-luna",  # was deepseek-v4-flash-0731, swapped
+                                                              # 2026-08-12 after live cost-check
+                                                              # runs hit the same 400s-timeout /
+                                                              # truncated-JSON failure pattern as
+                                                              # the DeepSeek roles above (1 timeout,
+                                                              # 1 bad-JSON parse in 3 live tickers)
     "industry_competitors_analyst": "deepseek/deepseek-v4-flash-0731",
-    "guidance_mda_analyst":         "deepseek/deepseek-v4-flash-0731",
+    "guidance_mda_analyst":         "openai/gpt-5.6-luna",  # same swap, same day, same failure
+                                                              # pattern (1 timeout in 3 live tickers)
     "dcf_architect":                "anthropic/claude-sonnet-5",
     # industry research (industry_research_router.py)
     "company_digest":              "deepseek/deepseek-v4-flash-0731",
