@@ -97,8 +97,12 @@ def _join_sector(df: pd.DataFrame, av_db_path: str) -> pd.DataFrame:
     try:
         import duckdb
         conn = duckdb.connect(av_db_path, read_only=True)
-        overview = conn.execute("SELECT ticker, sector FROM company_overview").df()
+        overview = conn.execute("SELECT ticker, sector, fetch_date FROM company_overview ORDER BY fetch_date").df()
         conn.close()
+        # company_overview has one row per refresh (up to 4+ snapshots per ticker) —
+        # dedupe to the latest snapshot per ticker, else the merge fans out and
+        # duplicates every (ticker, month_end_date) row for that ticker in the backtest.
+        overview = overview.drop_duplicates(subset=["ticker"], keep="last").drop(columns=["fetch_date"])
         df = df.merge(overview, on="ticker", how="left")
         log.info("Joined sector: %d rows with sector", df["sector"].notna().sum())
     except Exception as exc:
