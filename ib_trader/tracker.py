@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Callable
 
 import duckdb
 import pandas as pd
@@ -208,12 +209,16 @@ def sync_ib_fills(
     conn: duckdb.DuckDBPyConnection,
     strategy: str,
     since_date: date | str | None = None,
+    on_fill: Callable[[dict], None] | None = None,
 ) -> int:
     """Pull fills from IB execution history and insert new ones. Returns count inserted.
 
     Note: IB's reqExecutions returns fills from the current TWS session only.
     For fills from prior sessions, use the TWS Account Management portal or
     call this function in the same session where the orders were placed.
+
+    If on_fill is given, it's called once per newly-inserted fill with
+    {ticker, action, qty, fill_price, fill_time} — e.g. for notifications.
     """
     if isinstance(since_date, str):
         since_date = datetime.strptime(since_date, "%Y-%m-%d").date()
@@ -256,6 +261,11 @@ def sync_ib_fills(
         record_fill(conn, strategy, ticker, action, qty, fill_price, fill_time,
                     exec_id, commission, reference_price)
         count += 1
+        if on_fill:
+            on_fill({
+                "ticker": ticker, "action": action, "qty": qty,
+                "fill_price": fill_price, "fill_time": fill_time,
+            })
 
     return count
 
