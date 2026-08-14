@@ -50,40 +50,42 @@ def _calc_stats(returns: pd.Series) -> dict:
     }
 
 
-def _get_benchmark_monthly(benchmark: str, start: date, end: date) -> pd.Series:
-    """Fetch monthly returns for the benchmark ticker via yfinance."""
+def _benchmark_close(benchmark: str, start: date, end: date) -> pd.Series:
+    """Fetch daily close prices for the benchmark ticker via yfinance.
+
+    Uses Ticker.history() rather than yf.download() — download() stashes results in a
+    module-level dict (yfinance.shared._DFS) shared across threads, so concurrent calls
+    from FastAPI's threadpool (e.g. the overview list and a strategy detail tab fetching
+    at the same time) can race and hand one caller another call's date range. history()
+    doesn't share that state, so concurrent calls stay isolated.
+    """
     import yfinance as yf
 
-    data = yf.download(
-        benchmark,
+    data = yf.Ticker(benchmark).history(
         start=str(start - timedelta(days=35)),
         end=str(end + timedelta(days=1)),
         auto_adjust=True,
-        progress=False,
-        actions=False,
     )
     if data.empty:
         return pd.Series(dtype=float)
-    close = data["Close"].squeeze()
+    close = data["Close"].sort_index()
+    close.index = close.index.tz_localize(None)
+    return close
+
+
+def _get_benchmark_monthly(benchmark: str, start: date, end: date) -> pd.Series:
+    """Fetch monthly returns for the benchmark ticker via yfinance."""
+    close = _benchmark_close(benchmark, start, end)
+    if close.empty:
+        return pd.Series(dtype=float)
     monthly = close.resample("ME").last()
     return monthly.pct_change().dropna()
 
 
 def _get_benchmark_daily(benchmark: str, start: date, end: date) -> pd.Series:
     """Fetch daily close prices for the benchmark ticker via yfinance."""
-    import yfinance as yf
-
-    data = yf.download(
-        benchmark,
-        start=str(start - timedelta(days=5)),
-        end=str(end + timedelta(days=1)),
-        auto_adjust=True,
-        progress=False,
-        actions=False,
-    )
-    if data.empty:
-        return pd.Series(dtype=float)
-    return data["Close"].squeeze().sort_index()
+    close = _benchmark_close(benchmark, start, end)
+    return close[close.index.date >= start - timedelta(days=5)]
 
 
 def _nav_to_daily(conn: duckdb.DuckDBPyConnection, strategy: str) -> pd.Series:
