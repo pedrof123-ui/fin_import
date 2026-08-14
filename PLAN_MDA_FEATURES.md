@@ -38,8 +38,51 @@ Launch target: nightly cron starting 2026-08-09 23:00 EDT.
 - [ ] 4.3 First-night check: status JSON shows state=running after 23:00 tonight
       (verify tomorrow: pairs_tonight > 0 and Telegram report received ~03:10)
 
-## Phase 5 — Factor integration (future, not part of this implementation)
+## Phase 5 — Factor integration
 
-- [ ] 5.1 Point-in-time join on filing_date into monthly_pe universe
-- [ ] 5.2 IC/quintile/walk-forward gauntlet incl. Profit Factor and R-Expectancy
-- [ ] 5.3 Wire mda_features into guidance_mda_analyst / earnings_mda_historian context
+- [x] 5.1 Point-in-time join on filing_date into monthly_pe universe
+      (`scripts/test_mda_features.py`, backward asof per ticker, 450-day tolerance)
+- [x] 5.2 IC/quintile/walk-forward gauntlet incl. Profit Factor and R-Expectancy —
+      **all 5 features + interaction REJECTED 2026-08-14**, see "Gauntlet result" below
+      and [[project_mda_factors_result]]
+- [ ] 5.3 Wire mda_features into guidance_mda_analyst / earnings_mda_historian context —
+      **not proceeding**: no promotable factor came out of 5.2, nothing to wire in
+
+## Gauntlet result (2026-08-14)
+
+`scripts/test_mda_features.py`. IC test found `guidance_direction` and `specificity`
+significantly *negative* — opposite of the literature that motivated the features —
+confirmed not a data-quality artifact (the cleaner 30B subset showed a stronger negative
+IC than the noisier 8B subset). A sign-flipped ("contrarian") composite looked attractive
+in-sample (better Sharpe/MaxDD/PF than baseline). A genuine walk-forward split (sign
+chosen on the early half only, tested on the untouched late half) killed it: no factor
+held a stable sign in-sample vs out-of-sample — `guidance_direction`'s flip went to zero
+OOS, `new_risk_language`'s sign flipped between halves (its "clean monotonic" full-sample
+table was an artifact of asymmetric period weighting), and `specificity`'s sign fully
+reversed with a much stronger effect OOS (t=-5.51) than the direction that was bet on.
+The OOS composite backtest underperformed the no-MD&A baseline on CAGR, Sharpe, PF and
+R-Expectancy. Full writeup: [[project_mda_factors_result]].
+
+`historic_fundamentals/baselines.py` (`_VALUE_COLS`/`_QUALITY_COLS`) and
+`scripts/score_live.py` untouched, as with every prior rejected-factor test.
+
+## Backfill status (2026-08-13)
+
+Full post-2016 10-K backfill done on a rented RunPod RTX 4090 (outside the nightly cron window).
+`data/mda_features.duckdb` `mda_features`: **18,169 rows** — 7,107 on `qwen3:30b-a3b`, 11,062 on
+`qwen3:8b`.
+
+A 296-pair 8B-vs-30B comparison sample found `guidance_direction`'s "maintained" bucket
+unreliable on 8B (28.9% agreement with 30B, vs. 86-94% when 8B committed to raised/lowered) —
+8B defaults to "maintained" as a hedge when it can't ground the call in a concrete figure (50%
+of maintained rationales cite a number, vs. 88% for 30B on the same cases). Re-extracted all
+7,123 then-"maintained" rows on `qwen3:30b-a3b` (7,107 succeeded, 16 lost to isolated timeouts).
+At full scale the re-judgment reclassified 74% of them (41.6% raised, 31.7% lowered, 25.6% stayed
+maintained) — matches the comparison sample's predicted split.
+
+**Known open gap, not fixed by the above:** `hedging_change` and `new_risk_language` had worse
+8B/30B disagreement in the raised/lowered buckets than in maintained (e.g. hedging_change MAE
+0.91 maintained vs. 1.13 raised / 1.52 lowered), so the maintained-only rerun did not address
+their reliability problem in the 11,062 rows still on `qwen3:8b`. Before Phase 5: either weight
+these two features with more skepticism in the gauntlet, or run a second scoped rerun targeting
+them specifically.
