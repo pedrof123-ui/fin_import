@@ -10,7 +10,7 @@ import { API } from "@/lib/config";
 //   3. Optionally add to RESULT_COLS for display in the results table
 //   4. In api/screener_router.py: add RANGE_FIELDS entry + two ScreenRequest fields
 
-type FmtType = "x" | "pct" | "bn" | "str";
+type FmtType = "x" | "pct" | "bn" | "usd" | "str";
 
 const RANGE_FIELD_META: Record<string, { label: string; fmt: FmtType }> = {
   market_cap_b:      { label: "Mkt Cap ($B)",    fmt: "bn"  },
@@ -32,6 +32,8 @@ const RANGE_FIELD_META: Record<string, { label: string; fmt: FmtType }> = {
   interest_coverage: { label: "Int Coverage",     fmt: "x"   },
   dividend_yield:    { label: "Div Yield",        fmt: "pct" },
   momentum_12_1:     { label: "Momentum 12-1",    fmt: "pct" },
+  ncav_per_share:    { label: "NCAV/Share",       fmt: "usd" },
+  price_to_ncav:     { label: "Price/NCAV",       fmt: "x"   },
   goal_low_upside:   { label: "PT Low Upside",    fmt: "pct" },
   goal_high_upside:  { label: "PT High Upside",   fmt: "pct" },
   goal_pe_upside:    { label: "PT P/E Upside",    fmt: "pct" },
@@ -49,6 +51,8 @@ const RANGE_FIELD_META: Record<string, { label: string; fmt: FmtType }> = {
   accel_earn_yoy:    { label: "Earn Accel (pp)",   fmt: "pct" },
   accel_ebit_yoy:    { label: "EBIT Accel (pp)",   fmt: "pct" },
   op_leverage_q1:    { label: "Op Leverage (pp)",  fmt: "pct" },
+  ebit_ev_yield:     { label: "EBIT/EV Yield",     fmt: "pct" },
+  greenblatt_roc:    { label: "Greenblatt ROC",    fmt: "pct" },
 };
 
 const FILTER_SECTIONS: { label: string; fields: string[] }[] = [
@@ -60,6 +64,8 @@ const FILTER_SECTIONS: { label: string; fields: string[] }[] = [
   { label: "Quality",           fields: ["gross_margin", "ebit_margin", "fcf_margin", "roe", "roic"] },
   { label: "Leverage",          fields: ["debt_to_ebitda", "interest_coverage"] },
   { label: "Income & Momentum", fields: ["dividend_yield", "momentum_12_1"] },
+  { label: "Graham Net-Net",    fields: ["ncav_per_share", "price_to_ncav"] },
+  { label: "Magic Formula (Greenblatt)", fields: ["ebit_ev_yield", "greenblatt_roc"] },
   { label: "Price Targets",    fields: ["goal_low_upside", "goal_high_upside", "goal_pe_upside", "goal_pcf_upside", "goal_peg_upside", "goal_bv_upside", "dcf_upside"] },
 ];
 
@@ -92,6 +98,11 @@ const RESULT_COLS: { key: string; label: string; fmt: FmtType }[] = [
   { key: "goal_low_upside",          label: "PT Low Up", fmt: "pct" },
   { key: "goal_high_upside",         label: "PT Hi Up",  fmt: "pct" },
   { key: "dcf_upside",               label: "DCF Upside", fmt: "pct" },
+  { key: "ncav_per_share",           label: "NCAV/Shr",   fmt: "usd" },
+  { key: "price_to_ncav",            label: "Price/NCAV", fmt: "x"   },
+  { key: "ebit_ev_yield",            label: "EBIT/EV",    fmt: "pct" },
+  { key: "greenblatt_roc",           label: "Greenblatt ROC", fmt: "pct" },
+  { key: "magic_formula_rank",       label: "MF Rank",    fmt: "str" },
 ];
 
 type Preset = {
@@ -186,6 +197,34 @@ const PRESETS: Record<string, Preset> = {
       ["", "exceeds current price by 20%+"],
     ],
   },
+  graham_net_net: {
+    label: "Graham Net-Net",
+    filters: {
+      price_to_ncav_max: "0.67",
+    },
+    tooltip: [
+      ["Price/NCAV",  "< 0.67x"],
+      ["", "Security Analysis Ch. XLIII:"],
+      ["", "price below 2/3 of net current"],
+      ["", "asset value (current assets − all liabilities)"],
+    ],
+  },
+  magic_formula: {
+    label: "Magic Formula (Greenblatt)",
+    filters: {
+      market_cap_b_min: "0.1",
+      ebit_ev_yield_min: "0",
+      greenblatt_roc_min: "0",
+    },
+    tooltip: [
+      ["Mkt Cap",         "> $100M"],
+      ["EBIT/EV, ROC",    "both > 0%"],
+      ["", "The Little Book That Still Beats the Market:"],
+      ["", "sort by 'MF Rank' (lower = better)."],
+      ["", "Book excludes financials/utilities —"],
+      ["", "deselect those sectors above for an exact match."],
+    ],
+  },
 };
 
 const DISPLAY_LIMIT = 500;
@@ -198,6 +237,7 @@ function fmtCell(v: unknown, fmt: FmtType): string {
   const n = v as number;
   if (!isFinite(n)) return "—";
   if (fmt === "x")   return `${n.toFixed(1)}x`;
+  if (fmt === "usd") return `$${n.toFixed(2)}`;
   if (fmt === "pct") return `${(n * 100).toFixed(1)}%`;
   if (fmt === "bn") {
     if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}T`;
@@ -400,7 +440,7 @@ function RangeRow({
   onChange: (key: string, val: string) => void;
 }) {
   const meta = RANGE_FIELD_META[fieldKey];
-  const hint = meta.fmt === "pct" ? "%" : meta.fmt === "bn" ? "$B" : "x";
+  const hint = meta.fmt === "pct" ? "%" : meta.fmt === "bn" ? "$B" : meta.fmt === "usd" ? "$" : "x";
   return (
     <div className="flex items-center gap-2">
       <span className="font-mono text-[11px] text-zinc-400 w-32 shrink-0">{meta.label}</span>

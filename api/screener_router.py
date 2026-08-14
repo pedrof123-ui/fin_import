@@ -48,6 +48,8 @@ RANGE_FIELDS: list[tuple[str, str]] = [
     ("interest_coverage", "ps.interest_coverage"),
     ("dividend_yield",    "ps.dividend_yield"),
     ("momentum_12_1",     "mp.momentum_12_1"),
+    ("ncav_per_share",    "bs.ncav_per_share"),
+    ("price_to_ncav",     "CASE WHEN bs.ncav_per_share > 0 THEN ps.current_price / bs.ncav_per_share ELSE NULL END"),
     ("goal_low_upside",   "CASE WHEN ps.current_price > 0 AND ps.goal_low  IS NOT NULL THEN (ps.goal_low  / ps.current_price - 1) ELSE NULL END"),
     ("goal_high_upside",  "CASE WHEN ps.current_price > 0 AND ps.goal_high IS NOT NULL THEN (ps.goal_high / ps.current_price - 1) ELSE NULL END"),
     ("goal_pe_upside",    "CASE WHEN ps.current_price > 0 AND ps.goal_pe   IS NOT NULL THEN (ps.goal_pe   / ps.current_price - 1) ELSE NULL END"),
@@ -65,6 +67,13 @@ RANGE_FIELDS: list[tuple[str, str]] = [
     ("accel_earn_yoy",    "qy.q1_earn_yoy - qy.q2_earn_yoy"),
     ("accel_ebit_yoy",    "qy.q1_ebit_yoy - qy.q2_ebit_yoy"),
     ("op_leverage_q1",    "qy.q1_ebit_yoy - qy.q1_rev_yoy"),
+    # Greenblatt "Magic Formula" (The Little Book That Still Beats the Market, Appendix):
+    # ebit_ev_yield = EBIT/EV, greenblatt_roc = EBIT/(Net Working Capital + Net Fixed Assets).
+    # Backfilled into monthly_pe by scripts/backfill_greenblatt_factors.py — see
+    # docs/greenblatt_factors_test.md (tested for the live composite, not promoted;
+    # kept here as an explainable manual screen only).
+    ("ebit_ev_yield",     "mp.ebit_ev_yield"),
+    ("greenblatt_roc",    "mp.greenblatt_roc"),
 ]
 
 
@@ -109,6 +118,10 @@ class ScreenRequest(BaseModel):
     dividend_yield_max: float | None = None
     momentum_12_1_min: float | None = None
     momentum_12_1_max: float | None = None
+    ncav_per_share_min: float | None = None
+    ncav_per_share_max: float | None = None
+    price_to_ncav_min: float | None = None
+    price_to_ncav_max: float | None = None
     goal_low_upside_min: float | None = None
     goal_low_upside_max: float | None = None
     goal_high_upside_min: float | None = None
@@ -143,11 +156,15 @@ class ScreenRequest(BaseModel):
     accel_ebit_yoy_max: float | None = None
     op_leverage_q1_min: float | None = None
     op_leverage_q1_max: float | None = None
+    ebit_ev_yield_min: float | None = None
+    ebit_ev_yield_max: float | None = None
+    greenblatt_roc_min: float | None = None
+    greenblatt_roc_max: float | None = None
 
 
 _BASE_QUERY = """
 WITH latest_mp AS (
-    SELECT ticker, momentum_12_1
+    SELECT ticker, momentum_12_1, ebit_ev_yield, greenblatt_roc
     FROM hf.monthly_pe
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY month_end_date DESC) = 1
 ),
@@ -155,6 +172,15 @@ latest_co AS (
     SELECT ticker, name, sector, industry, market_cap
     FROM av.company_overview
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fetch_date DESC) = 1
+),
+latest_bs AS (
+    -- Graham net current asset value (Security Analysis, Ch. XLIII): NCAV = current assets - ALL liabilities
+    SELECT
+        ticker,
+        (total_current_assets - total_liabilities) / NULLIF(common_stock_shares_outstanding, 0) AS ncav_per_share
+    FROM av.balance_sheets
+    WHERE period_type = 'quarterly'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fiscal_date_ending DESC) = 1
 ),
 quarters AS (
     SELECT
@@ -210,6 +236,14 @@ SELECT
     ps.interest_coverage,
     ps.dividend_yield,
     mp.momentum_12_1,
+    mp.ebit_ev_yield,
+    mp.greenblatt_roc,
+    CASE WHEN mp.ebit_ev_yield IS NOT NULL AND mp.greenblatt_roc IS NOT NULL
+         THEN RANK() OVER (ORDER BY mp.ebit_ev_yield  DESC NULLS LAST)
+            + RANK() OVER (ORDER BY mp.greenblatt_roc DESC NULLS LAST)
+         ELSE NULL END                                   AS magic_formula_rank,
+    bs.ncav_per_share,
+    CASE WHEN bs.ncav_per_share > 0 THEN ps.current_price / bs.ncav_per_share ELSE NULL END AS price_to_ncav,
     CASE WHEN ps.current_price > 0 AND ps.goal_low  IS NOT NULL THEN (ps.goal_low  / ps.current_price - 1) ELSE NULL END AS goal_low_upside,
     CASE WHEN ps.current_price > 0 AND ps.goal_high IS NOT NULL THEN (ps.goal_high / ps.current_price - 1) ELSE NULL END AS goal_high_upside,
     CASE WHEN ps.current_price > 0 AND ps.goal_pe   IS NOT NULL THEN (ps.goal_pe   / ps.current_price - 1) ELSE NULL END AS goal_pe_upside,
@@ -233,6 +267,7 @@ SELECT
 FROM hf.pe_stats ps
 LEFT JOIN latest_co co ON ps.ticker = co.ticker
 LEFT JOIN latest_mp mp ON ps.ticker = mp.ticker
+LEFT JOIN latest_bs bs ON ps.ticker = bs.ticker
 LEFT JOIN quarterly_yoy qy ON ps.ticker = qy.ticker
 LEFT JOIN hf.dcf_results dr ON ps.ticker = dr.ticker AND dr.status = 'ok'
 """
