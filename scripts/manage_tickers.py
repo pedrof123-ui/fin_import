@@ -34,8 +34,12 @@ Quick start
   # Skip analyst estimate calls (saves 1 AV call per ticker, useful for bulk adds)
   uv run scripts/manage_tickers.py add AAPL --skip-estimates
 
-What 'add' does per ticker (8 Alpha Vantage API calls)
--------------------------------------------------------
+  # Bulk CSV adds: dial down earnings transcript depth (default is full history, ~80
+  # quarters/ticker) so a large batch doesn't burn the AV budget on old not_found probes
+  uv run scripts/manage_tickers.py add --csv data/new_tickers.csv --earnings-quarters 4
+
+What 'add' does per ticker (8 Alpha Vantage API calls, +up to 80 for earnings transcripts)
+--------------------------------------------------------------------------------------------
   Step 1  Price history        → prices.duckdb / stock_prices
   Step 2  Income statement     → av_financials.duckdb
           Balance sheet        → av_financials.duckdb
@@ -48,7 +52,10 @@ What 'add' does per ticker (8 Alpha Vantage API calls)
   Step 7  Analyst estimates    → historic_fundamentals.duckdb / earnings_estimates
   Step 8  Forward multiples    → historic_fundamentals.duckdb / pe_stats
           (forward P/E, P/FCF, EV/EBITDA, P/S, market cap)
-  Step 9  MD&A (20yr 10-K + 20qtr 10-Q) → mda_filings.duckdb  (SEC EDGAR, not AV — see --skip-mda)
+  Step 9  Earnings call transcripts (full history, ~80 quarters) → earnings_transcripts.duckdb
+          (see --skip-earnings / --earnings-quarters; most probes past AV's actual coverage
+          start just return not_found quickly, so the AV-call count is a ceiling, not typical)
+  Step 10 MD&A (20yr 10-K + 20qtr 10-Q) → mda_filings.duckdb  (SEC EDGAR, not AV — see --skip-mda)
 
 What 'delete' does per ticker (no API calls)
 --------------------------------------------
@@ -58,13 +65,18 @@ What 'delete' does per ticker (no API calls)
                                 cash_flow_statements, shares_outstanding,
                                 dividends, company_overview, import_log
     historic_fundamentals.duckdb monthly_pe, pe_stats, earnings_estimates
+    earnings_transcripts.duckdb earnings_transcripts, earnings_surprises
     mda_filings.duckdb           mda_filings
 
 Rate limits
 -----------
-The add command makes ~8 Alpha Vantage API calls per ticker.
-At 75 calls/minute (Premium plan) that is roughly 9 tickers/minute.
-The built-in rate limiter enforces this automatically — no manual throttling needed.
+The add command makes ~8 Alpha Vantage API calls per ticker, plus up to 80 more for the
+earnings transcript full-history probe (one call per candidate quarter, skipped once
+cached — in practice most tickers stop returning real transcripts well before 80 quarters
+back, so this is a ceiling, not the typical count). A single-ticker add is unaffected in
+practice; for large --csv batches pass --earnings-quarters to cap the per-ticker cost.
+At 75 calls/minute (Premium plan) the built-in rate limiter enforces this automatically —
+no manual throttling needed.
 
 Environment variables (.env)
 -----------------------------
@@ -81,10 +93,6 @@ From the trade_systems project you can call the same logic programmatically:
 
   add_tickers(["AAPL", "MSFT"])
   delete_tickers(["GME", "BB"])
-
-Note
-----
-add_tickers.py is deprecated and exits with an error pointing here.
 """
 
 import argparse
@@ -117,6 +125,12 @@ from historic_fundamentals.mda import (  # noqa: E402
     fetch_all_mda_for_ticker,
     open_db as open_mda_db,
 )
+from historic_fundamentals.earnings_transcripts import (  # noqa: E402
+    DEFAULT_DB_PATH as EARNINGS_DB_PATH,
+    backfill_transcripts_for_ticker,
+    delete_ticker as delete_earnings,
+    open_db as open_earnings_db,
+)
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +145,13 @@ _ETF_TICKERS: frozenset[str] = frozenset({
 })
 
 _AV_URL = "https://www.alphavantage.co/query"
+
+# Deep by default: onboarding is almost always a handful of tickers (often just one), so the
+# extra AV calls are cheap even though most probes past AV's actual transcript coverage start
+# (~2010s for most companies) just come back not_found. Bulk --csv adds of many tickers should
+# pass --earnings-quarters to dial this down (earnings_backfill.py's own default of 4 matches
+# its full-universe sweep, which is a real bulk-runtime constraint that a single add is not).
+_EARNINGS_QUARTERS_DEFAULT = 80
 
 _PRICES_INIT_SQL = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -493,6 +514,8 @@ def _add_ticker(
     force: bool,
     skip_estimates: bool,
     skip_mda: bool = False,
+    skip_earnings: bool = False,
+    earnings_quarters: int = _EARNINGS_QUARTERS_DEFAULT,
 ) -> bool:
     """Run the full add pipeline for one ticker. Returns True on success."""
 
@@ -578,7 +601,22 @@ def _add_ticker(
     finally:
         prices_conn.close()
 
-    # Step 9 — MD&A (20yr 10-K + 20qtr 10-Q, from SEC EDGAR — not an AV call, not rate-limited
+    # Step 9 — Earnings call transcripts (shares the AV limiter above)
+    if not skip_earnings:
+        try:
+            earnings_conn = open_earnings_db()
+            try:
+                summary = backfill_transcripts_for_ticker(
+                    ticker, av_db.conn, api_key, limiter,
+                    n_quarters=earnings_quarters, conn=earnings_conn,
+                )
+            finally:
+                earnings_conn.close()
+            log.debug("  earnings: %s", summary)
+        except Exception as exc:
+            log.warning("  earnings: failed — %s", exc)
+
+    # Step 10 — MD&A (20yr 10-K + 20qtr 10-Q, from SEC EDGAR — not an AV call, not rate-limited
     # against the 75/min AV budget above)
     if not skip_mda:
         try:
@@ -623,7 +661,8 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
             log.info("[%d/%d] %s", i, len(tickers), ticker)
             success = _add_ticker(
                 ticker, av_db, hf_db, prices_db_path,
-                api_key, limiter, args.force, args.skip_estimates, args.skip_mda,
+                api_key, limiter, args.force, args.skip_estimates, args.skip_mda, args.skip_earnings,
+                args.earnings_quarters,
             )
             if success:
                 ok += 1
@@ -714,14 +753,21 @@ def cmd_delete(args: argparse.Namespace, tickers: list[str]) -> int:
                 prices_deleted = _delete_prices(ticker, prices_db_path)
                 av_deleted = av_db.delete_ticker(ticker)
                 hf_deleted = hf_db.delete_ticker(ticker)
+                earnings_conn = open_earnings_db()
+                try:
+                    earnings_deleted = delete_earnings(earnings_conn, ticker)
+                finally:
+                    earnings_conn.close()
                 mda_conn = open_mda_db()
                 try:
                     mda_deleted = delete_mda(mda_conn, ticker)
                 finally:
                     mda_conn.close()
                 log.info(
-                    "[%d/%d] %s — deleted: %d price rows, %d av rows, %d hf rows, %d mda rows",
-                    i, len(tickers), ticker, prices_deleted, av_deleted, hf_deleted, mda_deleted,
+                    "[%d/%d] %s — deleted: %d price rows, %d av rows, %d hf rows, "
+                    "%d earnings rows, %d mda rows",
+                    i, len(tickers), ticker, prices_deleted, av_deleted, hf_deleted,
+                    earnings_deleted, mda_deleted,
                 )
                 ok += 1
             except Exception as exc:
@@ -780,6 +826,12 @@ def parse_args() -> argparse.Namespace:
     add_p.add_argument("--csv", metavar="FILE", help="CSV file with tickers in first column")
     add_p.add_argument("--force", action="store_true", help="Re-import even if already in AV database")
     add_p.add_argument("--skip-estimates", action="store_true", help="Skip EARNINGS_ESTIMATES API call")
+    add_p.add_argument("--skip-earnings", action="store_true",
+                       help="Skip earnings call transcript backfill entirely")
+    add_p.add_argument("--earnings-quarters", type=int, default=_EARNINGS_QUARTERS_DEFAULT, metavar="N",
+                       help=(f"Earnings transcript quarters to probe per ticker (default: "
+                             f"{_EARNINGS_QUARTERS_DEFAULT}, i.e. full history). Dial down for "
+                             f"large --csv batches, e.g. --earnings-quarters 4"))
     add_p.add_argument("--skip-mda", action="store_true",
                        help="Skip MD&A backfill (EDGAR, ~1-2 min/ticker — catch up later with mda_backfill.py)")
     add_p.add_argument("--dry-run", action="store_true", help="Print plan without modifying any database")

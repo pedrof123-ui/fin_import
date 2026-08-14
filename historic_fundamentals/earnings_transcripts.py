@@ -7,6 +7,7 @@ Used by:
   - api/industry_data.py    (Industry AI Researcher integration)
   - scripts/earnings_backfill.py
   - scripts/earnings_update.py
+  - scripts/manage_tickers.py (per-ticker add/delete)
 """
 
 import json
@@ -74,6 +75,18 @@ def open_db(db_path: Path = DEFAULT_DB_PATH) -> duckdb.DuckDBPyConnection:
         )
     """)
     return conn
+
+
+def delete_ticker(conn: duckdb.DuckDBPyConnection, symbol: str) -> int:
+    """Delete all transcripts and cached EPS surprises for symbol. Returns transcript rows deleted."""
+    symbol = symbol.upper()
+    before = conn.execute(
+        "SELECT COUNT(*) FROM earnings_transcripts WHERE symbol = ?", [symbol]
+    ).fetchone()[0]
+    conn.execute("DELETE FROM earnings_transcripts WHERE symbol = ?", [symbol])
+    conn.execute("DELETE FROM earnings_surprises WHERE symbol = ?", [symbol])
+    conn.commit()
+    return before
 
 
 def is_cached(conn: duckdb.DuckDBPyConnection, symbol: str, quarter: str) -> bool:
@@ -380,3 +393,71 @@ def refresh_latest_transcript(
         return quarter
 
     return None
+
+
+def backfill_transcripts_for_ticker(
+    symbol: str,
+    av_conn: duckdb.DuckDBPyConnection,
+    api_key: Optional[str] = None,
+    limiter: Optional[RateLimiter] = None,
+    n_quarters: int = 4,
+    conn: Optional[duckdb.DuckDBPyConnection] = None,
+) -> dict:
+    """
+    Backfill up to n_quarters recent earnings call transcripts for one ticker, deriving the
+    candidate fiscal quarters from its latest fiscal_date_ending/fiscal-year-end in
+    av_financials (same logic as scripts/earnings_backfill.py). Skips quarters already
+    cached. Returns a status-count summary.
+
+    Used by scripts/manage_tickers.py so a newly-onboarded ticker gets the same transcript
+    depth a full backfill run would give it, instead of relying on the weekly incremental
+    cron (which only probes the latest 1-2 quarters).
+    """
+    symbol = symbol.upper()
+    own_conn = conn is None
+    if own_conn:
+        conn = open_db()
+
+    summary = {"fetched": 0, "skipped": 0, "not_found": 0, "errors": 0}
+
+    try:
+        row = av_conn.execute(
+            "SELECT MAX(fiscal_date_ending) FROM income_statements "
+            "WHERE ticker = ? AND period_type = 'quarterly'",
+            [symbol],
+        ).fetchone()
+        latest_date = row[0] if row else None
+        if latest_date is None:
+            return summary
+
+        fy_row = av_conn.execute(
+            "SELECT MONTH(MAX(fiscal_date_ending)) FROM income_statements "
+            "WHERE ticker = ? AND period_type = 'annual'",
+            [symbol],
+        ).fetchone()
+        fy_end_month = fy_row[0] if fy_row and fy_row[0] else 12
+
+        quarters = fiscal_date_to_quarters(latest_date, date.today(), n_quarters, fy_end_month)
+        for quarter in quarters:
+            if is_cached(conn, symbol, quarter):
+                summary["skipped"] += 1
+                continue
+            if limiter is not None:
+                limiter.wait()
+            try:
+                result = fetch_from_av(symbol, quarter, api_key)
+            except (AVError, requests.RequestException) as exc:
+                log.warning("Stopped backfilling %s at %s: %s", symbol, quarter, exc)
+                summary["errors"] += 1
+                break
+            if result is None:
+                summary["not_found"] += 1
+                continue
+            transcript_text, api_json = result
+            save_transcript(conn, symbol, quarter, transcript_text, api_json)
+            summary["fetched"] += 1
+    finally:
+        if own_conn:
+            conn.close()
+
+    return summary
