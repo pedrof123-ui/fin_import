@@ -162,7 +162,8 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
     """
     Returns (quarterly_df, annual_df).
     Columns: fiscal_date_ending, net_income, total_revenue, ebitda, shares,
-             long_term_debt_noncurrent, short_term_debt, current_long_term_debt, cash
+             long_term_debt_noncurrent, short_term_debt, current_long_term_debt, cash,
+             total_current_assets, total_current_liabilities, property_plant_equipment
     shares is from balance_sheets (fallback when shares_outstanding is unavailable).
     """
     sql = """
@@ -185,7 +186,10 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
             b.long_term_debt_noncurrent,
             b.short_term_debt,
             b.current_long_term_debt,
-            b.cash_and_short_term_investments AS cash
+            b.cash_and_short_term_investments AS cash,
+            b.total_current_assets,
+            b.total_current_liabilities,
+            b.property_plant_equipment
         FROM income_statements i
         LEFT JOIN balance_sheets b
             ON  i.ticker      = b.ticker
