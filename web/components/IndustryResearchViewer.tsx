@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 import { API } from "@/lib/config";
 
 const STATUS_POLL_MS = 2500;
-const DEFAULT_MODEL = "google/gemini-3.5-flash";
+const DEFAULT_MODEL = "tiered";
 
 type Phase =
   | "idle"
@@ -41,7 +41,7 @@ export default function IndustryResearchViewer({
   onSelectTicker: (ticker: string) => void;
 }) {
   const [industries, setIndustries] = useState<IndustryOption[]>([]);
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([{ label: "Gemini 3.5 Flash (Default)", value: DEFAULT_MODEL }]);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([{ label: "Tiered — cost-optimized (Default)", value: DEFAULT_MODEL }]);
   const [selectedIndustry, setSelectedIndustry] = useState("");
   const [customTickers, setCustomTickers] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
@@ -181,7 +181,8 @@ export default function IndustryResearchViewer({
     const a = document.createElement("a");
     a.href = url;
     const slug = (customTickers.trim() || selectedIndustry || "industry").replace(/[^a-z0-9]+/gi, "_");
-    a.download = `${slug}_industry_research_${new Date().toISOString().slice(0, 10)}.md`;
+    const modelSlug = model.split("/").pop();
+    a.download = `${slug}_industry_research_${modelSlug}_${new Date().toISOString().slice(0, 10)}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };

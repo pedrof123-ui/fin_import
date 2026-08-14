@@ -6,28 +6,34 @@ import remarkGfm from "remark-gfm";
 import { API } from "@/lib/config";
 
 const STATUS_POLL_MS = 2500;
-const DEFAULT_MODEL = "google/gemini-3.5-flash";
+const DEFAULT_MODEL = "tiered";
 
-type Phase = "idle" | "gathering_data" | "running_specialists" | "synthesizing" | "done" | "error" | "cancelled";
+type Phase =
+  | "idle" | "gathering_data" | "running_ai_dcf" | "running_specialists"
+  | "synthesizing" | "writing_narrative" | "done" | "error" | "cancelled";
 
 const PHASE_LABELS: Record<Phase, string> = {
   idle: "Starting...",
   gathering_data: "Gathering financials, filings & market data...",
+  running_ai_dcf: "Running the agentic AI DCF Valuator...",
   running_specialists: "Running specialist analysts (competitive, earnings, technical, valuation)...",
   synthesizing: "Chief Analyst synthesizing the report...",
+  writing_narrative: "Chief Analyst writing the narrative sections...",
   done: "Report ready.",
   error: "Generation failed.",
   cancelled: "Cancelled.",
 };
 const MODEL_OPTIONS = [
-  { label: "Claude Sonnet 4.6",           value: "anthropic/claude-sonnet-4-6" },
+  { label: "Tiered — cost-optimized (Default)", value: "tiered" },
+  { label: "Claude Sonnet 5",             value: "anthropic/claude-sonnet-5" },
+  { label: "DeepSeek V4 Pro",             value: "deepseek/deepseek-v4-pro" },
+  { label: "DeepSeek V4 Flash 0731",      value: "deepseek/deepseek-v4-flash-0731" },
   { label: "Qwen3 235B",                  value: "qwen/qwen3-235b-a22b-2507" },
-  { label: "Gemini 3.5 Flash (Default)",  value: "google/gemini-3.5-flash" },
+  { label: "Gemini 3.5 Flash",            value: "google/gemini-3.5-flash" },
   { label: "GLM 5.2",                     value: "z-ai/glm-5.2" },
   { label: "Qwen3.7 Max",                 value: "qwen/qwen3.7-max" },
   { label: "Grok 4.5",                    value: "x-ai/grok-4.5" },
-  { label: "Hunyuan 3 (Free)",            value: "tencent/hy3:free" },
-  { label: "DeepSeek V4 Flash",           value: "deepseek/deepseek-v4-flash" },
+  { label: "MiMo V2.5",                   value: "xiaomi/mimo-v2.5" },
   { label: "MiniMax M3",                  value: "minimax/minimax-m3" },
 ];
 
@@ -178,7 +184,8 @@ export default function EquityResearchViewer({ ticker }: { ticker: string }) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
-    a.download = `${ticker}_research_${new Date().toISOString().slice(0, 10)}.md`;
+    const modelSlug = model.split("/").pop();
+    a.download = `${ticker}_research_${modelSlug}_${new Date().toISOString().slice(0, 10)}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
