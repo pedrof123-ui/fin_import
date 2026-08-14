@@ -217,6 +217,23 @@ renders correctly: "ML comps triangulation: 0 report(s) logged with an ML comps 
 
 ---
 
+## Post-launch fix — near-cap guardrail widened (2026-08-14)
+
+First real report (CE) surfaced a gap in the Phase 0/1 capped-multiple guardrail: it only
+suppressed a prediction that hit the scoring script's exact 500x sanity cap. CE's
+`ml_fair_pfcf_high` was 485.09x — 97% of the cap, not the cap itself — which slipped through and
+combined with a thin FCF/share base to produce `ml_fair_price_high = $2,830.92` for a $44.72
+stock. Widened `_get_ml_comps_data`'s check from exact-cap-equality to within 10% of the cap
+(`_ML_COMPS_NEAR_CAP_THRESHOLD = 450`) — a near-cap prediction is empirically just as unreliable
+as a literal cap hit. Updated the `[CAPPED - LOW CONFIDENCE]` messaging (code +
+`research_valuation.md`) from "hit the cap" to "at or near the cap" to match. 2 new regression
+tests (the exact CE numbers; a boundary case below the new threshold, confirming genuinely
+high-but-plausible multiples still render). 146 tests passing. Live-verified: `finview-api`
+restarted, stale cached CE report purged, `_ml_comps_row('CE')` now returns `None`. Committed
+`b23a186`.
+
+---
+
 ## Explicitly out of scope (tracked as a reminder, not part of this plan)
 
 - Promoting ML comps to a real fourth `target_price_validation` anchor, or swapping it in for
