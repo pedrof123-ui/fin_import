@@ -323,6 +323,49 @@ def test_ml_comps_row_omitted_when_capped(tmp_path, monkeypatch):
     assert rr._ml_comps_row("ACHR") is None
 
 
+def test_ml_comps_row_omitted_when_near_cap_not_exactly_capped(tmp_path, monkeypatch):
+    """Real finding (CE, 2026-08-14): a predicted multiple doesn't need to hit the exact 500x
+    cap to be just as unreliable. ml_fair_pfcf_high=485.09 (97% of the cap, not the cap itself)
+    produced ml_fair_price_high=$2830.92 for a stock trading at $44.72 — the exact-equality
+    guardrail let it through. Any multiple within 10% of the cap must now be treated the same
+    as a literal cap hit."""
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "CE", "ok",
+        ml_fair_price_low=51.284759, ml_fair_price_mid=137.221706, ml_fair_price_high=2830.916511,
+        ml_fair_price_basis="median(pfcf,ps)",
+        ml_fair_pfcf_low=6.368186, ml_fair_pfcf_mid=21.125898, ml_fair_pfcf_high=485.089458,
+        ml_fair_ps_low=0.599598, ml_fair_ps_mid=1.226321, ml_fair_ps_high=20.743056,
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    assert rr._ml_comps_row("CE") is None
+
+
+def test_ml_comps_row_not_capped_below_near_cap_threshold(tmp_path, monkeypatch):
+    """A predicted multiple comfortably below the near-cap threshold (90% of 500 = 450) must
+    still render normally — the widened guardrail shouldn't suppress genuinely high-but-plausible
+    multiples."""
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "HYPERGROWTH", "ok",
+        ml_fair_price_low=50.0, ml_fair_price_mid=80.0, ml_fair_price_high=120.0,
+        ml_fair_price_basis="median(ps)",
+        ml_fair_ps_low=20.0, ml_fair_ps_mid=35.0, ml_fair_ps_high=60.0,  # well under 450
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    row = rr._ml_comps_row("HYPERGROWTH")
+
+    assert row == ["ML Comps (peer-relative)", "$50.00", "$80.00", "$120.00"]
+
+
 def test_ml_comps_row_only_checks_contributing_multiples(tmp_path, monkeypatch):
     """A capped multiple that did NOT contribute to ml_fair_price_basis (e.g. P/E capped for a
     company with no valid EPS basis, so only P/S was used) must not suppress a good row."""

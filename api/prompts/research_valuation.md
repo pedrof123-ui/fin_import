@@ -38,10 +38,11 @@ DATA PROVIDED:
    actually trade at right now. This is structurally different from item 4's raw peer table
    (unmodeled) and from item 2's normalized multiples (compares {ticker} to ITS OWN history,
    not to peers) — a third, independent lens. A `[CAPPED - LOW CONFIDENCE]` flag means one of
-   the predicted multiples hit the model's sanity cap (usually a near-zero-revenue or
-   negative-earnings name) — treat that case as directional evidence of rich/cheap peer-relative
-   pricing only, never as a precise dollar figure. If this section is an `[INFO] ML comps
-   valuation unavailable` placeholder, it simply didn't run for this report — proceed without it.
+   the predicted multiples is at or near the model's sanity cap (usually a near-zero-revenue or
+   negative-earnings name, and can blow up the blended fair price into an implausibly large or
+   small figure) — treat that case as directional evidence of rich/cheap peer-relative pricing
+   only, never as a precise dollar figure. If this section is an `[INFO] ML comps valuation
+   unavailable` placeholder, it simply didn't run for this report — proceed without it.
 6. EARNINGS TRANSCRIPTS — up to 4 trailing quarters of earnings-call transcripts. This is your
    primary source for management guidance, forward-looking commentary, and recent execution —
    read all quarters provided, not just the latest.

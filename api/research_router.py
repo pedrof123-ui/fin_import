@@ -1546,6 +1546,12 @@ def _comps_table(ticker: str) -> str:
 
 
 _ML_COMPS_MAX_MULTIPLE = 500.0  # matches scripts/score_ml_comps_valuation.py's sanity cap
+# A prediction doesn't need to hit the exact cap to be just as unreliable — real example (CE,
+# 2026-08-14): ml_fair_pfcf_high = 485.09x (97% of the cap, not the cap itself) combined with a
+# thin FCF/share base to produce ml_fair_price_high = $2,830.92 for a stock trading at $44.72.
+# Any prediction within 10% of the cap is quantile-extrapolation noise, not a real peer multiple
+# — treated the same as a literal cap hit. Easy to tighten/loosen here if this bites again.
+_ML_COMPS_NEAR_CAP_THRESHOLD = _ML_COMPS_MAX_MULTIPLE * 0.9
 _ML_COMPS_COLS = [
     "ml_fair_price_low", "ml_fair_price_mid", "ml_fair_price_high", "ml_fair_price_basis",
     "ml_fair_pe_low", "ml_fair_pe_mid", "ml_fair_pe_high",
@@ -1560,11 +1566,12 @@ def _get_ml_comps_data(ticker: str) -> Optional[dict]:
     (Valuation Analyst context, Phase 2) so the capped-multiple detection logic lives in exactly
     one place. Returns None when the DB/ticker/`status='ok'` row is missing. Adds two derived
     keys: `contributing` (the multiples named in `ml_fair_price_basis`, e.g. ["pe","pfcf","ps"])
-    and `capped` (True if any *contributing* multiple's high hit the scoring script's sanity cap
-    — Phase 0.2's ACHR finding: this collapses `ml_fair_price` into a near-worthless dollar
-    figure for near-zero-revenue/negative-earnings names, directionally correct but not a usable
-    absolute anchor). Exact float equality against 500.0 doesn't hold — the cap round-trips
-    through log/exp in the scoring script and lands at 499.99999999999983 — hence the tolerance."""
+    and `capped` (True if any *contributing* multiple's high is within 10% of the scoring
+    script's sanity cap — see `_ML_COMPS_NEAR_CAP_THRESHOLD`). Two real findings drove this:
+    Phase 0.2's ACHR (hit the cap exactly, collapsed `ml_fair_price` into a near-worthless dollar
+    figure for a near-zero-revenue name) and CE (never hit the cap, 485.09x vs. the 500x ceiling,
+    but still produced a $2,830.92 "fair value high" for a $44.72 stock) — both directionally
+    plausible but neither a usable absolute anchor."""
     if not _HIST_FUND_DB.exists():
         return None
     try:
@@ -1591,7 +1598,7 @@ def _get_ml_comps_data(ticker: str) -> Optional[dict]:
     ]
     data["contributing"] = contributing
     data["capped"] = any(
-        highs.get(m) is not None and highs[m] >= _ML_COMPS_MAX_MULTIPLE - 1e-6 for m in contributing
+        highs.get(m) is not None and highs[m] >= _ML_COMPS_NEAR_CAP_THRESHOLD for m in contributing
     )
     return data
 
@@ -1644,9 +1651,10 @@ def _format_ml_comps_summary(ticker: str) -> str:
     ]
     if data["capped"]:
         lines.append(
-            "[CAPPED - LOW CONFIDENCE] one of the contributing predicted multiples hit the "
-            "model's 500x sanity cap — this usually means near-zero trailing revenue/earnings "
-            "relative to price (a pre-revenue or narrative-driven name). Treat this as "
+            "[CAPPED - LOW CONFIDENCE] one of the contributing predicted multiples is at or near "
+            "the model's 500x sanity cap — this usually means near-zero trailing revenue/earnings "
+            "relative to price (a pre-revenue or narrative-driven name), and can blow up the "
+            "blended fair price into an implausibly large or small figure. Treat this as "
             "directional evidence of rich peer-relative pricing only, not a precise dollar "
             "figure to average into fair_value_low/base/high."
         )
