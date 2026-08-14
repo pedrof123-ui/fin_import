@@ -1147,6 +1147,18 @@ def compute_divergence_pct(mechanical_base: Optional[float], ai_base: Optional[f
     return (ai_base - mechanical_base) / abs(mechanical_base)
 
 
+def compute_ml_comps_divergence_pct(
+    fair_value_base: float, ml_comps_ground_truth: Optional[float],
+) -> Optional[float]:
+    """(ml_comps_ground_truth - fair_value_base) / abs(fair_value_base) — how far the ML comps
+    model's own blended fair price sits from the Valuation Analyst's actual chosen fair value
+    (PLAN_ML_COMPS_TRIANGULATION.md's deferred anchor-promotion question). None if ML comps was
+    unavailable/capped for this ticker or fair_value_base is 0 (divergence undefined)."""
+    if ml_comps_ground_truth is None or fair_value_base == 0:
+        return None
+    return (ml_comps_ground_truth - fair_value_base) / abs(fair_value_base)
+
+
 def compute_dcf_anchor(
     fair_value_base: float, mechanical_base: Optional[float], ai_base: Optional[float],
 ) -> str:
@@ -1184,28 +1196,46 @@ def _init_reconciliation_log() -> None:
             reconciliation_text VARCHAR
         )
     """)
+    # ML comps triangulation tracking (PLAN_ML_COMPS_TRIANGULATION.md) — added after the table
+    # already existed in production, hence ALTER rather than relying on CREATE IF NOT EXISTS.
+    conn.execute("ALTER TABLE dcf_reconciliation_log ADD COLUMN IF NOT EXISTS ml_comps_fair_value DOUBLE")
+    conn.execute("ALTER TABLE dcf_reconciliation_log ADD COLUMN IF NOT EXISTS ml_comps_ground_truth DOUBLE")
+    conn.execute("ALTER TABLE dcf_reconciliation_log ADD COLUMN IF NOT EXISTS ml_comps_divergence_pct DOUBLE")
     conn.close()
 
 
 def log_dcf_reconciliation(
     ticker: str, model: str, mechanical_base: Optional[float], ai_base: Optional[float],
     fair_value_base: float, reconciliation_text: str,
+    ml_comps_fair_value: Optional[float] = None, ml_comps_ground_truth: Optional[float] = None,
 ) -> None:
     """Persists one audit-trail row per real research-report generation (never on a cache hit —
     callers only invoke this from the actual generation path): the two DCF base values (ground
     truth, not the Valuation Analyst's echoed fields), their divergence, a deterministic anchor
     label, and the raw reconciliation text. Never raises — a logging failure must not break
-    report generation, matching this feature's failure-isolation contract elsewhere."""
+    report generation, matching this feature's failure-isolation contract elsewhere.
+
+    `ml_comps_fair_value` (the Valuation Analyst's echoed figure) and `ml_comps_ground_truth`
+    (the ML comps model's own blended fair price) are optional, added to answer the deferred
+    "does ML comps diverge from the Valuation Analyst's actual fair value often enough to earn
+    its own anchor in the Chief's target_price_validation triangulation" question with real data
+    instead of guessing — see scripts/report_ml_comps_calibration.py's ML_COMPS_ANCHOR_REVIEW_COUNT
+    gate for when this log is deemed to have enough volume to revisit that decision."""
     try:
         divergence_pct = compute_divergence_pct(mechanical_base, ai_base)
         anchor = compute_dcf_anchor(fair_value_base, mechanical_base, ai_base)
+        ml_comps_divergence_pct = compute_ml_comps_divergence_pct(fair_value_base, ml_comps_ground_truth)
         _init_reconciliation_log()
         conn = duckdb.connect(str(_RECONCILIATION_LOG_DB))
         conn.execute("""
             INSERT INTO dcf_reconciliation_log
-                (ticker, model, generated_at, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text)
-            VALUES (?, ?, now(), ?, ?, ?, ?, ?)
-        """, [ticker.upper(), model, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text])
+                (ticker, model, generated_at, mechanical_base, ai_base, divergence_pct, anchor,
+                 reconciliation_text, ml_comps_fair_value, ml_comps_ground_truth, ml_comps_divergence_pct)
+            VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            ticker.upper(), model, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text,
+            ml_comps_fair_value, ml_comps_ground_truth, ml_comps_divergence_pct,
+        ])
         conn.close()
     except Exception as e:
         log.error("[%s] ai_dcf: failed to log DCF reconciliation (model=%s): %s", ticker, model, e)
@@ -1219,11 +1249,14 @@ def get_reconciliation_log(ticker: Optional[str] = None, limit: int = 100) -> li
     conn = duckdb.connect(str(_RECONCILIATION_LOG_DB), read_only=True)
     where = "WHERE ticker = ?" if ticker else ""
     params = [ticker.upper()] if ticker else []
+    cols = [
+        "ticker", "model", "generated_at", "mechanical_base", "ai_base", "divergence_pct", "anchor",
+        "reconciliation_text", "ml_comps_fair_value", "ml_comps_ground_truth", "ml_comps_divergence_pct",
+    ]
     rows = conn.execute(f"""
-        SELECT ticker, model, generated_at, mechanical_base, ai_base, divergence_pct, anchor, reconciliation_text
+        SELECT {", ".join(cols)}
         FROM dcf_reconciliation_log {where}
         ORDER BY generated_at DESC LIMIT ?
     """, params + [limit]).fetchall()
     conn.close()
-    cols = ["ticker", "model", "generated_at", "mechanical_base", "ai_base", "divergence_pct", "anchor", "reconciliation_text"]
     return [dict(zip(cols, r)) for r in rows]

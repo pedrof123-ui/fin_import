@@ -104,7 +104,10 @@ target_price_validation: 4 bold-header bullet clusters (2-3 bullets each) triang
   **Independent Fair Value** — state the Valuation Analyst's bear/base/bull fair value range
     explicitly, and summarize why (per its valuation_methodology/dcf_assessment) — DCF-driven,
     multiples-driven, or a blend. If unavailable, say so and explain the target falls back to
-    goal prices.
+    goal prices. If valuation_methodology notes a material disagreement between the ML
+    comps-based peer valuation and the DCF/multiples-driven fair value, name the ML comps figure
+    explicitly and state which side you weighted more heavily and why — do not leave that
+    disagreement unmentioned just because it wasn't flagged as its own numbered anchor below.
   **Model Goal Prices** — explain what drives goal_low/goal_high (normalized historical
     multiples applied to earnings/FCF) and state them with upside % to each. Compare them to the
     independent fair value range above — do they agree, and if not, by how much?

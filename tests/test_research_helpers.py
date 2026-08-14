@@ -228,3 +228,191 @@ def test_get_estimates_summary_live_nvda_smoke():
     assert "[ERROR]" not in result
     if "No analyst estimates found" not in result:
         assert "Spread" in result
+
+
+# ---------------------------------------------------------------------------
+# _ml_comps_row — ML comps triangulation row (PLAN_ML_COMPS_TRIANGULATION.md Phase 1)
+# ---------------------------------------------------------------------------
+
+_ML_COMPS_COLUMNS = """
+    ticker VARCHAR, status VARCHAR,
+    ml_fair_price_low DOUBLE, ml_fair_price_mid DOUBLE, ml_fair_price_high DOUBLE,
+    ml_fair_price_basis VARCHAR,
+    ml_fair_pe_low DOUBLE, ml_fair_pe_mid DOUBLE, ml_fair_pe_high DOUBLE,
+    ml_fair_pfcf_low DOUBLE, ml_fair_pfcf_mid DOUBLE, ml_fair_pfcf_high DOUBLE,
+    ml_fair_ps_low DOUBLE, ml_fair_ps_mid DOUBLE, ml_fair_ps_high DOUBLE
+"""
+
+
+def _make_ml_comps_db(db_path):
+    conn = duckdb.connect(str(db_path))
+    conn.execute(f"CREATE TABLE ml_comps_valuation ({_ML_COMPS_COLUMNS})")
+    conn.close()
+
+
+def _insert_ml_comps_row_direct(db_path, ticker, status, **kw):
+    """Inserts one ml_comps_valuation row, defaulting every column not passed to NULL. Keeps
+    each test's INSERT focused on the fields it's exercising instead of repeating all 15
+    columns positionally."""
+    defaults = {
+        "ml_fair_price_low": None, "ml_fair_price_mid": None, "ml_fair_price_high": None,
+        "ml_fair_price_basis": None,
+        "ml_fair_pe_low": None, "ml_fair_pe_mid": None, "ml_fair_pe_high": None,
+        "ml_fair_pfcf_low": None, "ml_fair_pfcf_mid": None, "ml_fair_pfcf_high": None,
+        "ml_fair_ps_low": None, "ml_fair_ps_mid": None, "ml_fair_ps_high": None,
+    }
+    defaults.update(kw)
+    cols = ["ticker", "status"] + list(defaults.keys())
+    values = [ticker, status] + [defaults[c] for c in list(defaults.keys())]
+    conn = duckdb.connect(str(db_path))
+    conn.execute(
+        f"INSERT INTO ml_comps_valuation ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+        values,
+    )
+    conn.close()
+
+
+def test_ml_comps_row_present_and_formatted(tmp_path, monkeypatch):
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "AAPL", "ok",
+        ml_fair_price_low=202.07, ml_fair_price_mid=279.63, ml_fair_price_high=400.62,
+        ml_fair_price_basis="median(pe,pfcf,ps)",
+        ml_fair_pe_low=24.35, ml_fair_pe_mid=33.69, ml_fair_pe_high=55.70,
+        ml_fair_pfcf_low=24.11, ml_fair_pfcf_mid=33.09, ml_fair_pfcf_high=45.80,
+        ml_fair_ps_low=2.88, ml_fair_ps_mid=6.04, ml_fair_ps_high=9.13,
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    row = rr._ml_comps_row("AAPL")
+
+    assert row == ["ML Comps (peer-relative)", "$202.07", "$279.63", "$400.62"]
+
+
+def test_ml_comps_row_omitted_when_status_not_ok(tmp_path, monkeypatch):
+    """status='insufficient_peers' (e.g. BBBY — zero sector, zero peers by construction) must
+    omit the row entirely, not render an "n/a" placeholder."""
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(db_path, "BBBY", "insufficient_peers")
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    assert rr._ml_comps_row("BBBY") is None
+
+
+def test_ml_comps_row_omitted_when_capped(tmp_path, monkeypatch):
+    """Phase 0.2 finding (ACHR): a predicted multiple hitting the scoring script's 500x sanity
+    cap collapses into a near-worthless dollar figure — not a usable absolute anchor."""
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "ACHR", "ok",
+        ml_fair_price_low=0.0048, ml_fair_price_mid=0.3352, ml_fair_price_high=1.2388,
+        ml_fair_price_basis="median(ps)",
+        ml_fair_ps_low=1.95, ml_fair_ps_mid=135.30, ml_fair_ps_high=499.999999,
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    assert rr._ml_comps_row("ACHR") is None
+
+
+def test_ml_comps_row_only_checks_contributing_multiples(tmp_path, monkeypatch):
+    """A capped multiple that did NOT contribute to ml_fair_price_basis (e.g. P/E capped for a
+    company with no valid EPS basis, so only P/S was used) must not suppress a good row."""
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "FAKE", "ok",
+        ml_fair_price_low=10.0, ml_fair_price_mid=15.0, ml_fair_price_high=20.0,
+        ml_fair_price_basis="median(ps)",
+        ml_fair_pe_high=499.999999,  # capped but not in the basis — must not suppress the row
+        ml_fair_ps_low=8.5, ml_fair_ps_mid=9.0, ml_fair_ps_high=9.5,
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    row = rr._ml_comps_row("FAKE")
+
+    assert row == ["ML Comps (peer-relative)", "$10.00", "$15.00", "$20.00"]
+
+
+def test_ml_comps_row_missing_ticker(tmp_path, monkeypatch):
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    assert rr._ml_comps_row("NODATA") is None
+
+
+def test_ml_comps_row_missing_db(tmp_path, monkeypatch):
+    import api.research_router as rr
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", tmp_path / "does_not_exist.duckdb")
+    assert rr._ml_comps_row("AAPL") is None
+
+
+# ---------------------------------------------------------------------------
+# _format_ml_comps_summary — Valuation Analyst context (PLAN_ML_COMPS_TRIANGULATION.md Phase 2)
+# ---------------------------------------------------------------------------
+
+def test_format_ml_comps_summary_unavailable(tmp_path, monkeypatch):
+    import api.research_router as rr
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", tmp_path / "does_not_exist.duckdb")
+    result = rr._format_ml_comps_summary("AAPL")
+
+    assert result.startswith("[INFO]")
+    assert "unavailable" in result.lower()
+
+
+def test_format_ml_comps_summary_present(tmp_path, monkeypatch):
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "AAPL", "ok",
+        ml_fair_price_low=202.07, ml_fair_price_mid=279.63, ml_fair_price_high=400.62,
+        ml_fair_price_basis="median(pe,pfcf,ps)",
+        ml_fair_pe_low=24.35, ml_fair_pe_mid=33.69, ml_fair_pe_high=55.70,
+        ml_fair_pfcf_low=24.11, ml_fair_pfcf_mid=33.09, ml_fair_pfcf_high=45.80,
+        ml_fair_ps_low=2.88, ml_fair_ps_mid=6.04, ml_fair_ps_high=9.13,
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    result = rr._format_ml_comps_summary("AAPL")
+
+    assert "ML COMPS-BASED FAIR VALUE" in result
+    assert "$279.63" in result
+    assert "CAPPED" not in result
+
+
+def test_format_ml_comps_summary_flags_capped_prediction(tmp_path, monkeypatch):
+    """Unlike the display row, a capped prediction is surfaced (not hidden) here — with an
+    explicit low-confidence flag so the analyst can still use it as directional evidence."""
+    import api.research_router as rr
+
+    db_path = tmp_path / "historic_fundamentals.duckdb"
+    _make_ml_comps_db(db_path)
+    _insert_ml_comps_row_direct(
+        db_path, "ACHR", "ok",
+        ml_fair_price_low=0.0048, ml_fair_price_mid=0.3352, ml_fair_price_high=1.2388,
+        ml_fair_price_basis="median(ps)",
+        ml_fair_ps_low=1.95, ml_fair_ps_mid=135.30, ml_fair_ps_high=499.999999,
+    )
+
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", db_path)
+    result = rr._format_ml_comps_summary("ACHR")
+
+    assert "CAPPED" in result
+    assert "$0.34" in result  # p50 fair price still stated, alongside the low-confidence flag

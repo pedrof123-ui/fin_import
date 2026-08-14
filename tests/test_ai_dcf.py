@@ -942,3 +942,71 @@ def test_get_reconciliation_log_respects_limit_and_ordering(tmp_path, monkeypatc
     assert len(rows) == 2
     # newest first
     assert rows[0]["reconciliation_text"] == "reconciliation 2"
+
+
+# ---------------------------------------------------------------------------
+# ML comps divergence tracking (PLAN_ML_COMPS_TRIANGULATION.md — answers "how often does ML
+# comps diverge from the Valuation Analyst's actual fair value" with real logged data)
+# ---------------------------------------------------------------------------
+
+def test_compute_ml_comps_divergence_pct_basic():
+    assert adr.compute_ml_comps_divergence_pct(100.0, 120.0) == pytest.approx(0.20)
+    assert adr.compute_ml_comps_divergence_pct(100.0, 80.0) == pytest.approx(-0.20)
+
+
+def test_compute_ml_comps_divergence_pct_none_when_missing_or_zero():
+    assert adr.compute_ml_comps_divergence_pct(100.0, None) is None
+    assert adr.compute_ml_comps_divergence_pct(0.0, 120.0) is None
+
+
+def test_log_dcf_reconciliation_persists_ml_comps_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "log.duckdb")
+    adr.log_dcf_reconciliation(
+        "AAPL", "test-model", mechanical_base=53.48, ai_base=60.79,
+        fair_value_base=240.0, reconciliation_text="anchored on mechanical DCF",
+        ml_comps_fair_value=279.63, ml_comps_ground_truth=279.63,
+    )
+    row = adr.get_reconciliation_log("AAPL")[0]
+    assert row["ml_comps_fair_value"] == pytest.approx(279.63)
+    assert row["ml_comps_ground_truth"] == pytest.approx(279.63)
+    assert row["ml_comps_divergence_pct"] == pytest.approx((279.63 - 240.0) / 240.0)
+
+
+def test_log_dcf_reconciliation_ml_comps_fields_default_null(tmp_path, monkeypatch):
+    """Callers that don't pass the ML comps kwargs (or tickers where it was unavailable) must
+    still round-trip cleanly — these columns were added after the table already existed."""
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", tmp_path / "log.duckdb")
+    adr.log_dcf_reconciliation(
+        "TXN", "test-model", mechanical_base=53.48, ai_base=60.79,
+        fair_value_base=58.0, reconciliation_text="x",
+    )
+    row = adr.get_reconciliation_log("TXN")[0]
+    assert row["ml_comps_fair_value"] is None
+    assert row["ml_comps_ground_truth"] is None
+    assert row["ml_comps_divergence_pct"] is None
+
+
+def test_reconciliation_log_alter_table_migrates_existing_db(tmp_path, monkeypatch):
+    """A DB file created before this feature (no ml_comps_* columns) must not break — the
+    ALTER TABLE ADD COLUMN IF NOT EXISTS migration must run cleanly against it."""
+    import duckdb
+
+    db_path = tmp_path / "pre_existing.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE dcf_reconciliation_log (
+            ticker VARCHAR, model VARCHAR, generated_at TIMESTAMP,
+            mechanical_base DOUBLE, ai_base DOUBLE, divergence_pct DOUBLE,
+            anchor VARCHAR, reconciliation_text VARCHAR
+        )
+    """)
+    conn.close()
+
+    monkeypatch.setattr(adr, "_RECONCILIATION_LOG_DB", db_path)
+    adr.log_dcf_reconciliation(
+        "TXN", "test-model", mechanical_base=50.0, ai_base=60.0,
+        fair_value_base=55.0, reconciliation_text="x",
+        ml_comps_fair_value=57.0, ml_comps_ground_truth=57.0,
+    )
+    row = adr.get_reconciliation_log("TXN")[0]
+    assert row["ml_comps_ground_truth"] == pytest.approx(57.0)

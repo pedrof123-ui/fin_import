@@ -109,19 +109,21 @@ def test_format_ai_dcf_summary_present():
 # 6.4 — _model_summary_table / render_valuation_model_tables with ai_dcf_engine
 # ---------------------------------------------------------------------------
 
-def test_model_summary_table_includes_ai_row_when_present():
+def test_model_summary_table_includes_ai_row_when_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", tmp_path / "does_not_exist.duckdb")  # no ML comps row
     result = _fixture_ai_dcf_result()
     md = rr._model_summary_table(
-        {"bear": None, "base": None, "bull": None}, None, None, None,
+        "TXN", {"bear": None, "base": None, "bull": None}, None, None, None,
         60.0, 65.0, 70.0, ai_dcf_engine=result.engine,
     )
     assert "DCF (AI-authored)" in md
     assert "$45.00" in md and "$62.00" in md and "$85.00" in md
 
 
-def test_model_summary_table_omits_ai_row_when_absent():
+def test_model_summary_table_omits_ai_row_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(rr, "_HIST_FUND_DB", tmp_path / "does_not_exist.duckdb")  # no ML comps row
     md = rr._model_summary_table(
-        {"bear": None, "base": None, "bull": None}, None, None, None, 60.0, 65.0, 70.0,
+        "TXN", {"bear": None, "base": None, "bull": None}, None, None, None, 60.0, 65.0, 70.0,
     )
     assert "DCF (AI-authored)" not in md
 
@@ -254,7 +256,7 @@ def test_build_post_subagent_tables_returns_mechanical_base():
         fair_value_low=50.0, fair_value_base=60.0, fair_value_high=70.0,
         valuation_methodology="m", dcf_assessment="d", relative_valuation="r", valuation_risks=[],
     )
-    _, _, _, mechanical_base = rr._build_post_subagent_tables("TXN", valuation_out, competitive)
+    _, _, _, mechanical_base, _ = rr._build_post_subagent_tables("TXN", valuation_out, competitive)
     expected = compute_dcf_scenarios("TXN")["base"].intrinsic_value_per_share
     assert mechanical_base == pytest.approx(expected)
 
@@ -266,7 +268,7 @@ def test_build_post_subagent_tables_mechanical_base_none_when_scenarios_unavaila
         fair_value_low=50.0, fair_value_base=60.0, fair_value_high=70.0,
         valuation_methodology="m", dcf_assessment="d", relative_valuation="r", valuation_risks=[],
     )
-    _, _, _, mechanical_base = rr._build_post_subagent_tables("TXN", valuation_out, competitive)
+    _, _, _, mechanical_base, _ = rr._build_post_subagent_tables("TXN", valuation_out, competitive)
     assert mechanical_base is None
 
 

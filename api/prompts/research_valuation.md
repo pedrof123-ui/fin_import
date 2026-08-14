@@ -32,23 +32,33 @@ DATA PROVIDED:
 3. FINANCIAL PERFORMANCE — 5-year revenue/margin/FCF history.
 4. PEER COMPARISON — same-industry peers with their own market cap, multiples, and growth
    (peer prices/multiples are fine to use — they are not {ticker}'s own price).
-5. EARNINGS TRANSCRIPTS — up to 4 trailing quarters of earnings-call transcripts. This is your
+5. ML COMPS-BASED FAIR VALUE — a peer CROSS-SECTIONAL machine-learning estimate (XGBoost
+   quantile model, validated for P/E, P/FCF, P/S only): given {ticker}'s own fundamentals
+   (margins, growth, ROIC, leverage), what multiple do SECTOR PEERS with similar fundamentals
+   actually trade at right now. This is structurally different from item 4's raw peer table
+   (unmodeled) and from item 2's normalized multiples (compares {ticker} to ITS OWN history,
+   not to peers) — a third, independent lens. A `[CAPPED - LOW CONFIDENCE]` flag means one of
+   the predicted multiples hit the model's sanity cap (usually a near-zero-revenue or
+   negative-earnings name) — treat that case as directional evidence of rich/cheap peer-relative
+   pricing only, never as a precise dollar figure. If this section is an `[INFO] ML comps
+   valuation unavailable` placeholder, it simply didn't run for this report — proceed without it.
+6. EARNINGS TRANSCRIPTS — up to 4 trailing quarters of earnings-call transcripts. This is your
    primary source for management guidance, forward-looking commentary, and recent execution —
    read all quarters provided, not just the latest.
-6. EPS BEAT/MISS HISTORY — reported vs. estimated EPS for the last 8 quarters. A track record of
+7. EPS BEAT/MISS HISTORY — reported vs. estimated EPS for the last 8 quarters. A track record of
    consistent beats/misses and the recent surprise trend (widening, narrowing, reversing).
-7. MD&A (latest 10-K) — management's own account of revenue drivers, margin trends, and
+8. MD&A (latest 10-K) — management's own account of revenue drivers, margin trends, and
    strategic priorities.
-8. MARKET SIZE / TAM SEARCH RESULTS — industry growth/outlook context.
-9. AI-AUTHORED DCF VALUATION — a SECOND, INDEPENDENT bear/base/bull DCF, run through the SAME
-   deterministic engine but with assumptions authored by a separate agent team (an evidence
-   team + a senior DCF Architect persona) instead of the engine's mechanical historical
-   defaults. Their assumptions are grounded in company history, industry trends, competitor
-   transcripts, and multi-year MD&A/guidance — read their per-scenario rationale and
-   `key_debates` for the specific evidence driving each number. If this section is an
-   `[INFO] AI DCF unavailable` placeholder, the AI DCF simply didn't run for this report —
-   proceed using the mechanical DCF alone, exactly as you would have before this section
-   existed.
+9. MARKET SIZE / TAM SEARCH RESULTS — industry growth/outlook context.
+10. AI-AUTHORED DCF VALUATION — a SECOND, INDEPENDENT bear/base/bull DCF, run through the SAME
+    deterministic engine but with assumptions authored by a separate agent team (an evidence
+    team + a senior DCF Architect persona) instead of the engine's mechanical historical
+    defaults. Their assumptions are grounded in company history, industry trends, competitor
+    transcripts, and multi-year MD&A/guidance — read their per-scenario rationale and
+    `key_debates` for the specific evidence driving each number. If this section is an
+    `[INFO] AI DCF unavailable` placeholder, the AI DCF simply didn't run for this report —
+    proceed using the mechanical DCF alone, exactly as you would have before this section
+    existed.
 
 USING THIS CONTEXT: your job is to judge whether the DCF engine's historically-anchored
 assumptions (which blend trailing financial ratios with quarterly momentum, per the DCF
@@ -86,15 +96,19 @@ fair_value_base: derive primarily from whichever DCF (mechanical or AI-authored)
   closely paraphrased data point.
 
 fair_value_low / fair_value_high: anchor on the BEAR and BULL DCF scenarios respectively, cross-
-  checked against (a) the sensitivity grid's range and (b) a multiples-based cross-check: apply
+  checked against (a) the sensitivity grid's range, (b) a multiples-based cross-check: apply
   the normalized 5yr P/E and P/FCF to forward consensus EPS/FCF-per-share (not TTM — see peak-
   earnings note below) to get a second fair-value estimate. If P/E and P/FCF are both undefined
   (unprofitable/cash-burning company), fall back to normalized 5yr P/S x forward consensus
   revenue/share instead — this is often the only usable multiples cross-check for such
-  companies. Reconcile whichever cross-check is usable with the DCF range rather than picking
-  one arbitrarily. Do not simply take the DCF base +/- an arbitrary percentage — every low/high
-  figure must trace to either a scenario DCF run or a multiples calculation shown in your
-  reasoning.
+  companies. And (c), when available and not `[CAPPED - LOW CONFIDENCE]`, the ML comps blended
+  fair price (item 5) as a third, peer-cross-sectional cross-check. Reconcile whichever
+  cross-check(s) are usable with the DCF range rather than picking one arbitrarily — when the
+  historical-multiples cross-check and the ML comps cross-check meaningfully disagree, that
+  itself is a signal (peers may be pricing something {ticker}'s own history doesn't yet show, or
+  vice versa) worth a sentence in valuation_methodology. Do not simply take the DCF base +/- an
+  arbitrary percentage — every low/high figure must trace to a scenario DCF run or a multiples/ML
+  comps calculation shown in your reasoning.
 
 PEAK-EARNINGS AWARENESS: if TTM EPS is far above forward consensus EPS (check the per-share
 history and forward estimates in VALUATION INPUTS), anchor any multiples-based cross-check on
@@ -118,6 +132,8 @@ dcf_intrinsic_value: the MECHANICAL BASE scenario DCF's intrinsic_value_per_shar
   for traceability (null if the mechanical DCF was unusable)
 ai_dcf_intrinsic_value: the AI-AUTHORED BASE scenario DCF's intrinsic_value_per_share, echoed
   as-is for traceability (null if the AI DCF was unavailable)
+ml_comps_fair_value: the ML comps blended fair price's p50 value (item 5's "Blended fair price"
+  middle figure), echoed as-is for traceability (null if the ML comps anchor was unavailable)
 dcf_reconciliation: 2-4 bullets — the neutral-preference-rule adjudication described above:
   which DCF anchored fair_value_base and why; if they disagreed by >20% on base intrinsic value,
   state the specific driving assumption difference and which you found more credible and why.
@@ -143,10 +159,11 @@ valuation_risks: 4-6 bullet strings — specific, data-grounded conditions that 
 Write with institutional precision. Every number must trace to the data below. Do not invent
 figures not present in the data provided. Tag each factual claim inline with its source in
 brackets — [Mechanical DCF] for the engine-default scenario DCF output, [AI DCF] for the
-agent-authored scenario DCF output, [multiples] for the multiples cross-check, [DB] for
-peer/financial data, [Q1 2026 call] (use the actual quarter label) for transcript-sourced
-guidance/commentary, [MD&A] for 10-K MD&A, [EPS history] for beat/miss data, [TAM search] for
-market-size search results — so a reader can verify provenance at a glance.
+agent-authored scenario DCF output, [multiples] for the multiples cross-check, [ML comps] for
+the peer cross-sectional ML fair value, [DB] for peer/financial data, [Q1 2026 call] (use the
+actual quarter label) for transcript-sourced guidance/commentary, [MD&A] for 10-K MD&A,
+[EPS history] for beat/miss data, [TAM search] for market-size search results — so a reader can
+verify provenance at a glance.
 
 ---
 DATA:

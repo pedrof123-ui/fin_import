@@ -401,6 +401,10 @@ class ValuationOutput(BaseModel):
     # default to unavailable so the schema still validates when the AI DCF wasn't run.
     ai_dcf_intrinsic_value: Optional[float] = None
     dcf_reconciliation: str = ""
+    # ML comps triangulation (PLAN_ML_COMPS_TRIANGULATION.md Phase 2) — echoes the ML comps
+    # model's own blended p50 fair price (ml_fair_price_mid) for traceability, checked in
+    # _validate_report, same pattern as ai_dcf_intrinsic_value. Null when unavailable/capped.
+    ml_comps_fair_value: Optional[float] = None
     valuation_methodology: str
     dcf_assessment: str
     relative_valuation: str
@@ -414,7 +418,9 @@ class ValuationOutput(BaseModel):
         coerced = _coerce_optional_float(v)
         return 0.0 if coerced is None else coerced
 
-    @field_validator("dcf_intrinsic_value", "ai_dcf_intrinsic_value", mode="before")
+    @field_validator(
+        "dcf_intrinsic_value", "ai_dcf_intrinsic_value", "ml_comps_fair_value", mode="before",
+    )
     @classmethod
     def _coerce_dcf_intrinsic_value(cls, v):
         return _coerce_optional_float(v)
@@ -1539,8 +1545,120 @@ def _comps_table(ticker: str) -> str:
     return "\n".join(lines)
 
 
+_ML_COMPS_MAX_MULTIPLE = 500.0  # matches scripts/score_ml_comps_valuation.py's sanity cap
+_ML_COMPS_COLS = [
+    "ml_fair_price_low", "ml_fair_price_mid", "ml_fair_price_high", "ml_fair_price_basis",
+    "ml_fair_pe_low", "ml_fair_pe_mid", "ml_fair_pe_high",
+    "ml_fair_pfcf_low", "ml_fair_pfcf_mid", "ml_fair_pfcf_high",
+    "ml_fair_ps_low", "ml_fair_ps_mid", "ml_fair_ps_high",
+]
+
+
+def _get_ml_comps_data(ticker: str) -> Optional[dict]:
+    """Single DB read of the `ml_comps_valuation` row for `ticker` (PLAN_ML_COMPS_TRIANGULATION.md
+    Phase 0/1), shared by _ml_comps_row (display table, Phase 1) and _format_ml_comps_summary
+    (Valuation Analyst context, Phase 2) so the capped-multiple detection logic lives in exactly
+    one place. Returns None when the DB/ticker/`status='ok'` row is missing. Adds two derived
+    keys: `contributing` (the multiples named in `ml_fair_price_basis`, e.g. ["pe","pfcf","ps"])
+    and `capped` (True if any *contributing* multiple's high hit the scoring script's sanity cap
+    — Phase 0.2's ACHR finding: this collapses `ml_fair_price` into a near-worthless dollar
+    figure for near-zero-revenue/negative-earnings names, directionally correct but not a usable
+    absolute anchor). Exact float equality against 500.0 doesn't hold — the cap round-trips
+    through log/exp in the scoring script and lands at 499.99999999999983 — hence the tolerance."""
+    if not _HIST_FUND_DB.exists():
+        return None
+    try:
+        conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+        row = conn.execute(
+            f"""SELECT {", ".join(_ML_COMPS_COLS)}
+                FROM ml_comps_valuation WHERE ticker = ? AND status = 'ok'""",
+            [ticker.upper()],
+        ).fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    data = dict(zip(_ML_COMPS_COLS, row))
+    if (
+        data["ml_fair_price_low"] is None or data["ml_fair_price_mid"] is None
+        or data["ml_fair_price_high"] is None or not data["ml_fair_price_basis"]
+    ):
+        return None
+    highs = {"pe": data["ml_fair_pe_high"], "pfcf": data["ml_fair_pfcf_high"], "ps": data["ml_fair_ps_high"]}
+    contributing = [
+        m.strip() for m in data["ml_fair_price_basis"].removeprefix("median(").removesuffix(")").split(",")
+    ]
+    data["contributing"] = contributing
+    data["capped"] = any(
+        highs.get(m) is not None and highs[m] >= _ML_COMPS_MAX_MULTIPLE - 1e-6 for m in contributing
+    )
+    return data
+
+
+def _ml_comps_row(ticker: str) -> Optional[list[str]]:
+    """Row for _model_summary_table: peer-relative ML comps fair value. Omitted entirely (not
+    "n/a") when unavailable or capped — see _get_ml_comps_data."""
+    data = _get_ml_comps_data(ticker)
+    if data is None or data["capped"]:
+        return None
+    return [
+        "ML Comps (peer-relative)",
+        f"${data['ml_fair_price_low']:.2f}", f"${data['ml_fair_price_mid']:.2f}", f"${data['ml_fair_price_high']:.2f}",
+    ]
+
+
+def _format_ml_comps_summary(ticker: str) -> str:
+    """ML comps-based fair valuation for the Valuation Analyst's context
+    (PLAN_ML_COMPS_TRIANGULATION.md Phase 2) — a peer cross-sectional XGBoost quantile model,
+    independent of both DCF paradigms and the ticker's-own-history Multiples cross-check.
+    Degrades to an [INFO] placeholder when unavailable, mirroring format_ai_dcf_summary(None).
+    Unlike the display row, a capped prediction is NOT hidden here — it's surfaced with an
+    explicit low-confidence flag so the analyst can use it as directional evidence."""
+    data = _get_ml_comps_data(ticker)
+    if data is None:
+        return "[INFO] ML comps valuation unavailable for this run — proceed without this anchor"
+
+    def _mult_line(label, key):
+        lo, mid, hi = data[f"ml_fair_{key}_low"], data[f"ml_fair_{key}_mid"], data[f"ml_fair_{key}_high"]
+        if lo is None or mid is None or hi is None:
+            return None
+        return f"{label}: p10={lo:.1f}x  p50={mid:.1f}x  p90={hi:.1f}x"
+
+    lines = [
+        f"ML COMPS-BASED FAIR VALUE — {ticker.upper()} (peer cross-sectional XGBoost quantile "
+        "model, validated for P/E, P/FCF, P/S only — NOT the same as the normalized-history "
+        "multiples in VALUATION INPUTS above, which compare the ticker to ITS OWN history; this "
+        "compares it to SECTOR PEERS with similar fundamentals right now)",
+        "",
+    ]
+    for label, key in [("Predicted fair P/E", "pe"), ("Predicted fair P/FCF", "pfcf"), ("Predicted fair P/S", "ps")]:
+        line = _mult_line(label, key)
+        if line:
+            lines.append(line)
+    lines += [
+        "",
+        f"Blended fair price (median across {', '.join(m.upper() for m in data['contributing'])} "
+        f"bases, p10/p50/p90): ${data['ml_fair_price_low']:.2f} / ${data['ml_fair_price_mid']:.2f} "
+        f"/ ${data['ml_fair_price_high']:.2f}",
+    ]
+    if data["capped"]:
+        lines.append(
+            "[CAPPED - LOW CONFIDENCE] one of the contributing predicted multiples hit the "
+            "model's 500x sanity cap — this usually means near-zero trailing revenue/earnings "
+            "relative to price (a pre-revenue or narrative-driven name). Treat this as "
+            "directional evidence of rich peer-relative pricing only, not a precise dollar "
+            "figure to average into fair_value_low/base/high."
+        )
+    lines.append(
+        "Caveat: this reflects fair value RELATIVE TO PEERS — if the whole peer group is "
+        "mispriced, this anchor inherits that mispricing rather than correcting for it."
+    )
+    return "\n".join(lines)
+
+
 def _model_summary_table(
-    scenarios: dict, pe_multiples: Optional[tuple], ps_multiples: Optional[tuple],
+    ticker: str, scenarios: dict, pe_multiples: Optional[tuple], ps_multiples: Optional[tuple],
     pfcf_multiples: Optional[tuple],
     fair_value_low: float, fair_value_base: float, fair_value_high: float,
     ai_dcf_engine: Optional[dict] = None,
@@ -1558,6 +1676,12 @@ def _model_summary_table(
         # both computed by the same deterministic engine, never by an LLM.
         from api.ai_dcf_router import render_ai_dcf_triangulation_row
         rows.append(render_ai_dcf_triangulation_row(ai_dcf_engine))
+
+    ml_comps_row = _ml_comps_row(ticker)
+    if ml_comps_row is not None:
+        # Peer-relative cross-sectional anchor (PLAN_ML_COMPS_TRIANGULATION.md) — distinct from
+        # both DCF paradigms above and the ticker's-own-history Multiples rows below.
+        rows.append(ml_comps_row)
 
     def _multiples_row(label, multiples):
         if not multiples or not all(v is not None for v in multiples):
@@ -1609,7 +1733,7 @@ def render_valuation_model_tables(
         fundamentals_md,
         _comps_table(ticker),
         _model_summary_table(
-            scenarios, pe_multiples, ps_multiples, pfcf_multiples,
+            ticker, scenarios, pe_multiples, ps_multiples, pfcf_multiples,
             fair_value_low, fair_value_base, fair_value_high,
             ai_dcf_engine=ai_dcf_engine,
         ),
@@ -1767,7 +1891,7 @@ def render_market_share_table(ticker: str, scenarios: Optional[dict], competitiv
 
 def _build_post_subagent_tables(
     ticker: str, valuation_out, competitive_out, ai_dcf_result=None,
-) -> tuple[str, str, str, Optional[float]]:
+) -> tuple[str, str, str, Optional[float], Optional[float]]:
     """Builds the three deterministic tables that depend on sub-agent output (valuation model
     detail, direct competitors, market size & share), sharing a single DCF scenario computation
     between the two that need it. `ai_dcf_result` (Agentic AI DCF Valuator output, or None) is
@@ -1776,7 +1900,10 @@ def _build_post_subagent_tables(
     Also returns the ground-truth mechanical base intrinsic value (from this same scenarios
     computation, not the Valuation Analyst's echoed `dcf_intrinsic_value` field) for the
     reconciliation audit trail (features/ai_dcf/SPEC.md 11) — reuses the one DCF run above
-    rather than computing it again."""
+    rather than computing it again. And the ground-truth ML comps blended p50 fair price
+    (PLAN_ML_COMPS_TRIANGULATION.md Phase 2), for the same echo-validation pattern applied to
+    `ValuationOutput.ml_comps_fair_value` — a fresh, cheap single-row read since it isn't part
+    of `scenarios`."""
     needs_valuation = valuation_out.fair_value_base != 0.0
     needs_market_share = competitive_out.tam_current_low is not None or competitive_out.tam_projected_low is not None
 
@@ -1802,7 +1929,10 @@ def _build_post_subagent_tables(
     if scenarios is not None and scenarios.get("base") is not None:
         mechanical_base = scenarios["base"].intrinsic_value_per_share
 
-    return valuation_tables_md, direct_competitors_md, market_share_md, mechanical_base
+    ml_comps_data = _get_ml_comps_data(ticker)
+    ml_comps_ground_truth = ml_comps_data["ml_fair_price_mid"] if ml_comps_data is not None else None
+
+    return valuation_tables_md, direct_competitors_md, market_share_md, mechanical_base, ml_comps_ground_truth
 
 
 # ---------------------------------------------------------------------------
@@ -1858,6 +1988,7 @@ def _format_specialist_outputs(
         f"fair_value_high: {valuation.fair_value_high}\n"
         f"dcf_intrinsic_value (mechanical): {valuation.dcf_intrinsic_value}\n"
         f"ai_dcf_intrinsic_value (AI-authored): {valuation.ai_dcf_intrinsic_value}\n"
+        f"ml_comps_fair_value (peer-relative): {valuation.ml_comps_fair_value}\n"
         f"dcf_reconciliation:\n{valuation.dcf_reconciliation}\n\n"
         f"valuation_methodology:\n{valuation.valuation_methodology}\n\n"
         f"dcf_assessment:\n{valuation.dcf_assessment}\n\n"
@@ -1868,7 +1999,7 @@ def _format_specialist_outputs(
 
 def _validate_report(
     report: EquityResearchReport, technical_out: TechnicalOutput, valuation_out: ValuationOutput,
-    ai_dcf_result=None, mechanical_base: Optional[float] = None,
+    ai_dcf_result=None, mechanical_base: Optional[float] = None, ml_comps_ground_truth: Optional[float] = None,
 ) -> list[str]:
     """Deterministic coherence checks on the Chief's output. Never blocks generation —
     findings are logged and surfaced as a QC footer on the rendered report. `ai_dcf_result`
@@ -1877,7 +2008,9 @@ def _validate_report(
     same pattern as the existing mechanical fair_value checks below. `mechanical_base` (ground-
     truth mechanical DCF base value, from the same shared compute_dcf_scenarios call used for
     the report's tables) adds one more: a deterministic (not semantic) check that the Valuation
-    Analyst didn't silently skip the >20%-divergence reconciliation rule (SPEC 11)."""
+    Analyst didn't silently skip the >20%-divergence reconciliation rule (SPEC 11).
+    `ml_comps_ground_truth` (PLAN_ML_COMPS_TRIANGULATION.md Phase 2) adds the same echo check
+    for `ml_comps_fair_value` as the AI DCF one below."""
     findings: list[str] = []
     h, v = report.header, report.valuation
 
@@ -1919,6 +2052,13 @@ def _validate_report(
             findings.append(
                 f"valuation.ai_dcf_intrinsic_value (${valuation_out.ai_dcf_intrinsic_value}) "
                 f"does not match the AI DCF's own base-scenario intrinsic value (${ai_base})"
+            )
+
+    if ml_comps_ground_truth is not None and valuation_out.ml_comps_fair_value is not None:
+        if abs(valuation_out.ml_comps_fair_value - ml_comps_ground_truth) > 0.01:
+            findings.append(
+                f"valuation.ml_comps_fair_value (${valuation_out.ml_comps_fair_value}) does not "
+                f"match the ML comps model's own blended fair price (${ml_comps_ground_truth})"
             )
 
     from api.ai_dcf_router import _DIVERGENCE_WARN_THRESHOLD, _MIN_RECONCILIATION_CHARS, compute_divergence_pct
@@ -2077,6 +2217,7 @@ async def _run_research_agent(
         f"{valuation_inputs}\n\n"
         f"=== FINANCIAL PERFORMANCE ===\n{financials}\n\n"
         f"{peer}\n\n"
+        f"{_format_ml_comps_summary(ticker)}\n\n"
         f"=== EARNINGS TRANSCRIPTS (last 4 quarters, for recent trend/guidance context) ===\n{earnings}\n\n"
         f"{beat_miss}\n\n"
         f"=== MD&A (latest 10-K) ===\n{mda}\n\n"
@@ -2151,7 +2292,9 @@ async def _run_research_agent(
     )
     t_llm = datetime.now()
     try:
-        core_result, (valuation_tables_md, direct_competitors_md, market_share_md, mechanical_base) = await asyncio.gather(
+        core_result, (
+            valuation_tables_md, direct_competitors_md, market_share_md, mechanical_base, ml_comps_ground_truth,
+        ) = await asyncio.gather(
             asyncio.wait_for(
                 Runner.run(core_agent, f"Generate the rating, target price, and financial synthesis for {ticker.upper()}."),
                 timeout=_LLM_TIMEOUT,
@@ -2209,6 +2352,7 @@ async def _run_research_agent(
     report = EquityResearchReport(**core_out.model_dump(), **narrative_out.model_dump())
     findings = _validate_report(
         report, technical_out, valuation_out, ai_dcf_result=ai_dcf_result, mechanical_base=mechanical_base,
+        ml_comps_ground_truth=ml_comps_ground_truth,
     )
     if findings:
         log.warning("[%s] research: QC found %d inconsistencies: %s", ticker, len(findings), findings)
@@ -2227,6 +2371,8 @@ async def _run_research_agent(
         log_dcf_reconciliation(
             ticker, model, mechanical_base, ai_base_for_log,
             valuation_out.fair_value_base, valuation_out.dcf_reconciliation,
+            ml_comps_fair_value=valuation_out.ml_comps_fair_value,
+            ml_comps_ground_truth=ml_comps_ground_truth,
         )
     except Exception as e:
         log.error("[%s] research: DCF reconciliation logging failed: %s", ticker, e)

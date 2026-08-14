@@ -53,6 +53,24 @@ COVERAGE_LOW, COVERAGE_HIGH = 0.70, 0.90
 # to not be a years-long wait" and is easy to change here if that's wrong.
 READY_FOR_REVIEW_MONTHS = 6
 
+# Mirrors api.ai_dcf_router._RECONCILIATION_LOG_DB's path construction — not imported directly
+# to avoid pulling in that module's much heavier FastAPI/agents-SDK dependencies for what's just
+# a path constant.
+RECONCILIATION_LOG_DB_DEFAULT = str(Path(__file__).resolve().parent.parent / "data" / "dcf_reconciliation_log.duckdb")
+
+# Volume gate for the ML comps triangulation-divergence question
+# (PLAN_ML_COMPS_TRIANGULATION.md's deferred anchor-promotion follow-up). AI Researcher reports
+# are generated on demand, not on a batch schedule, so a calendar gate (like
+# READY_FOR_REVIEW_MONTHS above) doesn't guarantee enough data points — gate on volume instead.
+# 30 was chosen the same way as READY_FOR_REVIEW_MONTHS: "enough to see a real pattern, not so
+# many it's a multi-year wait" — easy to change here if that's wrong.
+ML_COMPS_ANCHOR_REVIEW_COUNT = 30
+
+# Same "material divergence" bar already used for mechanical-vs-AI-DCF divergence
+# (api.ai_dcf_router._DIVERGENCE_WARN_THRESHOLD) — reused rather than inventing a second
+# definition of "material" for the ML comps case.
+ML_COMPS_DIVERGENCE_THRESHOLD = 0.20
+
 
 def bot_token() -> str:
     for line in TELEGRAM_ENV.read_text().splitlines():
@@ -73,7 +91,45 @@ def _passed_gate(oos_rmse_vs_baseline_pct, oos_coverage_p10_p90) -> bool | None:
     )
 
 
-def build_message(hf_db: str) -> str:
+def build_ml_comps_triangulation_section(reconciliation_log_db: str) -> str:
+    """Answers 'does ML comps diverge from the Valuation Analyst's actual fair value often
+    enough to earn its own anchor in the Chief's target_price_validation triangulation' with
+    real logged data (api.ai_dcf_router.log_dcf_reconciliation), instead of guessing —
+    PLAN_ML_COMPS_TRIANGULATION.md's deferred follow-up."""
+    if not Path(reconciliation_log_db).exists():
+        return (
+            "\nML comps triangulation: no dcf_reconciliation_log.duckdb yet — no AI Researcher "
+            "reports generated since this tracking was added."
+        )
+    conn = duckdb.connect(reconciliation_log_db, read_only=True)
+    try:
+        n, n_diverging = conn.execute("""
+            SELECT COUNT(*), SUM(CASE WHEN ABS(ml_comps_divergence_pct) > ? THEN 1 ELSE 0 END)
+            FROM dcf_reconciliation_log
+            WHERE ml_comps_divergence_pct IS NOT NULL
+        """, [ML_COMPS_DIVERGENCE_THRESHOLD]).fetchone()
+    finally:
+        conn.close()
+
+    if not n:
+        return "\nML comps triangulation: 0 report(s) logged with an ML comps anchor yet."
+
+    pct_diverging = n_diverging / n
+    lines = [
+        f"\nML comps triangulation: {n} report(s) logged, {n_diverging} ({pct_diverging:.0%}) "
+        f"diverged >{ML_COMPS_DIVERGENCE_THRESHOLD:.0%} from the Valuation Analyst's fair value."
+    ]
+    if n >= ML_COMPS_ANCHOR_REVIEW_COUNT:
+        lines.append(
+            f"{n} >= {ML_COMPS_ANCHOR_REVIEW_COUNT} logged — enough volume for a real "
+            "conversation about promoting ML comps to its own anchor in target_price_validation."
+        )
+    else:
+        lines.append(f"{ML_COMPS_ANCHOR_REVIEW_COUNT - n} more needed before that conversation makes sense.")
+    return "\n".join(lines)
+
+
+def build_message(hf_db: str, reconciliation_log_db: str = RECONCILIATION_LOG_DB_DEFAULT) -> str:
     conn = duckdb.connect(hf_db, read_only=True)
     try:
         lines = [f"ML comps calibration report — {__import__('datetime').date.today()}"]
@@ -124,6 +180,8 @@ def build_message(hf_db: str) -> str:
                 f"({READY_FOR_REVIEW_MONTHS - min_streak} more needed before a Phase 9 review makes sense)."
             )
 
+        lines.append(build_ml_comps_triangulation_section(reconciliation_log_db))
+
         return "\n".join(lines)
     finally:
         conn.close()
@@ -132,10 +190,11 @@ def build_message(hf_db: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Monthly ml_comps calibration report.")
     parser.add_argument("--db", default=os.getenv("HF_DB_PATH", HF_DB_PATH_DEFAULT))
+    parser.add_argument("--reconciliation-log-db", default=RECONCILIATION_LOG_DB_DEFAULT)
     parser.add_argument("--dry-run", action="store_true", help="Print only, don't send to Telegram")
     args = parser.parse_args()
 
-    msg = build_message(args.db)
+    msg = build_message(args.db, args.reconciliation_log_db)
     print(msg)
     if args.dry_run:
         return 0
