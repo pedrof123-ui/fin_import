@@ -49,8 +49,7 @@ SCHEMA = {
     "required": ["guidance_direction", "tone_delta", "new_risk_language", "specificity", "hedging_change", "rationale"],
 }
 
-SYSTEM = """You compare two consecutive annual MD&A sections from the same company's 10-K filings.
-Extract exactly these features as JSON:
+BODY = """Extract exactly these features as JSON:
 - guidance_direction: the direction of management's forward-looking OUTLOOK LANGUAGE in the CURRENT filing vs the PRIOR filing. MD&A rarely contains formal numeric guidance; judge the outlook management describes (demand, margins, investment plans, expected results). Weigh the business trajectory management actually reports, not its phrasing: accelerating growth and expanding investment indicate raised; deterioration, restructuring, impairments or weakening demand indicate lowered even when phrased optimistically; steady continuation indicates maintained. New risk disclosures alone do not lower the outlook if the described trajectory is strong (raised/maintained/lowered/withdrawn/none_given).
 - tone_delta: change in management tone from PRIOR to CURRENT (-2 much more negative .. +2 much more positive)
 - new_risk_language: extent of risk/uncertainty language in CURRENT that is absent from PRIOR (0 none .. 3 substantial new risks)
@@ -59,17 +58,36 @@ Extract exactly these features as JSON:
 - rationale: one sentence citing the main evidence
 Base every answer only on the supplied text."""
 
-# ticker -> fiscal year of the CURRENT filing (None = latest available pair)
+FORM_INTRO = {
+    "10-K": "You compare two consecutive annual MD&A sections from the same company's 10-K filings.",
+    "10-Q": ("You compare two consecutive quarterly MD&A sections from the same company's 10-Q filings, "
+             "one year apart (same fiscal quarter, prior year vs current). 10-Q MD&A covers only the "
+             "quarter and year-to-date and often incorporates risk factors by reference rather than "
+             "restating them -- do not read the absence of restated risk factors as reduced risk."),
+}
+
+
+def system_prompt(form: str) -> str:
+    return FORM_INTRO[form] + "\n" + BODY
+
+
+# unchanged constant, kept for backward compatibility (nightly cron default is 10-K)
+SYSTEM = system_prompt("10-K")
+
+# ticker -> fiscal year of the CURRENT filing (None = latest available pair); 10-K only,
+# the validation gates below are specific to that prompt/form
 VALIDATION_PAIRS = [("NVDA", None), ("UPS", None), ("KO", None), ("ENVA", None), ("ANET", None),
                     ("PTON", 2022), ("LUMN", 2022), ("VFC", 2024)]
 
-PAIRS_SQL = """
+
+def pairs_sql(form: str) -> str:
+    return f"""
 with ok as (
     select * from mda_filings
-    where status = 'ok' and mda_text is not null and form = '10-K'
+    where status = 'ok' and mda_text is not null and form = '{form}'
 )
-select a.ticker, a.fiscal_period_end, b.fiscal_period_end, a.filing_date, a.accession_no,
-       a.char_count, b.char_count
+select a.ticker, a.fiscal_period_end, b.fiscal_period_end as prior_fiscal_period_end,
+       a.filing_date, a.accession_no, a.char_count as cur_chars, b.char_count as prior_chars
 from ok a
 join ok b
   on a.ticker = b.ticker
@@ -81,6 +99,10 @@ qualify row_number() over (
     order by abs(date_diff('day', b.fiscal_period_end, a.fiscal_period_end) - 365)
 ) = 1
 """
+
+
+# unchanged constant, kept for backward compatibility (nightly cron default is 10-K)
+PAIRS_SQL = pairs_sql("10-K")
 
 
 def log(msg: str) -> None:
@@ -109,12 +131,12 @@ def ensure_ollama() -> None:
     raise RuntimeError("could not start ollama serve")
 
 
-def extract(cur_text: str, prior_text: str) -> dict:
+def extract(cur_text: str, prior_text: str, form: str = "10-K") -> dict:
     user = (f"PRIOR-YEAR MD&A:\n{prior_text[:CHAR_CAP]}\n\n"
             f"CURRENT-YEAR MD&A:\n{cur_text[:CHAR_CAP]}\n\nExtract the features.")
     r = requests.post(f"{OLLAMA_URL}/api/chat", json={
         "model": MODEL,
-        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+        "messages": [{"role": "system", "content": system_prompt(form)}, {"role": "user", "content": user}],
         "format": SCHEMA,
         "think": True,
         "stream": False,
@@ -141,30 +163,30 @@ def init_features_db() -> duckdb.DuckDBPyConnection:
     return con
 
 
-def fetch_pending() -> tuple[list, int]:
+def fetch_pending(form: str = "10-K") -> tuple[list, int]:
     """Returns (pending pair keys newest-first, total pair count). Text is deliberately
     not fetched here: all pairs' MD&A at once is several GB. Connections are closed
     before returning so no lock is held during the sweep."""
     con = duckdb.connect(str(FILINGS_DB), read_only=True)
-    pairs = con.execute(PAIRS_SQL).fetchall()
+    pairs = con.execute(pairs_sql(form)).fetchall()
     con.close()
     fcon = init_features_db()
     done = {(t, f) for t, f in fcon.execute(
-        "select ticker, fiscal_period_end from mda_features where prompt_version = ?",
-        [PROMPT_VERSION]).fetchall()}
+        "select ticker, fiscal_period_end from mda_features where prompt_version = ? and form = ?",
+        [PROMPT_VERSION, form]).fetchall()}
     fcon.close()
     pending = [p for p in pairs if (p[0], p[1]) not in done]
     pending.sort(key=lambda p: p[3], reverse=True)
     return pending, len(pairs)
 
 
-def fetch_texts(ticker: str, fpe, prior_fpe) -> tuple[str, str]:
+def fetch_texts(ticker: str, fpe, prior_fpe, form: str = "10-K") -> tuple[str, str]:
     """Short-lived read-only connection per pair: never holds the filings DB open for
     more than one lookup (the weekly mda_update cron needs write access to it)."""
     con = duckdb.connect(str(FILINGS_DB), read_only=True)
-    q = "select mda_text from mda_filings where ticker=? and form='10-K' and fiscal_period_end=?"
-    cur = con.execute(q, [ticker, fpe]).fetchone()[0]
-    prior = con.execute(q, [ticker, prior_fpe]).fetchone()[0]
+    q = "select mda_text from mda_filings where ticker=? and form=? and fiscal_period_end=?"
+    cur = con.execute(q, [ticker, form, fpe]).fetchone()[0]
+    prior = con.execute(q, [ticker, form, prior_fpe]).fetchone()[0]
     con.close()
     return cur, prior
 
@@ -181,13 +203,13 @@ def window_deadline(window_end: str) -> datetime:
     return end
 
 
-def run_sweep(window_end: str, limit: int | None) -> None:
+def run_sweep(window_end: str, limit: int | None, form: str = "10-K") -> None:
     ensure_ollama()
-    pending, total = fetch_pending()
+    pending, total = fetch_pending(form)
     deadline = window_deadline(window_end) if limit is None else datetime.max
     run_started = datetime.now()
     done_total = total - len(pending)
-    log(f"{len(pending)} pairs pending of {total}; window ends {deadline}")
+    log(f"{form}: {len(pending)} pairs pending of {total}; window ends {deadline}")
 
     con = init_features_db()
     tonight = errors = consecutive_errors = 0
@@ -216,8 +238,8 @@ def run_sweep(window_end: str, limit: int | None) -> None:
             break
         t0 = time.time()
         try:
-            cur, prior = fetch_texts(ticker, fpe, prior_fpe)
-            feats = extract(cur, prior)
+            cur, prior = fetch_texts(ticker, fpe, prior_fpe, form)
+            feats = extract(cur, prior, form)
         except Exception as e:
             errors += 1
             consecutive_errors += 1
@@ -231,7 +253,7 @@ def run_sweep(window_end: str, limit: int | None) -> None:
         elapsed = time.time() - t0
         times.append(elapsed)
         con.execute("insert or replace into mda_features values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
-            ticker, "10-K", fpe, PROMPT_VERSION, prior_fpe, filing_date, accession,
+            ticker, form, fpe, PROMPT_VERSION, prior_fpe, filing_date, accession,
             feats["guidance_direction"], feats["tone_delta"], feats["new_risk_language"],
             feats["specificity"], feats["hedging_change"], feats["rationale"],
             MODEL, cur_chars, prior_chars, round(elapsed, 1), datetime.now(),
@@ -292,11 +314,12 @@ def main() -> None:
     ap.add_argument("--window-end", default="03:00")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--validate", action="store_true")
+    ap.add_argument("--form", default="10-K", choices=["10-K", "10-Q"])
     args = ap.parse_args()
     if args.validate:
         run_validation()
     else:
-        run_sweep(args.window_end, args.limit)
+        run_sweep(args.window_end, args.limit, args.form)
 
 
 if __name__ == "__main__":
