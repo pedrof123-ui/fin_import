@@ -10,7 +10,10 @@ fin_import2/
 │   ├── screener_router.py               Stock screener: POST /screen, GET /screen/metadata; includes Graham net current asset
 │   │                                    value (NCAV = current assets - total liabilities, Security Analysis Ch. XLIII)
 │   ├── sector_router.py                 Sector dashboard: GET /sector/snapshot, /sector/history, /sector/companies
-│   ├── earnings_router.py               Earnings call transcripts: GET /earnings/report, POST /earnings/import-url, GET /earnings/models
+│   ├── earnings_router.py               Earnings call transcripts: GET /earnings/report, POST /earnings/import-url, POST /earnings/import-audio,
+│   │                                    GET /earnings/models, POST /earnings/chat
+│   ├── earnings_calendar_router.py      Earnings calendar: GET /earnings-calendar. Reads earnings_calendar (av_financials.duckdb) joined with
+│   │                                    company_overview, 30-day lookback, status ('reported'/'upcoming') derived at query time
 │   ├── research_router.py               AI equity research: GET /research/{ticker}. Valuation Analyst sub-agent context now includes
 │   │                                    a second, independent AI-authored DCF (via ai_dcf_router.get_or_run_ai_dcf) alongside the
 │   │                                    mechanical bear/base/bull scenarios; neutral reconciliation rule in dcf_reconciliation
@@ -108,7 +111,7 @@ fin_import2/
 │   ├── historic_fundamentals.duckdb     Monthly PE timeseries, PE statistics, analyst estimates snapshots, sector_stats, dcf_results,
 │   │                                    ml_comps_valuation (live-scoring cache, additive to goal_pe/goal_low/goal_high),
 │   │                                    ml_model_metadata (retrain history)
-│   ├── earnings_transcripts.duckdb      Earnings call transcripts: symbol, quarter, transcript_text, fetched_date, earnings_call_date (nullable), source
+│   ├── earnings_transcripts.duckdb      Earnings call transcripts: symbol, quarter, transcript_text, fetched_date, api_response_json, source
 │   │                                    Also earnings_surprises (EPS beat/miss history, 30d cache), shared by the single-name and industry AI researchers.
 │   ├── mda_filings.duckdb               MD&A text from SEC EDGAR 10-K/10-Q filings: ticker, form, fiscal_period_end, mda_text,
 │   │                                    char_count, status (ok/empty/error). See PLAN_MDA.md.
@@ -160,8 +163,12 @@ fin_import2/
 │   ├── estimates.py                     EARNINGS_ESTIMATES fetch, normalize, forward PE + NTM revenue calculation
 │   ├── sector.py                        compute_sector_stats(): monthly median/p25/p75 aggregates per sector and industry from monthly_pe + company_overview
 │   ├── query.py                         Notebook-friendly wrappers: get_pe_stats() (peer ranks), get_pe_history(), get_estimates(), get_sector_stats(), get_sector_history()
-│   ├── earnings_transcripts.py          Shared earnings transcript helpers: open_db(), is_cached(), save_transcript(), fetch_from_av(), fiscal_date_to_quarters()
-│   │                                    Used by earnings_router.py, research_router.py, earnings_backfill.py, earnings_update.py
+│   ├── earnings_transcripts.py          Shared earnings transcript helpers: open_db(), is_cached(), save_transcript(), fetch_from_av() (raises AVError
+│   │                                    on a rate-limit/entitlement response — distinct from a genuine "no transcript" empty result),
+│   │                                    fiscal_date_to_quarters(), probe_quarters(), refresh_latest_transcript() (shared cache-aside probe-and-cache
+│   │                                    helper: checks the local cache, probes AV only for quarters newer than what's cached, stops probing on
+│   │                                    AVError/network errors instead of exhausting the candidate list, write-through on success)
+│   │                                    Used by earnings_router.py, research_router.py, industry_data.py, earnings_backfill.py, earnings_update.py
 │   ├── mda.py                           MD&A (SEC EDGAR 10-K/10-Q) helpers: open_db(), fetch_mda(), fetch_all_mda_for_ticker(), get_cached_mda(), delete_ticker()
 │   │                                    Used by manage_tickers.py, mda_backfill.py, mda_update.py. See PLAN_MDA.md.
 │   ├── universe.py                      Investable universe filters: filter_universe(), report_universe_counts(), sensitivity_analysis(), UNIVERSE_DEFAULTS
@@ -236,10 +243,13 @@ fin_import2/
 └── CLAUDE.md                            Coding standards
 
 scripts/ also contains:
-    earnings_backfill.py                 One-time backfill: fetch latest 4 quarters of earnings call transcripts for all ~2,655 AV tickers
+    earnings_backfill.py                 One-time backfill: fetch latest 4 quarters of earnings call transcripts for all ~2,644 AV tickers
                                          Resume-safe; skips already-cached (symbol, quarter) pairs. --ticker, --quarters N, --dry-run flags.
-    earnings_update.py                   Weekly update: check latest 1-2 quarters per ticker for new transcripts; designed for cron scheduling
-                                         --ticker flag for single-ticker runs.
+    earnings_update.py                   Weekly update: check latest 1-2 quarters per ticker for new transcripts. Cron: Sunday 19:30 ET
+                                         (crontab -l, cron_wrap.sh earnings_update). --ticker flag for single-ticker runs.
+    earnings_calendar_update.py          Weekly update: fetch AV EARNINGS_CALENDAR (3-month horizon), upsert into earnings_calendar
+                                         (av_financials.duckdb) for tracked tickers, purge entries >30 days old. Cron: Monday 5:45 ET
+                                         (crontab -l, cron_wrap.sh earnings_calendar_update).
     mda_backfill.py                      One-time backfill: fetch 20yr 10-K + 20qtr 10-Q MD&A for all tickers in company_overview
                                          Resume-safe; skips already-cached (ticker, form, fiscal_period_end). --ticker, --csv, --limit, --force, --dry-run flags.
     mda_update.py                        Weekly update: check latest 10-K + latest 10-Q per ticker for new MD&A; designed for cron scheduling
@@ -517,12 +527,15 @@ Config → Load monthly_pe (with shares) → Sector join + $300M cap filter
 | `shares_outstanding` | ticker, date, shares_outstanding_diluted, shares_outstanding_basic, fetched_at |
 | `dividends` | ticker, ex_dividend_date, declaration_date, record_date, payment_date, amount, fetched_at |
 | `company_overview` | ticker, fetch_date, name, sector, industry, beta, market_cap, pe_ratio, ... (all 45 AV OVERVIEW fields) |
+| `earnings_calendar` | symbol, name, report_date, fiscal_date_ending, estimate, currency, time_of_day, fetched_at (PK: symbol, report_date) |
 | `companies` | ticker, last_updated_at, total_annual, total_quarterly |
 | `import_log` | ticker, run_at, success, statements, periods_inserted, error_msg |
 
 Primary key on all three statement tables: `(ticker, fiscal_date_ending, period_type)`. All numeric fields stored as DOUBLE; AV `"None"` strings converted to NULL on ingest.
 
 `company_overview` PK is `(ticker, fetch_date DATE)` for monthly historical snapshots. The latest snapshot per ticker is joined automatically into `get_pe_stats()` to supply `name`, `sector`, `industry`, and `beta`.
+
+`earnings_calendar` is populated by `earnings_calendar_update.py` (weekly cron) from AV EARNINGS_CALENDAR, filtered to tickers already in `companies`; entries older than 30 days are purged each run. Served by `earnings_calendar_router.py`.
 
 ### `data/financial_statements.duckdb`
 
@@ -577,14 +590,15 @@ Created automatically when `IB_TRACKER_DB` env var is set. Schema is initialized
 | Column | Type | Notes |
 |--------|------|-------|
 | `symbol` | VARCHAR | Ticker symbol (PK with `quarter`) |
-| `quarter` | VARCHAR | Calendar quarter string, e.g. `2026Q2` (PK with `symbol`) |
+| `quarter` | VARCHAR | Fiscal quarter string, e.g. `2026Q2` (PK with `symbol`) |
 | `transcript_text` | TEXT | Full formatted transcript (speaker/title/content blocks) |
 | `fetched_date` | DATE | Date the transcript was downloaded into the DB |
 | `api_response_json` | TEXT | Raw Alpha Vantage JSON response (nullable) |
-| `source` | VARCHAR | `'av'` (Alpha Vantage) or `'url'` (manual URL import) |
-| `earnings_call_date` | DATE | Date of the earnings call (nullable; AV does not return this field) |
+| `source` | VARCHAR | `'av'` (Alpha Vantage), `'url'` (manual URL import), or `'audio'` (Whisper transcription) |
 
-Quarter strings use calendar quarters derived from `fiscal_date_ending` via `(month - 1) // 3 + 1`. Populated by `earnings_backfill.py`, `earnings_update.py`, and on-demand by the Finview Earnings tab.
+Quarter strings follow the company's own fiscal quarter, not the calendar quarter — `fiscal_date_to_quarters()` uses each ticker's fiscal year end month (from av_financials `income_statements`) so labels match what AV itself returns (verified against NVDA, whose FY ends in January: AV's "2025Q4" is NVDA's own Q4, not calendar Q4). Populated by `earnings_backfill.py`, `earnings_update.py` (both weekly-cron'd — see scripts/ list above), and on-demand by `refresh_latest_transcript()` from the Finview Earnings tab and both AI Researchers.
+
+Also holds `earnings_surprises` (EPS beat/miss history from AV EARNINGS, 30-day cache): symbol, fiscal_date_ending, reported_date, reported_eps, estimated_eps, surprise_pct, fetched_at (PK: symbol, fiscal_date_ending).
 
 ### `data/mda_filings.duckdb`
 

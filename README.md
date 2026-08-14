@@ -84,7 +84,9 @@ CSV format — any of these column names work: `ticker`, `symbol`, `stock`. Firs
 | `GET` | `/av/{ticker}/overview` | Company overview (sector, industry, name, beta, market cap) |
 | `GET` | `/earnings/report` | Earnings call transcript summary (params: `ticker`, `quarter`, `model`) |
 | `POST` | `/earnings/import-url` | Import transcript from a PDF/HTML URL and summarize |
+| `POST` | `/earnings/import-audio` | Transcribe an earnings call mp3/mp4 (Whisper) and summarize |
 | `GET` | `/earnings/models` | List available LLM models for transcript summarization |
+| `GET` | `/earnings-calendar` | Upcoming/recent earnings dates for tracked tickers (30-day lookback) |
 | `POST` | `/research/{ticker}` | AI-generated equity research summary |
 | `GET` | `/industry-research/industries` | List industries with member counts, for the picker |
 | `GET` | `/industry-research/report` | AI-generated industry research report (params: `industry` or `tickers` for a custom basket, `model`, `retry`) |
@@ -215,27 +217,28 @@ The rate limiter enforces the 75 calls/minute premium plan limit. Each ticker co
 
 ## Earnings Call Transcript Pipeline
 
-Transcripts are fetched from Alpha Vantage (`EARNINGS_CALL_TRANSCRIPT`) and cached in `data/earnings_transcripts.duckdb`. The shared module `historic_fundamentals/earnings_transcripts.py` handles all DB and AV-fetch logic.
+Transcripts are fetched from Alpha Vantage (`EARNINGS_CALL_TRANSCRIPT`) and cached in `data/earnings_transcripts.duckdb`. The shared module `historic_fundamentals/earnings_transcripts.py` handles all DB and AV-fetch logic, including `probe_quarters()`/`refresh_latest_transcript()` — the single cache-aside "probe AV for anything newer than what's cached, write through, stop on a real AV error instead of exhausting every candidate quarter" helper shared by the Finview Earnings tab, both AI Researchers, and the two cron scripts below.
 
 ### One-time backfill (latest 4 quarters per ticker)
 
 ```bash
-uv run scripts/earnings_backfill.py              # all ~2,655 tickers, ~2.5 hrs
+uv run scripts/earnings_backfill.py              # all ~2,644 tickers, ~2.5 hrs
 uv run scripts/earnings_backfill.py --ticker AAPL
 uv run scripts/earnings_backfill.py --dry-run    # preview without API calls
 uv run scripts/earnings_backfill.py --quarters 8 # extend to 8 quarters
 ```
 
-### Weekly update (check for new transcripts)
+### Weekly updates (cron, via `cron_wrap.sh` — see `crontab -l`)
 
 ```bash
-uv run scripts/earnings_update.py               # all tickers, ~71 min worst-case
+uv run scripts/earnings_update.py               # all tickers, ~45 min. Cron: Sunday 19:30 ET
 uv run scripts/earnings_update.py --ticker MSFT
+uv run scripts/earnings_calendar_update.py       # AV EARNINGS_CALENDAR, 3mo horizon. Cron: Monday 5:45 ET
 ```
 
-Both scripts are resume-safe — already-cached `(symbol, quarter)` pairs are skipped. Quarter format is `YYYYQN` (e.g. `2026Q2`). A 60-day lookahead rule automatically probes the quarter after the latest one in `av_financials.duckdb` when it may have already reported.
+Both transcript scripts are resume-safe — already-cached `(symbol, quarter)` pairs are skipped. Quarter format is `YYYYQN` (e.g. `2026Q2`) and follows each company's own fiscal quarter, not the calendar quarter (`fiscal_date_to_quarters()` uses the ticker's fiscal year end month). A 60-day lookahead rule automatically probes the quarter after the latest one in `av_financials.duckdb` when it may have already reported. `earnings_calendar_update.py` upserts into the `earnings_calendar` table in `av_financials.duckdb` (served by `GET /earnings-calendar`) and purges entries older than 30 days.
 
-The Finview Earnings tab also fetches and caches transcripts on demand when a requested quarter is not in the database.
+The Finview Earnings tab and both AI Researchers also fetch and cache transcripts on demand when a newer quarter isn't in the database yet, ahead of the weekly cron.
 
 ---
 
@@ -497,7 +500,8 @@ scripts/
   hf_query.py                  CLI query: stats, timeseries, estimates, sector, sector-history views; CSV export
   update_alpha_vantage_estimates.py  Update analyst EPS/revenue estimates from AV
   earnings_backfill.py         One-time backfill: latest 4 quarters of earnings call transcripts for all AV tickers
-  earnings_update.py           Weekly update: check for new earnings call transcripts across all tickers
+  earnings_update.py           Weekly update (cron): check for new earnings call transcripts across all tickers
+  earnings_calendar_update.py  Weekly update (cron): refresh earnings_calendar from AV EARNINGS_CALENDAR
   score_live.py                Live scoring: ranked investable portfolio with alloc_pct; writes docs/live_scores_YYYYMMDD.csv
   rebalance.py                 IB portfolio rebalancer CLI (dry run by default); reads latest live_scores CSV
   ib_repl.py                   Interactive REPL for IB: status, buy/sell, quote, cancel, rebalance
@@ -520,8 +524,8 @@ run_bulk_import.py              CLI entry point for SEC EDGAR bulk imports
 tests/                 pytest tests
 data/
   financial_statements.duckdb       SEC EDGAR financial statements
-  av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends, company overview
+  av_financials.duckdb              Alpha Vantage: statements, shares outstanding, dividends, company overview, earnings_calendar
   historic_fundamentals.duckdb      Monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates, analyst estimates, ML comps valuation cache
-  earnings_transcripts.duckdb       Earnings call transcripts: text, fetched_date, earnings_call_date (nullable), source
+  earnings_transcripts.duckdb       Earnings call transcripts: text, fetched_date, api_response_json, source (av/url/audio); also earnings_surprises
   xbrl_mappings_multi.duckdb        AI-discovered XBRL concept mapping store
 ```

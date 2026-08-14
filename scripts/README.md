@@ -322,9 +322,9 @@ uv run scripts/earnings_calendar_update.py --db PATH
 
 Rate: 1 AV API call per run. Results appear in the Calendar tab of FinView.
 
-Cron (weekly, Monday 6 AM — run alongside `earnings_update.py`):
+Cron (weekly, Monday 5:45 AM ET, installed on the trade_systems host — `crontab -l`):
 ```
-0 6 * * 1 cd /home/pedro/projects/fin_import2 && uv run scripts/earnings_calendar_update.py >> logs/earnings_calendar.log 2>&1
+45 5 * * 1 /home/pedro/projects/trade_systems/scripts/cron_wrap.sh earnings_calendar_update /home/pedro/.local/bin/uv run --project /home/pedro/projects/fin_import2 /home/pedro/projects/fin_import2/scripts/earnings_calendar_update.py >> /home/pedro/projects/fin_import2/logs/earnings_calendar.log 2>&1
 ```
 
 Required: `ALPHA_VANTAGE_API_KEY`.
@@ -333,7 +333,7 @@ Required: `ALPHA_VANTAGE_API_KEY`.
 
 ## earnings_update.py
 
-Weekly update: check the latest 1–2 quarters per ticker for new earnings call transcripts. Intended to run once per week (e.g. Sunday night via cron). Skips quarters already cached.
+Weekly update: check the latest 1–2 quarters per ticker for new earnings call transcripts. Skips quarters already cached.
 
 ```bash
 uv run scripts/earnings_update.py                      # all tickers
@@ -343,6 +343,11 @@ uv run scripts/earnings_update.py --verbose            # DEBUG logging
 ```
 
 Rate: up to 2 AV calls per ticker at 75 calls/min. Typically faster since most quarters are already cached. Applies the same 60-day lookahead rule as `earnings_backfill.py`.
+
+Cron (weekly, Sunday 19:30 ET, installed on the trade_systems host — `crontab -l`):
+```
+30 19 * * 0 /home/pedro/projects/trade_systems/scripts/cron_wrap.sh earnings_update /home/pedro/.local/bin/uv run --project /home/pedro/projects/fin_import2 /home/pedro/projects/fin_import2/scripts/earnings_update.py >> /home/pedro/projects/fin_import2/logs/earnings_update.log 2>&1
+```
 
 Required: `ALPHA_VANTAGE_API_KEY`.
 
