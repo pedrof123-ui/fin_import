@@ -7,6 +7,7 @@ Run from project root:
 
 from contextlib import asynccontextmanager
 from typing import Literal
+import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -15,6 +16,11 @@ import sys
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Root logger defaults to WARNING, which silently drops every log.info() milestone
+# (research/ai_dcf/industry_research pipeline phase timings) — journalctl then only ever shows
+# warnings/errors/timeouts, with no way to see how long a successful run's phases actually took.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
