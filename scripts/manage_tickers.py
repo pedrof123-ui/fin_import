@@ -56,6 +56,10 @@ What 'add' does per ticker (8 Alpha Vantage API calls, +up to 80 for earnings tr
           (see --skip-earnings / --earnings-quarters; most probes past AV's actual coverage
           start just return not_found quickly, so the AV-call count is a ceiling, not typical)
   Step 10 MD&A (20yr 10-K + 20qtr 10-Q) → mda_filings.duckdb  (SEC EDGAR, not AV — see --skip-mda)
+  Step 11 ML comps valuation score     → historic_fundamentals.duckdb / ml_comps_valuation
+          (scores against the already-trained models on disk, not an AV call — see --skip-ml-comps;
+          otherwise the ticker has no ML Fair Value in FINVIEW until the next monthly
+          --enable-ml-comps cron run)
 
 What 'delete' does per ticker (no API calls)
 --------------------------------------------
@@ -99,7 +103,7 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -131,6 +135,7 @@ from historic_fundamentals.earnings_transcripts import (  # noqa: E402
     delete_ticker as delete_earnings,
     open_db as open_earnings_db,
 )
+from scripts.score_ml_comps_valuation import score_ml_comps_valuation  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -515,6 +520,7 @@ def _add_ticker(
     skip_estimates: bool,
     skip_mda: bool = False,
     skip_earnings: bool = False,
+    skip_ml_comps: bool = False,
     earnings_quarters: int = _EARNINGS_QUARTERS_DEFAULT,
 ) -> bool:
     """Run the full add pipeline for one ticker. Returns True on success."""
@@ -629,6 +635,19 @@ def _add_ticker(
         except Exception as exc:
             log.warning("  mda: failed — %s", exc)
 
+    # Step 11 — ML comps valuation score (not an AV call; scores against the trained
+    # models already on disk, same models the monthly --enable-ml-comps cron uses, so
+    # the ticker doesn't sit blank in FINVIEW's ML Fair Value panel until next month's
+    # run — see ml_comps_valuation_plan.md)
+    if not skip_ml_comps:
+        try:
+            version = datetime.now(UTC).strftime("%Y-%m-%d")
+            scored = score_ml_comps_valuation([ticker], hf_db.conn, av_db.conn, version)
+            hf_db.upsert_ml_comps_valuation(scored)
+            log.debug("  ml_comps: %s", scored.iloc[0]["status"])
+        except Exception as exc:
+            log.warning("  ml_comps: failed — %s", exc)
+
     return True
 
 
@@ -662,7 +681,7 @@ def cmd_add(args: argparse.Namespace, tickers: list[str]) -> int:
             success = _add_ticker(
                 ticker, av_db, hf_db, prices_db_path,
                 api_key, limiter, args.force, args.skip_estimates, args.skip_mda, args.skip_earnings,
-                args.earnings_quarters,
+                args.skip_ml_comps, args.earnings_quarters,
             )
             if success:
                 ok += 1
@@ -834,6 +853,10 @@ def parse_args() -> argparse.Namespace:
                              f"large --csv batches, e.g. --earnings-quarters 4"))
     add_p.add_argument("--skip-mda", action="store_true",
                        help="Skip MD&A backfill (EDGAR, ~1-2 min/ticker — catch up later with mda_backfill.py)")
+    add_p.add_argument("--skip-ml-comps", action="store_true",
+                       help="Skip ML comps valuation scoring (not an AV call; scores against the "
+                            "already-trained models, otherwise the ticker has no ML Fair Value in "
+                            "FINVIEW until the next monthly --enable-ml-comps cron run)")
     add_p.add_argument("--dry-run", action="store_true", help="Print plan without modifying any database")
     add_p.add_argument("--verbose", action="store_true", help="Show DEBUG-level output")
 
