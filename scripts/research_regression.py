@@ -38,7 +38,10 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
     info: list[tuple[str, bool, str]] = []
     t0 = time.time()
     try:
-        report, findings, valuation_tables_md, direct_competitors_md, market_share_md = \
+        # Star-unpack the tail: _run_research_agent has grown its return tuple twice
+        # (dcf_reconciliation, usage_tracker) and a fixed-width unpack here broke silently
+        # each time. Only the leading five are asserted on.
+        report, findings, valuation_tables_md, direct_competitors_md, market_share_md, *_ = \
             await _run_research_agent(ticker, _DEFAULT_MODEL)
     except Exception as e:
         checks.append(_check("report generated", False, str(e)))
@@ -48,10 +51,13 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
     h, v = report.header, report.valuation
 
     checks.append(_check("report generated", True))
-    # The Chief is now two sequential LLM calls (Core + Narrative, see _run_research_agent) —
-    # this budget covers both combined, not one. Verified comfortably under 180s (26-97s) for
-    # _DEFAULT_MODEL; a slower model would need a higher budget here.
-    checks.append(_check("generation time < 180s", elapsed < 180, f"{elapsed:.1f}s"))
+    # Budget covers the whole pipeline: the four sub-agents, the inline Agentic AI DCF, and both
+    # Chief calls (Core + Narrative). The old 180s ceiling was set 2026-07-20, before the AI DCF
+    # landed; that alone carries a 600s outer timeout because its per-agent budgets legitimately
+    # reach ~800s, so a report can exceed 180s without anything being wrong. Measured 2026-08-17:
+    # NVDA 401.5s, UPS 438.6s, KO 394.3s. 900s sits above the legitimate worst case while still
+    # catching a genuine hang.
+    checks.append(_check("generation time < 900s", elapsed < 900, f"{elapsed:.1f}s"))
     checks.append(_check("target_low <= target_high", h.target_low <= h.target_high))
     checks.append(_check("has intrinsic_valuation section", bool(report.intrinsic_valuation)))
     checks.append(_check("has balance_sheet_analysis section", bool(report.balance_sheet_analysis)))
