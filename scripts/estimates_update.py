@@ -29,7 +29,11 @@ sys.path.insert(0, str(ROOT))
 
 from av_financials_db import RateLimiter  # noqa: E402
 from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB_PATH, HistoricFundamentalsDB  # noqa: E402
-from historic_fundamentals.estimates import fetch_estimates, normalize_estimates  # noqa: E402
+from historic_fundamentals.estimates import (  # noqa: E402
+    NoEstimatesAvailable,
+    fetch_estimates,
+    normalize_estimates,
+)
 
 log = logging.getLogger(__name__)
 
@@ -63,12 +67,17 @@ def main() -> int:
 
     log.info("Updating estimates for %d ticker(s) (dry_run=%s)", len(tickers), args.dry_run)
     limiter = RateLimiter()
-    ok = failed = 0
+    ok = failed = skipped = 0
 
     for i, ticker in enumerate(tickers, 1):
         prefix = f"[{i}/{len(tickers)}]"
         try:
             raw = fetch_estimates(ticker, api_key, limiter)
+        except NoEstimatesAvailable:
+            log.warning("%s %s — no analyst estimates available, skipping", prefix, ticker)
+            skipped += 1
+            continue
+        try:
             rows = normalize_estimates(ticker, raw)
             if args.dry_run:
                 log.info("%s %s — would write %d rows", prefix, ticker, len(rows))
@@ -81,7 +90,7 @@ def main() -> int:
             failed += 1
 
     hf_db.close()
-    log.info("Done: %d ok, %d failed", ok, failed)
+    log.info("Done: %d ok, %d failed, %d skipped (no estimates)", ok, failed, skipped)
     return 0 if failed == 0 else 1
 
 

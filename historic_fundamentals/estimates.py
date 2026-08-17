@@ -54,6 +54,14 @@ log = logging.getLogger(__name__)
 _AV_URL = "https://www.alphavantage.co/query"
 
 
+class NoEstimatesAvailable(Exception):
+    """AV returned no 'estimates' list for this ticker (empty {} response, no error
+    keys). Confirmed live: some tickers with active AV coverage elsewhere (GLOBAL_QUOTE,
+    SYMBOL_SEARCH) still return {} here — a per-ticker data gap, not a rate-limit/entitlement
+    problem. Distinguishing this from a real AV error matters so one ticker's missing
+    coverage doesn't get reported the same as a systemic API failure."""
+
+
 def _f(v: Any) -> float | None:
     if v in (None, "", "None", "nan"):
         return None
@@ -85,7 +93,7 @@ def fetch_estimates(ticker: str, api_key: str, limiter: RateLimiter) -> list[dic
             raise RuntimeError(f"AV API [EARNINGS_ESTIMATES] {data[key]}")
     estimates = data.get("estimates")
     if not isinstance(estimates, list):
-        raise RuntimeError("AV response missing 'estimates' list")
+        raise NoEstimatesAvailable(f"{ticker}: AV response missing 'estimates' list")
     return estimates
 
 
