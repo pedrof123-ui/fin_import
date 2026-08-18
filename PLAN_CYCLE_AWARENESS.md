@@ -1,11 +1,29 @@
 # AI Researcher — Industry Cycle Awareness
 
-Created 2026-08-17. **Status: Phase 0 complete, paused before Phase 1.**
+Created 2026-08-17. **Status: Phases 0-3 complete. Next: Phase 4.**
 
 ## Resume here
 
-Next action: **Phase 1 — the cyclicality gate.** It is the load-bearing piece; Phases 2-8 all
-depend on its `CYCLICAL` / `NON_CYCLICAL` / `INSUFFICIENT_HISTORY` verdict.
+Next action: **Phase 4 — trough vs. value trap.** This is the phase that makes the feature a
+profit-opportunity rather than a second warning label, and Phase 3 deliberately left the gap it
+fills: the rubric can say TROUGH, but the prompt is currently instructed **not** to call a trough
+an opportunity, because a depressed cyclical and a structurally impaired business are
+indistinguishable on the five trough conditions. Phase 4 supplies the discriminator (revenue
+trajectory, peer breadth via `get_industry_aggregates`, debt/EBITDA survivability) and the prompt
+instruction should be relaxed in step with it.
+
+Settled, do not relitigate: F/GM false negatives **accepted 2026-08-18** (8/10 recall, zero false
+positives). Rubric conditions are scored in Python, not by the model — see the Phase 3 deviation
+note for why.
+
+Two traps this plan has now hit three times, worth stating as a rule: **a condition implied by
+another condition is not evidence** (cond1/cond4 at 99.7%, the mirrored "P/E undefined" clause at
+45.8%, "any forward improvement" at 73.9%). Any new condition added in Phase 4 must be checked for
+pairwise co-firing before it is trusted — `scripts/cycle_position_calibration.py` prints the worst
+pairs for exactly this reason.
+
+Also carried: EPS ratios and growth rates need sign guards, because cyclicals at a trough
+routinely have negative numerators *and* denominators. Phase 2 fixed two such cases.
 
 **This is not just plan work — it fixes a live production defect.** The current peak-earnings
 rubric fires on **48.0% of the universe** (1,088 of 2,267 tickers with usable data). Reports
@@ -149,21 +167,83 @@ Residual: the ~400s figure was not attributed across stages (the per-stage timin
 logger the script does not configure). If report latency later becomes a concern, the sharper
 fix is to measure AI DCF time separately from the rest rather than widen the single ceiling.
 
-## Phase 1 — Cyclicality gate  [ ]
+## Phase 1 — Cyclicality gate  [x] Complete (2 known false negatives, see below)
 
 Without this the rubric is noise (finding 3). Only companies that actually exhibit cyclical
 behaviour should get a cycle-position verdict at all.
 
-New helper computing a cyclicality classification from `monthly_pe` over a **7-year** window:
+Shipped as `api/cycle_data.py` (`classify_cyclicality`), calibrated by
+`scripts/cyclicality_calibration.py`, covered by `tests/test_cycle_data.py` (18 tests).
+Output: `CYCLICAL` / `NON_CYCLICAL` / `INSUFFICIENT_HISTORY`, data-driven with no sector
+whitelist, per CLAUDE.md rule 6.
 
-- coefficient of variation of `ttm_eps`
-- fraction of months with `ttm_eps <= 0`
-- peak-to-trough EPS amplitude
-- revenue amplitude alongside earnings amplitude, to separate demand cyclicality from pure
-  margin swings
+**What it measures, and why not the metrics this plan originally listed.** The four proposed
+inputs (CoV of `ttm_eps`, loss-month fraction, peak-to-trough EPS amplitude, revenue amplitude)
+were all built and measured. Every one of them conflates cyclicality with two other things,
+and the measurements are worth keeping:
 
-Output: `CYCLICAL` / `NON_CYCLICAL` / `INSUFFICIENT_HISTORY`. Data-driven, not a sector
-whitelist — per CLAUDE.md rule 6 the fix must be generic across all stocks.
+- *Splits corrupt every per-share metric.* `monthly_pe.shares` is transiently wrong around
+  stock splits — AAPL reads 56,899M shares in 2020-09 against a true ~17,100M, WMT reads
+  24,323M in 2024-01 against ~8,084M — which craters `ttm_eps` for a few months. AAPL's raw
+  EPS drawdown over the window reads 0.92, which alone would have flagged it CYCLICAL and
+  failed the gate. `ttm_eps * shares` recovers aggregate earnings exactly (the bad share count
+  cancels: $58.4B on both sides of AAPL's artifact), and `ttm_revenue` carries no share count
+  at all. **Anything downstream that reads `ttm_eps` monthly history is exposed to this** —
+  including `eps_5yr_avg`/`eps_5yr_max` in the current peak rubric. Phase 2 must not
+  reintroduce it.
+- *COVID sits inside the window.* Nearly every company's revenue fell in 2020, so single-
+  drawdown measures call **69% of the universe cyclical** — no better than the 48% defect
+  being fixed. One V-shaped hole is not a cycle.
+- *One-off charges mimic earnings cycles.* MRK's earnings drawdown is 0.98 and JNJ's 0.63,
+  above true cyclicals like GM (0.82) and NUE (0.86). Normalizing by peak earnings also
+  explodes whenever earnings cross zero, so peer-median drawdown is ~1.5-3.0 in most
+  industries and discriminates nothing.
+
+What survives all three is **co-movement with an industry cycle**, which is also the textbook
+definition. The gate builds a peer factor from the company's own industry (falling back to
+sector below 8 peers with usable history) and measures
+
+    systematic amplitude = |beta to peer factor| x stdev(peer factor)
+
+on year-over-year log revenue growth, with subject and peers demeaned first so the factor
+carries the common *cycle* rather than common *growth* — otherwise an industry holding
+hyper-growth entrants (autos with TSLA/RIVN) reads as a trend. Idiosyncratic volatility no
+longer counts: a biotech with lumpy revenue has high own volatility but near-zero beta.
+Threshold `_AMPLITUDE_MIN = 0.10`, calibrated 2026-08-17.
+
+**Calibration result.** The hard requirement — zero false positives on mega-cap compounders —
+is met, on the plan's nine and on a wider set of twenty added during calibration:
+
+| Set | Result |
+|---|---|
+| Gate non-cyclicals (AAPL, MSFT, KO, PG, COST, V, WMT, JNJ, UNH) | 9/9 correct |
+| Wider non-cyclicals (PEP, MCD, MA, MRK, TMO, SO, DUK, VZ, ...) | 20/20 correct |
+| Gate cyclicals | 8/10 — **F and GM miss** |
+| Wider cyclicals (CAT, DE, AA, LUV, CCL, RCL, HAL, SLB, EOG, CF, MOS, DOW, LYB, ...) | 13/15 — FCX and WHR miss |
+
+Full universe (n=2,644): 30.7% `CYCLICAL`, 58.5% `NON_CYCLICAL`, 10.7% `INSUFFICIENT_HISTORY`
+(better than the 19% the coverage table predicted). Large caps 23.3% cyclical. Sector profile
+is the shape it should be — Energy 82%, Basic Materials 52%, Consumer Cyclical 34%,
+Industrials 19%, Technology 19%, Healthcare 14%, Utilities 7%, Consumer Defensive 3%.
+
+**Open: the F/GM false negatives.** This plan pre-committed to correct `CYCLICAL` on all ten,
+and autos miss (F 0.057, GM 0.071 against a 0.10 threshold). The cause is real, not a bug: US
+auto *revenue* was genuinely stable across 2019-2026 — the COVID dip recovered and price
+increases offset volume. Autos are cyclical in *earnings*, via operating leverage. Three
+rescues were built and measured, and all three cost more than they buy:
+
+- systematic *margin* amplitude — non-cyclical margin swings (JNJ 0.043, MRK 0.044) sit above
+  the autos (F 0.029, GM 0.022); any threshold catching autos drags in half the market
+- peer-shared earnings drawdown — fires on 70-76% of the universe, for the zero-crossing
+  reason above
+- lowering the revenue threshold to 0.06 — catches F but makes V a false positive, breaking
+  the requirement that actually matters
+
+Recall failures are the safer failure here: a missed cyclical renders no cycle section, while
+a false positive is the AAPL-trap-alert defect this plan exists to remove. **Decision pending:
+accept 8/10, or hold Phase 2 until autos are covered.** If autos must be covered, the honest
+route is a longer window for the earnings leg (their revenue cycle is visible over 10yr but
+not 7), which reopens the survivorship argument settled below.
 
 **Why 7 years.** Five years can sit entirely inside one leg of a cycle — a semiconductor or
 housing name reads as a secular grower and the feature switches itself off for exactly the
@@ -189,47 +269,121 @@ compounder set (AAPL, MSFT, KO, PG, COST, V, WMT, JNJ, UNH) and correct `CYCLICA
 MU, CLF, NUE, F, GM, DAL, UAL, OXY, DVN, AAL. Report the confusion matrix over the full
 universe before proceeding.
 
-## Phase 2 — Symmetric, honest cycle data  [ ]
+## Phase 2 — Symmetric, honest cycle data  [x] Complete
 
-Rework `get_peak_earnings_data` (`research_router.py:816`) into `get_cycle_position_data`:
+`get_peak_earnings_data` is now `get_cycle_position_data` (`api/research_router.py:817`), wired
+into the fan-out under the label `cycle_position`. All five specified changes shipped:
 
-- **Drop `AND ttm_eps > 0`** so loss periods count. This is the change that makes mid-cycle EPS
-  honest and the trough visible. Note it changes existing peak-side numbers for cyclicals —
-  intended, and the reason Phase 0 comes first.
-- Add `MIN(ttm_eps)` over the window.
-- Label `AVG(ttm_eps)` explicitly as mid-cycle EPS, and add "current EPS as % of mid-cycle" —
-  the one ratio that reads correctly in both directions.
-- Guard the existing `pct_of_peak` division when `eps_5yr_max <= 0` (all-loss company).
-- Emit the Phase 1 cyclicality classification into the block.
+- **`AND ttm_eps > 0` dropped**, so loss periods count.
+- **`MIN(ttm_eps)` added** and labelled as the trough.
+- **`AVG(ttm_eps)` labelled mid-cycle**, with "current EPS as % of mid-cycle" alongside it, plus
+  a count of loss months so the LLM can see how much of the window was underwater.
+- **`pct_of_peak` guarded** — and the guard had to go further than specified, see below.
+- **Phase 1 cyclicality verdict emitted** into the block, with its amplitude, beta, peer group
+  and peer count, and an explicit sentence for non-cyclicals: *"Cycle position is NOT a
+  meaningful reading for this company."*
 
-Verification: re-run the four tickers in the finding-2 table and confirm the mid-cycle figures
-now match the true values.
+**Verification against the finding-2 table.** Dropping the filter reproduces the measured truth
+exactly — MU $4.74, AAL -$0.53, CLF $1.00, OXY $4.99, against $7.57 / $1.23 / $2.80 / $5.95 with
+the filter on. Regression-tested in `tests/test_cycle_data.py`.
 
-## Phase 3 — Symmetric rubric  [ ]
+**EPS history is restated on the current share count** (`ttm_eps * shares / median shares over
+the last 12 months`). This was not in the phase spec and is load-bearing: the split defect
+recorded in Phase 1 puts the artifact month straight into `MIN`, so AAPL's raw 5-year trough EPS
+reads **$1.03 against a true ~$5.60** — an 82% phantom earnings collapse on the clearest
+non-cyclical in the universe, produced by the very statistic this phase adds. Multiplying by
+`shares` cancels the bad count exactly. The restatement also makes the history comparable across
+buybacks and issuance, which matters for AAL (share count roughly doubled in the window).
 
-Replace the one-sided INTERPRETATION GUIDE (`research_router.py:886-896`) and the matching
-prompt rubric (`api/prompts/research_chief_core.md:119-131`) with peak and trough blocks, gated
-on `CYCLICAL` from Phase 1.
+**Two bugs found by measurement, both fixed here.** Neither was in the phase spec; both would
+have silently corrupted Phase 3's trough conditions:
 
-Repair the degenerate condition first: **condition 4 must go or be re-specified**, since it is
-99.7% redundant with condition 1 (finding 3). A defensible replacement compares current P/E to
-the *price-independent* `pe_rolling_5yr_median` rather than to `normalized_pe_5y`.
+1. *Percentage change inverts on a negative base.* CLF's forward EPS improving from -$2.13 to
+   -$0.36 computed as **-83.1%** — indistinguishable from a collapse, while the loss is actually
+   narrowing by $1.77/share. Pre-existing, and directly under Phase 3's planned trough condition
+   "forward EPS well above TTM". The block now states the dollar move and names the direction
+   when TTM EPS is negative.
+2. *A "% of" reading needs both sides positive, not just the denominator.* The specified guard
+   covered `eps_5yr_max <= 0` only, so CLF (current -$2.13 against $1.08 mid-cycle) rendered as
+   **"-196% of mid-cycle"** — a number with no interpretation. Now both ratios fall back to
+   prose, distinguishing "mid-cycle earnings are negative" (AAL) from "currently loss-making"
+   (CLF).
 
-Trough conditions mirror the repaired peak set — EPS well below mid-cycle, forward EPS well
-above TTM (analysts forecast recovery), earnings falling materially faster than revenue (margin
-compression rather than demand collapse), multiple optically high or undefined on depressed
-earnings, operating margin well below the 5yr median.
+Deliberately **not** changed in this phase, because Phase 3 owns them: the block's
+`INTERPRETATION GUIDE` is still the one-sided peak-only rubric, and the `chief_context` section
+header still reads `=== PEAK-EARNINGS TRAP SIGNALS ===`. The schema field
+`peak_earnings_analysis`, its renderer at `:540`, and `research_chief_core.md:119` are untouched
+and belong to Phase 5.
 
-Two cases the dry run exposed and that must be handled explicitly:
+Tests: 25 in `tests/test_cycle_data.py` (7 new for this phase). Full suite 546 passed, 3 skipped
+— no regressions. The LLM pipeline itself has not been re-run; `scripts/research_regression.py`
+is the gate for that and is worth one run once Phase 3 changes the prompt, since Phase 2 alters
+what the Chief reads.
 
-- **Negative mid-cycle EPS** (AAL: 5yr avg -$0.53). The "% of mid-cycle" test is meaningless.
-  Fall back to a margin- and revenue-based position read.
-- **Both sides firing** (V scored 2 peak / 2 trough). Define the tie-break rather than leaving
-  it to the model.
+## Phase 3 — Symmetric rubric  [x] Complete
 
-Thresholds are to be calibrated in-phase against the same labelled sample as Phase 1, not
-guessed. Report the fire rate across the universe — if either side fires on more than roughly a
-quarter of *cyclical* names, the thresholds are too loose.
+Rubric lives in `api/cycle_data.py` (`evaluate_cycle_position`, thresholds as module constants),
+rendered by `get_cycle_position_data`, calibrated by `scripts/cycle_position_calibration.py`.
+The `chief_context` header is now `=== CYCLE POSITION (PEAK / TROUGH / MID) ===` and
+`api/prompts/research_chief_core.md` carries the symmetric instruction.
+
+**Calibrated fire rates among CYCLICAL names** (plan gate: each side under ~25%):
+
+| Side | Rate | Threshold |
+|---|---|---|
+| PEAK | 17.3% | 2 of 5 conditions |
+| TROUGH | 22.5% | 3 of 5 conditions |
+| MID | 60.1% | — |
+
+**Condition 4 repaired.** Current P/E is now compared to `pe_rolling_5yr_median` instead of
+`normalized_pe_5y`. Co-firing with condition 1 falls from **99.7% to 26.6%**, and the condition's
+own fire rate from 65.5% to 4.8% — it now carries information instead of restating condition 1.
+
+**The threshold asymmetry (2 peak / 3 trough) is measured, not arbitrary.** Trough conditions are
+individually far more prevalent because cycles are correlated and cyclicals are depressed
+together: 43.8% of cyclicals are loss-making or below half mid-cycle, 38.9% carry a recovery
+forecast, 26.3% have margins 5pp under their own median. At 2-of-5 the trough side fires on
+**43-46% however tightly the individual thresholds are set**, so the count is the only effective
+lever. It reads correctly economically too: at a peak, near-peak EPS plus one corroborator is
+enough, while at a trough being depressed is necessary but not sufficient.
+
+**The mirrored rubric reproduced the very bug this phase repairs, and that had to be fixed too.**
+Mirroring condition 4 as "multiple optically high **or undefined** on depressed earnings" makes it
+automatically true for every loss-maker — and a loss-maker already satisfies the depressed-earnings
+condition, so "two or more" was met by the single fact of being loss-making. Measured co-firing
+45.8% of cyclicals. Removing the "undefined" clause (loss-making is already condition 1's job)
+drops it to 8.7%. Same lesson as finding 3: a condition that is implied by another condition is
+not evidence.
+
+A second degenerate mirror caught the same way: "forward EPS above TTM (analysts forecast
+recovery)" fires on **73.9%** of cyclicals, because analysts forecast improvement for almost
+everything. It now demands a *material* recovery — a loss-maker must be forecast to return to
+profit, not merely to lose less — which brings it to 38.9%.
+
+**The two cases the plan flagged:**
+
+- *Negative mid-cycle EPS* (AAL): the EPS-versus-mid-cycle tests are skipped and the block emits
+  an explicit NOTE that position rests on the margin and revenue conditions instead.
+- *Both sides firing*: resolves to `MID` with a note that the evidence is contradictory, rather
+  than picking a winner. Chosen because `MID` renders no standalone callout (Phase 5), so an
+  ambiguous case cannot produce a confident wrong claim. **Measured 0 clashes across 813
+  cyclicals** at these thresholds — V, which the plan flagged at 2 peak / 2 trough, is now
+  `NOT_CYCLICAL` and never reaches the rubric.
+
+**Deviation from the plan, deliberate: the conditions are scored in Python, not by the model.**
+The plan had the prompt list the rubric and the Chief count conditions. But a calibrated fire rate
+is a claim about arithmetic — if an LLM re-applies five numeric thresholds per report, the measured
+17.3%/22.5% describes nothing that actually runs. So the block now emits `CYCLE POSITION: <verdict>`
+plus every condition marked `MET` or `no`, and the prompt forbids re-deriving or overriding it.
+The Chief narrates the evidence rather than computing it. This makes Phase 8's QC check
+(PEAK/TROUGH on a NOT_CYCLICAL ticker) nearly unfireable, which is the right direction.
+
+**Sanity read on named tickers:** MU PEAK (3/5 — EPS at 5yr max, 992% 1yr growth against a
+-0.7% 3yr CAGR, margins 43pp over median), CLF/NUE/DVN/LYB TROUGH, UAL/CCL PEAK, DAL/OXY/AAL/CAT/
+DE/SLB MID, and all nine mega-cap compounders NOT_CYCLICAL — the 48% misfire is gone at the
+rubric level.
+
+Tests: 34 in `tests/test_cycle_data.py` (9 new). Full suite 555 passed, 3 skipped.
 
 ## Phase 4 — Trough vs. value trap  [ ]
 

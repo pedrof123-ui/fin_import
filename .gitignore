@@ -71,3 +71,6 @@ data/earnings_calls_audio/
 # Claude Code runtime files
 .claude/scheduled_tasks.lock
 data/mda_sweep_status.json
+
+# generated calibration cache (scripts/cycle_position_calibration.py)
+data/cycle_position_calibration_inputs.json

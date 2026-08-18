@@ -116,18 +116,34 @@ near_term_catalysts: take the Earnings & MD&A Historian's near_term_catalysts as
   merge in any additional catalyst evident from the valuation/estimates data (e.g. upcoming
   earnings date implied by estimate horizons) if not already covered. 3-5 items total.
 
-peak_earnings_analysis: ONLY populate this field (2-4 bullets, no bold header needed) if TWO or
-  more of the following conditions are met for {ticker} based on the PEAK-EARNINGS TRAP SIGNALS
-  data:
-  1. Current EPS is >=90% of the 5-year max TTM EPS (earnings near cyclical peak)
-  2. Forward 12M consensus EPS is more than 5% below current TTM EPS (analysts forecast decline)
-  3. The 1-year earnings growth rate is substantially faster than the 3-year CAGR (unsustainable acceleration)
-  4. Current P/E is materially below the normalized 5-year P/E (stock looks optically cheap on peak earnings)
-  5. Current operating margin is materially above the 5-year median (margin at cyclical high)
-  If a peak-earnings trap is detected, cover in bullets: (a) what metric signals the trap,
-  (b) why TTM earnings may not be a reliable baseline for valuation, and (c) what normalized earnings
-  imply for the stock's true forward multiple.
-  If fewer than two conditions are met, leave this field null or an empty string.
+peak_earnings_analysis: the CYCLE POSITION section states a CYCLE POSITION of PEAK, TROUGH, MID
+  or NOT_CYCLICAL for {ticker}, together with every condition it tested and whether each was MET.
+  That verdict is computed from calibrated thresholds — do NOT re-derive it, re-score it, or
+  override it, and do not treat a condition as met unless it is marked MET.
+
+  Populate this field (2-4 bullets, no bold header needed) ONLY for PEAK or TROUGH:
+
+  - PEAK — earnings are near a cyclical high and TTM is a flattering baseline. Cover: (a) which
+    MET conditions signal it, with their numbers, (b) why TTM earnings overstate normal earning
+    power, and (c) what mid-cycle earnings imply for the true forward multiple.
+  - TROUGH — earnings are depressed and TTM understates normal earning power. Cover: (a) which
+    MET conditions signal it, with their numbers, (b) why the multiple looks optically expensive
+    on depressed earnings and why TTM is the wrong denominator, and (c) what mid-cycle earnings
+    imply for the true forward multiple. Do NOT assert the trough is a buying opportunity — a
+    depressed cyclical and a structurally impaired business look identical on these five
+    conditions, and separating them is not something this data can do.
+
+  For MID or NOT_CYCLICAL, leave this field null or an empty string. NOT_CYCLICAL means the
+  company's revenue does not move with an industry cycle at all: do not place it anywhere on a
+  cycle, in this field or anywhere else in the report.
+
+  Two data conventions in that section, both deliberate:
+  - When TTM EPS is negative, "Forward vs. TTM EPS change" is given as a dollar move with a named
+    direction rather than a percentage, because a percentage change inverts on a negative base (a
+    loss narrowing from -$2.13 to -$0.36 computes as -83%, which reads as a collapse). Quote the
+    dollar move.
+  - "Current EPS as % of mid-cycle" reads n/a when mid-cycle earnings are negative or the company
+    is currently loss-making. Treat n/a as "this test does not apply", never as a low reading.
 
 Write with institutional precision. Use specific numbers. No filler language.
 Every claim must trace to the data provided.

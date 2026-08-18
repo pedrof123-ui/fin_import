@@ -48,6 +48,14 @@ from historic_fundamentals.dispersion import (
     percentile,
     select_horizons,
 )
+from api.cycle_data import (
+    AMPLITUDE_MIN as _CYCLICAL_AMPLITUDE_MIN,
+    NOT_CYCLICAL_POSITION,
+    _PEAK_MIN_CONDITIONS,
+    _TROUGH_MIN_CONDITIONS,
+    classify_cyclicality,
+    evaluate_cycle_position,
+)
 from api.valuation_data import get_dcf_summary, get_valuation_inputs, compute_dcf_scenarios
 
 log = logging.getLogger(__name__)
@@ -813,32 +821,63 @@ def get_valuation_data(ticker: str) -> str:
     return "\n".join(lines)
 
 
-def get_peak_earnings_data(ticker: str) -> str:
+def get_cycle_position_data(ticker: str) -> str:
     if not _HIST_FUND_DB.exists():
         return f"[ERROR] historic_fundamentals.duckdb not found"
     ticker = ticker.upper()
+    cyclicality = classify_cyclicality(ticker)
     conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
 
     ps = conn.execute("""
+        -- Column order is load-bearing: the block below reads this row positionally.
+        -- pe_rolling_5yr_median backs the repaired peak/trough multiple condition; unlike
+        -- normalized_pe_5y it does not embed today's price over an averaged EPS, so it is not
+        -- mechanically low for any company whose EPS is rising.
         SELECT current_ttm_eps, forward_12m_eps, earn_growth_1yr, earn_cagr_3yr,
                current_operating_margin, operating_margin_5y_median, operating_margin_change_3y,
-               current_pe, normalized_pe_5y, earn_ntm_growth_est
+               current_pe, normalized_pe_5y, earn_ntm_growth_est,
+               pe_rolling_5yr_median, rev_growth_1yr
         FROM pe_stats WHERE ticker = ?
     """, [ticker]).fetchone()
 
+    # Loss periods are kept: filtering ttm_eps > 0 deletes exactly the regime where cycle
+    # position matters, and biases mid-cycle earnings upward on deep cyclicals (AAL's true
+    # 5yr average is -$0.53 against $1.23 with the filter on — a sign flip; MU $4.74 vs $7.57).
+    #
+    # EPS is restated on the current share count (ttm_eps * shares / shares today) for two
+    # reasons. It makes the history comparable across buybacks and issuance, and it is immune
+    # to a data defect: monthly_pe.shares is transiently wrong around stock splits (AAPL reads
+    # 56,899M shares in 2020-09 against a true ~17,100M), which craters ttm_eps for a few
+    # months. Raw MIN(ttm_eps) would read $1.03 for AAPL against a true ~$5.60 and present the
+    # most obvious non-cyclical in the universe as an 82% earnings collapse. Multiplying by
+    # shares cancels the bad count exactly, since ttm_eps was derived by dividing by it.
     hist = conn.execute("""
+        WITH now AS (
+            SELECT median(shares) AS shares_now
+            FROM monthly_pe
+            WHERE ticker = ? AND shares > 0
+              AND month_end_date >= CURRENT_DATE - INTERVAL 12 MONTHS
+        ),
+        adj AS (
+            SELECT month_end_date,
+                   ttm_eps * shares / (SELECT shares_now FROM now) AS eps
+            FROM monthly_pe
+            WHERE ticker = ? AND ttm_eps IS NOT NULL AND shares > 0
+              AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
+              AND (SELECT shares_now FROM now) > 0
+        )
         SELECT
-            MAX(ttm_eps)                                                      AS eps_5yr_max,
-            AVG(ttm_eps)                                                      AS eps_5yr_avg,
+            MAX(eps)                                                          AS eps_5yr_max,
+            AVG(eps)                                                          AS eps_midcycle,
+            MIN(eps)                                                          AS eps_5yr_min,
             MAX(CASE WHEN month_end_date >= CURRENT_DATE - INTERVAL 2 YEARS
-                     THEN ttm_eps END)                                        AS eps_2yr_max,
+                     THEN eps END)                                            AS eps_2yr_max,
             MIN(CASE WHEN month_end_date <= CURRENT_DATE - INTERVAL 4 YEARS
-                     THEN ttm_eps END)                                        AS eps_5yr_ago
-        FROM monthly_pe
-        WHERE ticker = ?
-          AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
-          AND ttm_eps > 0
-    """, [ticker]).fetchone()
+                     THEN eps END)                                            AS eps_5yr_ago,
+            COUNT(*)                                                          AS months,
+            SUM(CASE WHEN eps <= 0 THEN 1 ELSE 0 END)                         AS loss_months
+        FROM adj
+    """, [ticker, ticker]).fetchone()
 
     conn.close()
 
@@ -852,14 +891,40 @@ def get_peak_earnings_data(ticker: str) -> str:
         return f"{float(v)*100:+.1f}%" if v is not None else "n/a"
 
     lines = [f"PEAK-EARNINGS TRAP SIGNALS — {ticker}", ""]
+    lines.append(f"Cyclicality:                 {cyclicality.verdict}")
+    if cyclicality.amplitude is not None:
+        lines.append(
+            f"  (systematic revenue amplitude {cyclicality.amplitude:.2f} vs. "
+            f"{_CYCLICAL_AMPLITUDE_MIN:.2f} threshold; beta {cyclicality.beta:.2f} to the "
+            f"{cyclicality.peer_group} peer cycle, {cyclicality.peer_count} peers)"
+        )
+    elif cyclicality.reason:
+        lines.append(f"  ({cyclicality.reason})")
+    if not cyclicality.is_cyclical:
+        lines.append(
+            "  Cycle position is NOT a meaningful reading for this company. Its revenue does "
+            "not move with an industry cycle, so peak/trough earnings language does not apply."
+        )
+    lines.append("")
     lines.append(f"Current TTM EPS:             ${f(ps[0])}")
     lines.append(f"Forward 12M EPS (consensus): ${f(ps[1])}")
-    if ps[0] and ps[1]:
-        try:
-            fwd_vs_ttm = (float(ps[1]) / float(ps[0]) - 1) * 100
-            lines.append(f"Forward vs. TTM EPS change:  {fwd_vs_ttm:+.1f}%")
-        except (TypeError, ZeroDivisionError):
-            pass
+    # A percentage change is only meaningful when the base is positive. With a negative TTM
+    # EPS the ratio inverts: CLF improving from -$2.13 to -$0.36 computes as -83.1%, which
+    # reads as a collapse when the loss is in fact narrowing — and that is precisely the
+    # signal a trough reading depends on. Below zero, state the move in dollars instead.
+    if ps[0] is not None and ps[1] is not None:
+        ttm, fwd = float(ps[0]), float(ps[1])
+        if ttm > 0:
+            lines.append(f"Forward vs. TTM EPS change:  {(fwd / ttm - 1) * 100:+.1f}%")
+        else:
+            direction = "loss narrowing" if fwd > ttm else "loss deepening"
+            if fwd > 0:
+                direction = "returning to profit"
+            lines.append(
+                f"Forward vs. TTM EPS change:  ${ttm:.2f} -> ${fwd:.2f} "
+                f"({direction} by ${abs(fwd - ttm):.2f}/share; TTM EPS is negative so a "
+                f"percentage change would invert)"
+            )
     lines.append(f"Earn Growth 1yr (TTM YoY):   {pct(ps[2])}")
     lines.append(f"Earn CAGR 3yr:               {pct(ps[3])}")
     lines.append(f"Earn NTM Growth Est:         {pct(ps[9])}")
@@ -872,28 +937,75 @@ def get_peak_earnings_data(ticker: str) -> str:
     lines.append(f"Operating Margin Change 3yr: {pct(ps[6])}")
     lines.append("")
 
-    if hist:
-        lines.append(f"TTM EPS 5yr max:             ${f(hist[0])}")
-        lines.append(f"TTM EPS 5yr avg:             ${f(hist[1])}")
-        lines.append(f"TTM EPS 2yr max:             ${f(hist[2])}")
-        lines.append(f"TTM EPS ~5yrs ago:           ${f(hist[3])}")
-        if hist[0] and ps[0]:
-            try:
-                pct_of_peak = float(ps[0]) / float(hist[0]) * 100
-                lines.append(f"Current EPS as % of 5yr max: {pct_of_peak:.0f}%")
-            except (TypeError, ZeroDivisionError):
-                pass
+    if hist and hist[5]:
+        eps_max, eps_mid, eps_min, eps_2yr_max, eps_5yr_ago, months, loss_months = hist
+        lines.append("EPS history is restated on the current share count, and includes loss")
+        lines.append("periods, so the mid-cycle figure is comparable to today's EPS.")
+        lines.append(f"TTM EPS 5yr max (peak):      ${f(eps_max)}")
+        lines.append(f"TTM EPS 5yr mid-cycle avg:   ${f(eps_mid)}")
+        lines.append(f"TTM EPS 5yr min (trough):    ${f(eps_min)}")
+        lines.append(f"TTM EPS 2yr max:             ${f(eps_2yr_max)}")
+        lines.append(f"TTM EPS ~5yrs ago:           ${f(eps_5yr_ago)}")
+        if loss_months:
+            lines.append(f"Months at a loss (of {months}):    {loss_months}")
 
-    lines += [
-        "",
-        "INTERPRETATION GUIDE:",
-        "Peak-earnings trap is likely if TWO or more of the following hold:",
-        "  1. Current EPS is >=90% of 5yr max (near-peak earnings)",
-        "  2. Forward EPS is meaningfully below current TTM EPS (<-5%)",
-        "  3. Earn growth 1yr is much faster than earn CAGR 3yr (acceleration not sustained)",
-        "  4. Current P/E is below normalized P/E (stock looks cheap on peak earnings)",
-        "  5. Operating margin is well above 5yr median (margin at cyclical high)",
-    ]
+        # A "% of" reading needs BOTH sides positive. A negative denominator makes it
+        # meaningless, and a negative numerator makes it actively misleading: CLF at a trough
+        # (current -$2.13 against $1.08 mid-cycle) rendered as "-196% of mid-cycle", a number
+        # with no interpretation. Loss-making is the more useful statement in that case.
+        def _ratio(label: str, denom, denom_name: str, hint: str = "") -> None:
+            if ps[0] is None or denom is None:
+                return
+            cur, den = float(ps[0]), float(denom)
+            if den <= 0:
+                lines.append(f"{label} n/a ({denom_name} earnings are negative{hint})")
+            elif cur <= 0:
+                lines.append(
+                    f"{label} n/a (currently loss-making at ${cur:.2f}/share against "
+                    f"${den:.2f} {denom_name})"
+                )
+            else:
+                lines.append(f"{label} {cur / den * 100:.0f}%")
+
+        _ratio("Current EPS as % of 5yr max:  ", eps_max, "peak")
+        _ratio("Current EPS as % of mid-cycle:", eps_mid, "mid-cycle",
+               " — read cycle position from margins and revenue instead")
+
+    pos = evaluate_cycle_position(
+        cyclicality.verdict,
+        ttm_eps=ps[0], fwd_eps=ps[1], earn_growth_1yr=ps[2], earn_cagr_3yr=ps[3],
+        operating_margin=ps[4], operating_margin_median=ps[5],
+        pe=ps[7], pe_median=ps[10], rev_growth_1yr=ps[11],
+        eps_max=hist[0] if hist else None, eps_midcycle=hist[1] if hist else None,
+    )
+
+    lines += ["", "CYCLE POSITION ASSESSMENT:"]
+    if pos.position == NOT_CYCLICAL_POSITION:
+        lines.append("  CYCLE POSITION: NOT_CYCLICAL")
+        lines.append("  This company's revenue does not move with an industry cycle. Peak and")
+        lines.append("  trough earnings language does not apply — do not describe it as being at")
+        lines.append("  any point in a cycle, and leave the cycle field null.")
+    else:
+        lines.append(f"  CYCLE POSITION: {pos.position}")
+        lines.append("")
+        lines.append(f"  Peak conditions met ({len(pos.peak_met)} of 5; "
+                     f"{_PEAK_MIN_CONDITIONS} required for PEAK):")
+        for c in pos.peak_met:
+            lines.append(f"    MET  - {c}")
+        for c in pos.peak_unmet:
+            lines.append(f"    no   - {c}")
+        lines.append("")
+        lines.append(f"  Trough conditions met ({len(pos.trough_met)} of 5; "
+                     f"{_TROUGH_MIN_CONDITIONS} required for TROUGH — a higher bar than the peak "
+                     "side because")
+        lines.append("  cyclicals are depressed together, so any single depressed reading is weak "
+                     "evidence):")
+        for c in pos.trough_met:
+            lines.append(f"    MET  - {c}")
+        for c in pos.trough_unmet:
+            lines.append(f"    no   - {c}")
+    for note in pos.notes:
+        lines.append(f"  NOTE: {note}")
 
     return "\n".join(lines)
 
@@ -2115,12 +2227,12 @@ async def _run_research_agent(
             log.warning("[%s] %s: timed out after %ds", ticker, label, timeout)
             return f"[ERROR] {label} timed out after {timeout}s"
 
-    (financials, valuation, peak_earnings, mda, risks, earnings, web,
+    (financials, valuation, cycle_position, mda, risks, earnings, web,
      price_analyst, estimates, technical, peer, dcf_summary, valuation_inputs,
      beat_miss, balance_sheet, market_size) = await asyncio.gather(
         _run(get_financial_summary,         "financials",     _DB_TIMEOUT),
         _run(get_valuation_data,            "valuation",      _DB_TIMEOUT),
-        _run(get_peak_earnings_data,        "peak_earnings",  _DB_TIMEOUT),
+        _run(get_cycle_position_data,       "cycle_position", _DB_TIMEOUT),
         _run(get_edgar_mda,                 "edgar_mda",      _EDGAR_TIMEOUT),
         _run(get_edgar_risks,               "edgar_risks",    _EDGAR_TIMEOUT),
         _run(get_earnings_trend_summary,    "earnings",       _EARNINGS_TIMEOUT),
@@ -2278,7 +2390,7 @@ async def _run_research_agent(
         f"=== FINANCIAL PERFORMANCE ===\n{financials}\n\n"
         f"=== VALUATION ===\n{valuation}\n\n"
         f"=== ANALYST ESTIMATE REVISIONS ===\n{estimates}\n\n"
-        f"=== PEAK-EARNINGS TRAP SIGNALS ===\n{peak_earnings}\n\n"
+        f"=== CYCLE POSITION (PEAK / TROUGH / MID) ===\n{cycle_position}\n\n"
         f"=== PRICE PERFORMANCE & ANALYST TARGETS ===\n{price_analyst}\n\n"
         f"=== RISK FACTORS (10-K) ===\n{risks}\n\n"
         f"{balance_sheet}\n\n"
