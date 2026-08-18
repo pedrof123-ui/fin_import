@@ -570,22 +570,43 @@ Lowest value of the set; do last or drop if the earlier phases land well. Add a 
 cluster to `industry_outlook` in `api/prompts/research_competitive.md:44-53`, so the industry
 section carries a cycle read alongside its secular TAM framing.
 
-## Phase 8 — QC and regression  [ ]  (cycle_position checks already landed in Phase 5)
+## Phase 8 — QC and regression  [x] Code complete, final harness run pending
 
-- One narrow `_validate_report` check before `return findings` (`research_router.py:2085`):
-  flag a `cycle_position` of `PEAK` or `TROUGH` on a ticker the Phase 1 gate classified
-  `NOT_CYCLICAL`. Keep it narrow — the regression harness gates on `qc_findings == []`
-  (`research_regression.py:86`), so any check that can fire on a healthy ticker fails the suite.
-- Extend `scripts/research_regression.py`'s ticker set with one known cyclical at trough (NUE or
-  GM) and one at peak, asserting the section renders with the expected polarity.
-- Full-universe fire-rate report for peak, trough and not-cyclical, to confirm finding 3's 40.5%
-  false-positive rate is gone.
-- **Output-truncation check** (see Open question): generate a worst-case report — a
-  `TROUGH`-verdict cyclical carrying a long `financial_performance` table — and confirm the
-  Chief's JSON completes well inside `max_tokens=32000`. Truncation here is silent and surfaces
-  as a malformed report rather than an error, so assert on it explicitly rather than eyeballing.
+- **`_validate_report` check** — landed early, in Phase 5. Two-directional: a null
+  `cycle_position` when the block computed one, and a mismatch against the computed verdict.
+  Deliberately narrow, so it fires only on a real defect.
+- **Harness extended** — `scripts/research_regression.py` now runs five tickers. NVDA, UPS and KO
+  are all NON_CYCLICAL, so before this **no run had ever exercised a rendered cycle callout**.
+  Added MU (PEAK) and FANG (TROUGH that clears the trough-quality tests). Each asserts
+  `cycle_position`, that the expected callout heading renders, and that
+  `cycle_position_analysis` is populated. Cost rises from ~$1.50/~20min to roughly ~$2.50/~35min.
+  The expectation table is checked against the live gate first and reported as *informational* if
+  the gate has moved — a changed verdict means the data moved, not that the model erred, and
+  should not fail the suite silently as a model bug.
+- **Truncation guard** — folded into the same two tickers. `UsageTracker` is aggregate across all
+  agents so it cannot isolate the Chief Core call, but the failure mode is fields being cut from
+  the end of the Core JSON, so the check asserts `key_highlights`, `financial_performance` and
+  `fair_value_base` all survive alongside the longest cycle narrative in the feature.
+- **Before/after on the original defect** — `scripts/cycle_defect_before_after.py` replays the
+  original rubric against current data and scores the shipped pipeline on the same universe:
 
----
+  | | Fires | Share |
+  |---|---|---|
+  | BEFORE — original rubric | 1,523 | 57.6% |
+  | AFTER — pipeline reports PEAK | 141 | 5.3% |
+
+  AAPL, MSFT, KO, PG and COST all move from TRAP to NOT_CYCLICAL. After-state across the
+  universe: PEAK 5.3%, TROUGH 6.9%, MID 18.5%, NOT_CYCLICAL 69.3%.
+
+  *Honest note on the number:* finding 3 quoted 40.5%, which was specifically the
+  conditions-1-and-4 pair that alone trips the "TWO or more" threshold. The replay scores all
+  five original conditions and so reads higher at 57.6%. Both measure the same defect from
+  different angles; the after-state is what the comparison turns on, and the script says this in
+  its own output rather than quietly presenting 57.6% as a reproduction of 40.5%.
+
+**Outstanding:** one run of the extended harness as the final gate. Watch for a `cycle_position`
+QC finding — the check gates on `qc_findings == []`, so a Chief that omits the field fails the
+suite by design.
 
 ## Phase 9 — Fix `debt_to_ebitda` and enterprise value  [ ]  (follow-up, after Phase 8)
 

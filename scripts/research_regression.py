@@ -20,9 +20,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from api.research_router import _run_research_agent, _DEFAULT_MODEL  # noqa: E402
+from api.research_router import (  # noqa: E402
+    _DEFAULT_MODEL, _run_research_agent, compute_cycle_position, render_to_markdown,
+)
+from api.cycle_data import TROUGH, assess_trough_quality  # noqa: E402
 
-_TEST_TICKERS = ["NVDA", "UPS", "KO"]
+_TEST_TICKERS = ["NVDA", "UPS", "KO", "MU", "FANG"]
+
+# Cycle-position coverage (PLAN_CYCLE_AWARENESS.md Phase 8). NVDA/UPS/KO are all NON_CYCLICAL, so
+# before these two were added no run had ever exercised a rendered cycle callout. MU is a PEAK and
+# FANG a TROUGH that clears the trough-quality tests, which is also the longest output case in the
+# feature and therefore the one to watch for Chief JSON truncation.
+_EXPECTED_CYCLE = {"NVDA": "NOT_CYCLICAL", "UPS": "NOT_CYCLICAL", "KO": "NOT_CYCLICAL",
+                   "MU": "PEAK", "FANG": "TROUGH"}
+_EXPECTED_CALLOUT = {"MU": "Peak-Earnings Trap Alert", "FANG": "Trough-Earnings Opportunity"}
 _DEGRADED_TICKER = "ZZZZNOTATICKER"  # absent from pe_stats/av_financials — verifies graceful degradation
 
 
@@ -89,6 +100,42 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
         ))
 
     checks.append(_check("qc_findings == []", findings == [], str(findings)))
+
+    # --- cycle position (PLAN_CYCLE_AWARENESS.md Phase 8) --------------------------------------
+    expected = _EXPECTED_CYCLE.get(ticker)
+    if expected:
+        # The gate is deterministic, so a changed expectation means the data moved under us, not
+        # that the model erred — report it as informational rather than failing the suite.
+        computed = compute_cycle_position(ticker)
+        if computed != expected:
+            info.append(_check(
+                "cycle expectation still current", False,
+                f"expected {expected}, gate now computes {computed} — update _EXPECTED_CYCLE"))
+        else:
+            checks.append(_check(
+                f"cycle_position == {expected}", report.cycle_position == expected,
+                f"report says {report.cycle_position}"))
+
+    callout = _EXPECTED_CALLOUT.get(ticker)
+    if callout and report.cycle_position in ("PEAK", "TROUGH"):
+        quality = (assess_trough_quality(ticker).quality
+                   if report.cycle_position == TROUGH else None)
+        md = render_to_markdown(report, trough_quality=quality)
+        checks.append(_check(f"renders '{callout}'", callout in md))
+        checks.append(_check(
+            "cycle_position_analysis populated",
+            bool((report.cycle_position_analysis or "").strip()),
+            f"{len(report.cycle_position_analysis or '')} chars"))
+
+        # Truncation guard. max_tokens=32000 silently truncated the Chief's JSON once before, on
+        # a long peak_earnings_analysis (COHR). This feature made the Core call's input and
+        # output longer again, so check the cycle narrative has not crowded out the fields that
+        # follow it in the same Core response.
+        checks.append(_check(
+            "Core output not truncated by the cycle section",
+            bool(report.key_highlights) and bool(report.financial_performance)
+            and bool(report.valuation.fair_value_base is not None),
+            f"highlights={len(report.key_highlights)} rows={len(report.financial_performance)}"))
 
     return checks, info
 
