@@ -1,19 +1,23 @@
 # AI Researcher — Industry Cycle Awareness
 
-Created 2026-08-17. **Status: Phases 0-4 complete. Next: Phase 5.**
+Created 2026-08-17. **Status: Phases 0-5 complete. Next: Phase 6.**
 
 ## Resume here
 
-Next action: **Phase 5 — schema, prompt, rendering.** This is the phase that finally makes the
-fix user-visible: today the schema field is still `peak_earnings_analysis` and its renderer at
-`api/research_router.py:540` prints `> **Warning:**`, so a TROUGH narrative — including an
-OPPORTUNITY one — renders under a warning header. Everything upstream of the schema is done.
+Next action: **Phase 6 — make it affect the valuation.** This is the structural fix the whole
+plan is built around: until it lands, a detected cycle position changes prose and nothing else.
+Hand `valuation_analyst_context` a **price-free** mid-cycle block — TTM/forward/5yr min/mid-cycle/
+max EPS and margin-versus-median, with no `current_pe` and no `normalized_pe_5y`, both of which
+embed today's price and would break the blindness `api/valuation_data.py:266-270` exists to
+protect.
 
-Carry into Phase 5: the block now emits `CYCLE POSITION: <PEAK|TROUGH|MID|NOT_CYCLICAL>` and,
-for troughs, a TROUGH QUALITY verdict of OPPORTUNITY or POSSIBLE_VALUE_TRAP. The callout branch
-should key off both — a TROUGH/OPPORTUNITY is an Opportunity callout, a TROUGH/POSSIBLE_VALUE_TRAP
-is closer to a Warning. The plan's Phase 5 text predates the quality verdict and only branches on
-PEAK vs TROUGH.
+**Run `scripts/research_regression.py` once after Phase 6 lands** (agreed 2026-08-18: two more
+runs total, one here and one at Phase 8, rather than one per phase). Phase 6 is the phase that
+can move `fair_value_low/base/high`, which the harness asserts on, and Phase 5's schema change
+has not yet been exercised against a live model.
+
+Phase 7 is **dropped** by agreement — lowest value in the plan, duplicates what the cycle block
+already says, in a section the Chief does not use for the rating. Go 6 -> 8 -> 9.
 
 Also open, and bigger than this plan: **`pe_stats.debt_to_ebitda` is wrong universe-wide** and the
 same root cause understates enterprise value. See the end of Phase 4. Not fixed, deliberately.
@@ -460,30 +464,46 @@ connections to the same file, so the second attach raised
 connections open concurrently. Both now use `ATTACH IF NOT EXISTS`. Phases 1-3 shipped with the
 single-attach version and passed the regression harness, so this only became reachable in Phase 4.
 
-## Phase 5 — Schema, prompt, rendering  [ ]
+## Phase 5 — Schema, prompt, rendering  [x] Complete
 
-Per the verified change checklist:
+The fix is user-visible from here: a cyclical trough no longer renders under a "Warning" header.
 
-1. `EquityResearchReport` (`research_router.py:290`) — add `cycle_position:
-   Optional[Literal["PEAK","TROUGH","MID","NOT_CYCLICAL"]] = None` and `cycle_position_analysis:
-   Optional[str] = None`. Retire `peak_earnings_analysis` from the *generated* schema but leave
-   the attribute present and optional so existing test fixtures
-   (`tests/test_research_ai_dcf_integration.py:157, 319, 338`) keep constructing.
-2. `ChiefCoreOutput` (`:322`) — add both fields to the Core half only. The merge at `:2360` is a
-   `**` splat, so a field present in both chief models raises.
-3. `api/prompts/research_chief_core.md` — replace the `peak_earnings_analysis` instruction with
-   the symmetric rubric; state that the field stays null when `cycle_position` is `NOT_CYCLICAL`.
-4. `render_to_markdown` (`:452`) — replace the block at `:539-547`. Heading and callout branch on
-   `cycle_position`: "Peak-Earnings Trap Alert" (Warning) vs "Trough-Earnings Opportunity"
-   (Opportunity), preserving its current position between Intrinsic Valuation and Company
-   Overview.
+1. `EquityResearchReport` — added `cycle_position: Optional[Literal["PEAK","TROUGH","MID",
+   "NOT_CYCLICAL"]]` and `cycle_position_analysis: Optional[str]`. `peak_earnings_analysis` stays
+   on the model, optional, so existing fixtures keep constructing, and the renderer still falls
+   back to it so a report generated before the rename renders its callout.
+2. `ChiefCoreOutput` — the new pair replaces `peak_earnings_analysis` on the Core half only. A
+   test now asserts the two chief schemas share no field, since the merge is a `**` splat and any
+   overlap raises at runtime rather than at import.
+3. `research_chief_core.md` — `cycle_position` is copied verbatim from the block and must never be
+   null when the section states one; `cycle_position_analysis` is populated only for PEAK/TROUGH.
+4. `render_to_markdown` — heading and callout branch three ways, not two:
 
-   **`MID` renders no standalone section.** A confirmed mid-cycle reading is true but not
-   actionable, and giving it a section puts a "nothing is happening here" block in most cyclical
-   reports. Suppressing it outright would make absence ambiguous, though — the reader could not
-   tell "we checked, it is mid-cycle" from "we never checked". So emit the verdict as a single
-   line inside an existing section (Intrinsic Valuation) whenever the gate returns `CYCLICAL`,
-   and reserve the standalone callout for `PEAK` and `TROUGH`.
+   | Position | Heading | Callout |
+   |---|---|---|
+   | PEAK | Peak-Earnings Trap Alert | `> **Warning:**` |
+   | TROUGH + OPPORTUNITY | Trough-Earnings Opportunity | `> **Opportunity:**` |
+   | TROUGH otherwise | Trough Earnings — Possible Value Trap | `> **Caution:**` |
+   | MID | *(one line inside Intrinsic Valuation)* | — |
+   | NOT_CYCLICAL | *(nothing)* | — |
+
+**The third branch is an addition to this plan's spec,** which predates Phase 4 and branched only
+on PEAK vs TROUGH. Rendering a failed-survivability trough as "Trough-Earnings Opportunity" would
+invert the meaning of the Phase 4 verdict at the last step — CLF, at 12.4x leverage, would be
+presented to a reader as an opportunity. `trough_quality` is passed into the renderer as a
+computed argument rather than an LLM-set field, for the same reason the conditions are scored in
+Python: the callout label is the difference between "buy this" and "this may be a value trap".
+
+**Risk carried into Phase 8, and it is a silent one.** The callout is gated on
+`report.cycle_position`, which the *model* now fills in. If the Chief leaves it null, the whole
+feature renders nothing at all — no error, no QC finding, just a report with no cycle section.
+The Phase 8 check should therefore be two-directional: flag PEAK/TROUGH on a ticker the gate
+called NOT_CYCLICAL (as specified), **and** flag a null `cycle_position` when the block stated
+one. The block already carries the computed verdict, so the comparison is available.
+
+Tests: 49 in `tests/test_cycle_data.py` (9 new). Full suite 570 passed, 3 skipped. Not yet
+exercised against a live model — the schema change means the Chief must actually populate
+`cycle_position`, which only a real generation proves. That is the next regression run.
 
 ## Phase 6 — Make it affect the valuation  [ ]
 
@@ -498,7 +518,7 @@ be symmetric: on a cyclical trough, a multiples cross-check anchored on forward 
 understates fair value the same way TTM overstates it at a peak; anchor on mid-cycle earnings
 power instead and say so in `valuation_methodology`.
 
-## Phase 7 — Industry cycle framing  [ ]
+## Phase 7 — Industry cycle framing  [~] Dropped by agreement 2026-08-18
 
 Lowest value of the set; do last or drop if the earlier phases land well. Add a cycle-position
 cluster to `industry_outlook` in `api/prompts/research_competitive.md:44-53`, so the industry
@@ -520,6 +540,45 @@ section carries a cycle read alongside its secular TAM framing.
   as a malformed report rather than an error, so assert on it explicitly rather than eyeballing.
 
 ---
+
+## Phase 9 — Fix `debt_to_ebitda` and enterprise value  [ ]  (follow-up, after Phase 8)
+
+Agreed 2026-08-18 to run this immediately after the cycle plan closes. Scoped as its own piece
+because the one-line code change is not the work — the recompute and the diff review are.
+
+**The defect.** `_get_ev_debt_cash` (`historic_fundamentals/pe.py:464`) builds total debt as
+`long_term_debt_noncurrent + short_term_debt + current_long_term_debt` and treats NULL components
+as zero when at least one is present. `long_term_debt_noncurrent` is NULL in 100% of the 193,441
+quarterly `balance_sheets` rows carrying a debt total, so every derived figure sees only the
+current portion of debt — a median 6.1x understatement (T 0.25x stored vs 3.24x true; CCL 0.43x
+vs 3.91x; VZ 1.26x vs 4.18x; NUE 0.10x vs 1.26x). Full detail at the end of Phase 4.
+
+**Blast radius.** `pe_stats.debt_to_ebitda` and `monthly_pe.debt_to_ebitda` directly; and via the
+enterprise-value calculation at `pe.py:689`, also `ev`, `ev_ebitda` and `ebitda_ev_yield`. Those
+feed `historic_fundamentals/ml_comps_model.py`, the factor set in `scripts/run_walkforward.py`,
+and the `sector_stats` medians.
+
+**Steps.**
+
+1. Prefer `short_long_term_debt_total` in `_get_ev_debt_cash`, falling back to the component sum
+   when it is absent. Keep the fallback — the total field is not universally populated either.
+2. Recompute `monthly_pe` across the universe (~2,600 tickers) and rebuild `pe_stats` and
+   `sector_stats`.
+3. Re-run the ML comps validation and the factor walk-forward, and **diff against the current
+   baselines**. This is the deliverable, not the code change.
+4. Simplify `api/cycle_data.py` `assess_trough_quality` to read the repaired column instead of
+   computing leverage locally, and drop the regression guard that pins it away from
+   `pe_stats.debt_to_ebitda`. Do this only once step 3 confirms the repair.
+
+**Stated hypothesis, so the recompute is an experiment and not a chore.** EV/EBITDA is the one
+ML comps model tracked as a persistent "stable near-miss" on calibration, and it is the model
+whose input is corrupted on the debt side. Prediction: its calibration improves. If it does not,
+the near-miss has a different cause — also worth knowing. Note the understatement varies by
+company rather than being a uniform level shift, so it injects cross-sectional noise too; no
+direction is predicted for any individual factor result.
+
+**Risk to weigh before step 2:** every previously validated factor result and backtest baseline
+used the broken EV. Some "validated" conclusions may move. Budget the diff review, not the fix.
 
 ## Decisions taken
 

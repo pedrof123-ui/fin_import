@@ -263,3 +263,99 @@ def test_block_renders_trough_quality_only_for_troughs():
     assert "do NOT frame this as a buying opportunity" in clf
     assert "TROUGH QUALITY" not in _block("AAPL")
     assert "TROUGH QUALITY" not in _block("MU")   # PEAK
+
+
+# --- Phase 5: schema and rendering -----------------------------------------------------------
+
+def _render(position, quality=None, analysis="Earnings sit away from mid-cycle."):
+    import api.research_router as rr
+    header = rr.ResearchHeader(
+        company_name="Test Co", ticker="TEST", prepared_date="2026-08-18", ai_model="m",
+        rating="HOLD", target_low=10.0, target_high=20.0, thesis_summary="t")
+    report = rr.EquityResearchReport(
+        header=header, key_highlights=[], financial_performance=[], financial_years=[],
+        valuation=rr.ValuationSummary(current_price=15.0),
+        company_overview="o", competitive_analysis="c", industry_outlook="i",
+        strategic_framework_analysis="s", mda_summary="m", risk_factors=[],
+        near_term_catalysts=[], earnings_highlights="e", quarterly_trend_analysis="q",
+        technical_analysis="t", technical_rating="NEUTRAL",
+        intrinsic_valuation="intrinsic valuation prose", investment_thesis="th",
+        cycle_position=position, cycle_position_analysis=analysis)
+    return rr.render_to_markdown(report, trough_quality=quality)
+
+
+def test_peak_renders_as_a_warning():
+    md = _render("PEAK")
+    assert "## Peak-Earnings Trap Alert" in md
+    assert "> **Warning:**" in md
+
+
+def test_cleared_trough_renders_as_an_opportunity():
+    md = _render("TROUGH", OPPORTUNITY)
+    assert "## Trough-Earnings Opportunity" in md
+    assert "> **Opportunity:**" in md
+
+
+def test_uncleared_trough_is_never_labelled_an_opportunity():
+    """The difference between telling a reader a depressed cyclical is a buying opportunity and
+    telling them it may be a value trap is the whole point of Phase 4 — it must survive into the
+    rendered callout, not just the prose."""
+    md = _render("TROUGH", POSSIBLE_VALUE_TRAP)
+    assert "Possible Value Trap" in md
+    assert "> **Caution:**" in md
+    # scoped to the callout: the report carries an unrelated "Market Opportunity" heading
+    assert "Trough-Earnings Opportunity" not in md
+    assert "> **Opportunity:**" not in md
+
+
+def test_trough_without_a_quality_verdict_does_not_claim_opportunity():
+    md = _render("TROUGH", None)
+    assert "> **Caution:**" in md
+
+
+def test_mid_gets_one_line_and_no_standalone_section():
+    """A confirmed mid-cycle reading is true but not actionable, so it gets no section — but
+    suppressing it entirely would make absence ambiguous, so it is stated inline."""
+    md = _render("MID")
+    assert "mid-cycle — earnings are neither depressed" in md
+    assert "## Trough" not in md and "## Peak" not in md
+
+
+def test_non_cyclical_renders_no_cycle_content_at_all():
+    md = _render("NOT_CYCLICAL")
+    assert "## Trough" not in md and "## Peak" not in md
+    assert "mid-cycle — earnings are neither" not in md
+
+
+def test_retired_field_still_renders_for_old_reports():
+    """peak_earnings_analysis left the generated schema but stays on the model, so a report
+    built before the rename still renders its callout."""
+    import api.research_router as rr
+    header = rr.ResearchHeader(
+        company_name="Test Co", ticker="TEST", prepared_date="2026-08-18", ai_model="m",
+        rating="HOLD", target_low=10.0, target_high=20.0, thesis_summary="t")
+    report = rr.EquityResearchReport(
+        header=header, key_highlights=[], financial_performance=[], financial_years=[],
+        valuation=rr.ValuationSummary(current_price=15.0),
+        company_overview="o", competitive_analysis="c", industry_outlook="i",
+        strategic_framework_analysis="s", mda_summary="m", risk_factors=[],
+        near_term_catalysts=[], earnings_highlights="e", quarterly_trend_analysis="q",
+        technical_analysis="t", technical_rating="NEUTRAL", intrinsic_valuation="iv",
+        investment_thesis="th", cycle_position="PEAK",
+        peak_earnings_analysis="legacy peak text")
+    md = rr.render_to_markdown(report)
+    assert "legacy peak text" in md
+
+
+def test_core_and_narrative_schemas_do_not_collide():
+    """The two chief outputs are merged with a ** splat, so a field present in both raises."""
+    import api.research_router as rr
+    overlap = set(rr.ChiefCoreOutput.model_fields) & set(rr.ChiefNarrativeOutput.model_fields)
+    assert not overlap, f"fields in both chief models would break the merge: {overlap}"
+
+
+def test_cycle_fields_are_on_the_core_schema():
+    import api.research_router as rr
+    assert "cycle_position" in rr.ChiefCoreOutput.model_fields
+    assert "cycle_position_analysis" in rr.ChiefCoreOutput.model_fields
+    assert "peak_earnings_analysis" not in rr.ChiefCoreOutput.model_fields

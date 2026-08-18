@@ -305,6 +305,10 @@ class EquityResearchReport(BaseModel):
     financial_performance: list[FinancialRow]
     financial_years: list[str]
     valuation: ValuationSummary
+    cycle_position: Optional[Literal["PEAK", "TROUGH", "MID", "NOT_CYCLICAL"]] = None
+    cycle_position_analysis: Optional[str] = None
+    # Superseded by cycle_position_analysis and no longer part of the generated schema. Kept
+    # present and optional so existing fixtures keep constructing.
     peak_earnings_analysis: Optional[str] = None
     company_overview: str
     competitive_analysis: str
@@ -337,7 +341,8 @@ class ChiefCoreOutput(BaseModel):
     financial_performance: list[FinancialRow]
     financial_years: list[str]
     valuation: ValuationSummary
-    peak_earnings_analysis: Optional[str] = None
+    cycle_position: Optional[Literal["PEAK", "TROUGH", "MID", "NOT_CYCLICAL"]] = None
+    cycle_position_analysis: Optional[str] = None
     risk_factors: list[str]
     near_term_catalysts: list[str]
 
@@ -464,7 +469,7 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 def render_to_markdown(
     report: EquityResearchReport, valuation_tables_md: str = "",
     direct_competitors_md: str = "", market_share_md: str = "", dcf_reconciliation: str = "",
-    usage_tracker: Optional[UsageTracker] = None,
+    usage_tracker: Optional[UsageTracker] = None, trough_quality: Optional[str] = None,
 ) -> str:
     h = report.header
     v = report.valuation
@@ -542,21 +547,30 @@ def render_to_markdown(
             report.intrinsic_valuation,
             "",
         ]
+        if report.cycle_position == "MID":
+            lines += ["*Cycle position: mid-cycle — earnings are neither depressed nor at a "
+                      "cyclical peak, so TTM is a fair baseline.*", ""]
         if dcf_reconciliation:
             lines += ["**DCF Reconciliation (Mechanical vs. AI-Authored):**", "", dcf_reconciliation, ""]
         if valuation_tables_md:
             lines += [valuation_tables_md, ""]
         lines += ["---", ""]
 
-    if report.peak_earnings_analysis:
-        lines += [
-            "## Peak-Earnings Trap Alert",
-            "",
-            f"> **Warning:** {report.peak_earnings_analysis}",
-            "",
-            "---",
-            "",
-        ]
+    # MID gets no standalone section: a confirmed mid-cycle reading is true but not actionable,
+    # and a "nothing is happening here" block would appear in most cyclical reports. Suppressing
+    # it entirely would make absence ambiguous though — the reader could not tell "we checked, it
+    # is mid-cycle" from "we never checked" — so it is stated as one line above instead.
+    analysis = report.cycle_position_analysis or report.peak_earnings_analysis
+    if analysis and report.cycle_position in ("PEAK", "TROUGH"):
+        if report.cycle_position == "PEAK":
+            heading, label = "Peak-Earnings Trap Alert", "Warning"
+        elif trough_quality == OPPORTUNITY:
+            heading, label = "Trough-Earnings Opportunity", "Opportunity"
+        else:
+            # A trough that fails the demand, breadth or survivability tests is not an
+            # opportunity, and must not be labelled as one.
+            heading, label = "Trough Earnings — Possible Value Trap", "Caution"
+        lines += [f"## {heading}", "", f"> **{label}:** {analysis}", "", "---", ""]
 
     lines += ["## 3. Company Overview", "", report.company_overview, "", "---", ""]
     lines += ["## 4. Competitive Analysis & Market Positioning", "", report.competitive_analysis, ""]
@@ -2613,9 +2627,15 @@ async def _background_generate(ticker: str, model: str):
     try:
         report, findings, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation, \
             usage_tracker = await _run_research_agent(ticker, model, status_key=key)
+        # Computed, not taken from the model: the callout label is the difference between
+        # telling a reader a depressed cyclical is an opportunity and telling them it may be a
+        # value trap, which is not a judgement to leave to a narrative field.
+        trough_quality = (
+            assess_trough_quality(ticker).quality if report.cycle_position == TROUGH else None
+        )
         markdown = render_to_markdown(
             report, valuation_tables_md, direct_competitors_md, market_share_md, dcf_reconciliation,
-            usage_tracker,
+            usage_tracker, trough_quality,
         )
         if findings:
             markdown += f"\n\n---\n\n*QC: {len(findings)} inconsistency(ies) detected — " + \

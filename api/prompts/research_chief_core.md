@@ -116,12 +116,13 @@ near_term_catalysts: take the Earnings & MD&A Historian's near_term_catalysts as
   merge in any additional catalyst evident from the valuation/estimates data (e.g. upcoming
   earnings date implied by estimate horizons) if not already covered. 3-5 items total.
 
-peak_earnings_analysis: the CYCLE POSITION section states a CYCLE POSITION of PEAK, TROUGH, MID
-  or NOT_CYCLICAL for {ticker}, together with every condition it tested and whether each was MET.
-  That verdict is computed from calibrated thresholds — do NOT re-derive it, re-score it, or
-  override it, and do not treat a condition as met unless it is marked MET.
+cycle_position: copy the CYCLE POSITION verdict from the CYCLE POSITION section verbatim — one
+  of PEAK, TROUGH, MID, NOT_CYCLICAL. It is computed from calibrated thresholds, so do NOT
+  re-derive it, re-score it, or override it, and do not treat a condition as met unless it is
+  marked MET. Never leave it null when the section states one.
 
-  Populate this field (2-4 bullets, no bold header needed) ONLY for PEAK or TROUGH:
+cycle_position_analysis: the prose for that verdict, 2-4 bullets, no bold header needed.
+  Populate it ONLY for PEAK or TROUGH:
 
   - PEAK — earnings are near a cyclical high and TTM is a flattering baseline. Cover: (a) which
     MET conditions signal it, with their numbers, (b) why TTM earnings overstate normal earning
@@ -141,9 +142,9 @@ peak_earnings_analysis: the CYCLE POSITION section states a CYCLE POSITION of PE
         State plainly that it may be a value trap and name the test that failed and its number.
     UNKNOWN counts against the company, never for it: an unestablished test is not a pass.
 
-  For MID or NOT_CYCLICAL, leave this field null or an empty string. NOT_CYCLICAL means the
-  company's revenue does not move with an industry cycle at all: do not place it anywhere on a
-  cycle, in this field or anywhere else in the report.
+  For MID or NOT_CYCLICAL, leave cycle_position_analysis null or an empty string — still set
+  cycle_position itself. NOT_CYCLICAL means the company's revenue does not move with an industry
+  cycle at all: do not place it anywhere on a cycle, in this field or anywhere else in the report.
 
   Two data conventions in that section, both deliberate:
   - When TTM EPS is negative, "Forward vs. TTM EPS change" is given as a dollar move with a named
