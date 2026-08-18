@@ -206,3 +206,60 @@ def test_block_renders_the_position_and_its_evidence():
     aapl = _block("AAPL")
     assert "CYCLE POSITION: NOT_CYCLICAL" in aapl
     assert "MET  -" not in aapl, "no conditions should be scored for a non-cyclical"
+
+
+# --- Phase 4: trough vs. value trap ----------------------------------------------------------
+
+from api.cycle_data import (  # noqa: E402
+    OPPORTUNITY, POSSIBLE_VALUE_TRAP, assess_trough_quality,
+)
+
+
+def test_high_leverage_trough_is_not_an_opportunity():
+    """CLF carries 12.4x total debt / TTM EBITDA at trough earnings — it cannot fund itself to a
+    recovery, whatever the cycle does."""
+    q = assess_trough_quality("CLF")
+    assert q.quality == POSSIBLE_VALUE_TRAP
+    assert q.survivable is False
+    assert q.leverage > 10
+
+
+def test_leverage_is_not_read_from_the_broken_column():
+    """pe_stats.debt_to_ebitda sums only the current portion of debt, because
+    long_term_debt_noncurrent is NULL in every quarterly row; it understates leverage by a median
+    of 6.1x. Phase 4 computes from short_long_term_debt_total instead."""
+    import duckdb
+    conn = duckdb.connect("data/historic_fundamentals.duckdb", read_only=True)
+    stored = conn.execute("SELECT debt_to_ebitda FROM pe_stats WHERE ticker = 'CLF'").fetchone()[0]
+    conn.close()
+    q = assess_trough_quality("CLF")
+    assert q.leverage > stored * 3, (
+        f"leverage {q.leverage} tracks the broken column {stored} — the fix regressed")
+
+
+def test_opportunity_requires_all_three_tests():
+    q = assess_trough_quality("FANG")
+    if q.quality == OPPORTUNITY:
+        assert q.demand_intact is True
+        assert q.industry_wide is True
+        assert q.survivable is True
+
+
+def test_unknown_never_counts_as_a_pass():
+    q = assess_trough_quality("ZZZZNOTATICKER")
+    assert q.quality == POSSIBLE_VALUE_TRAP
+    assert q.demand_intact is not True and q.survivable is not True
+
+
+def test_value_trap_names_the_failing_test():
+    q = assess_trough_quality("CLF")
+    assert q.notes, "a value-trap verdict must say which test failed"
+    assert any("leverage" in n for n in q.notes)
+
+
+def test_block_renders_trough_quality_only_for_troughs():
+    clf = _block("CLF")
+    assert "TROUGH QUALITY" in clf
+    assert "do NOT frame this as a buying opportunity" in clf
+    assert "TROUGH QUALITY" not in _block("AAPL")
+    assert "TROUGH QUALITY" not in _block("MU")   # PEAK

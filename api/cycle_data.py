@@ -116,7 +116,7 @@ def classify_cyclicality(ticker: str) -> Cyclicality:
 
     conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
     try:
-        conn.execute(f"ATTACH '{_AV_FIN_DB}' AS av (READ_ONLY)")
+        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
         peers, group = _peer_tickers(conn, ticker)
         if not peers:
             return Cyclicality(ticker, INSUFFICIENT_HISTORY, peer_group=group,
@@ -334,3 +334,144 @@ def evaluate_cycle_position(
                          peak_unmet=[k for k, v in peak.items() if not v],
                          trough_unmet=[k for k, v in trough.items() if not v],
                          notes=notes)
+
+
+# --- Trough vs. value trap (PLAN_CYCLE_AWARENESS.md Phase 4) ---------------------------------
+#
+# A TROUGH verdict on its own is not an investment case: a depressed cyclical and a structurally
+# impaired business look identical on the five trough conditions. Three independent questions
+# separate them, and a trough must clear all three before it is framed as an opportunity.
+# Measured 2026-08-18 over the 183 TROUGH names: demand intact 39.9%, industry-wide 57.4%,
+# survivable 42.1%, all three 9.3%. Pairwise co-passing is 16-24%, so no test is implied by
+# another (the failure mode that made the original peak rubric worthless).
+
+OPPORTUNITY = "OPPORTUNITY"
+POSSIBLE_VALUE_TRAP = "POSSIBLE_VALUE_TRAP"
+
+_TROUGH_REV_VS_PEAK = 0.90     # TTM revenue this share of its own 5yr max = demand still there
+_TROUGH_MAX_LEVERAGE = 4.0     # total debt / TTM EBITDA at trough earnings
+_INDUSTRY_MARGIN_GAP = -0.01   # industry operating margin this far under its own 5yr median
+
+
+@dataclasses.dataclass
+class TroughQuality:
+    quality: str
+    demand_intact: bool | None = None
+    industry_wide: bool | None = None
+    survivable: bool | None = None
+    revenue_vs_peak: float | None = None
+    leverage: float | None = None
+    industry: str | None = None
+    notes: list[str] = dataclasses.field(default_factory=list)
+
+
+def assess_trough_quality(ticker: str) -> TroughQuality:
+    """Separate a mean-reverting cyclical trough from a structurally impaired business.
+
+    Unknown is never treated as passing: a trough whose survivability cannot be established is
+    not an opportunity, because the cost of that error is telling someone to buy a company that
+    cannot fund itself to the recovery.
+    """
+    ticker = ticker.upper()
+    if not _HIST_FUND_DB.exists() or not _AV_FIN_DB.exists():
+        return TroughQuality(POSSIBLE_VALUE_TRAP, notes=["database not found"])
+
+    conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+    try:
+        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
+
+        # 1. Demand. Is revenue itself in decline, or are only margins compressed? A cyclical
+        #    margin trough keeps revenue near its highs; a melting ice cube does not. Revenue is
+        #    used rather than rev_cagr_5yr, whose 5-year window starts in the depressed 2021 base
+        #    and so reads positive for 93% of troughs — no discriminating power.
+        rev = conn.execute("""
+            SELECT max(ttm_revenue), arg_max(ttm_revenue, month_end_date)
+            FROM monthly_pe
+            WHERE ticker = ? AND ttm_revenue IS NOT NULL
+              AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
+        """, [ticker]).fetchone()
+
+        # 2. Survivability. Computed here from the reported debt total rather than read from
+        #    pe_stats.debt_to_ebitda, which is wrong: _get_ev_debt_cash in historic_fundamentals/
+        #    pe.py sums long_term_debt_noncurrent + short_term_debt + current_long_term_debt, and
+        #    long_term_debt_noncurrent is NULL in 100% of quarterly rows, so the column carries
+        #    only the current portion of debt and understates leverage by a median of 6.1x
+        #    (AT&T reads 0.25x against a true 3.24x).
+        lev = conn.execute("""
+            WITH d AS (
+                SELECT arg_max(short_long_term_debt_total, fiscal_date_ending) AS debt
+                FROM av.balance_sheets
+                WHERE ticker = ? AND period_type = 'quarterly'
+                  AND short_long_term_debt_total IS NOT NULL
+            ), e AS (
+                SELECT sum(ebitda) AS ttm FROM (
+                    SELECT ebitda FROM av.income_statements
+                    WHERE ticker = ? AND period_type = 'quarterly' AND ebitda IS NOT NULL
+                    ORDER BY fiscal_date_ending DESC LIMIT 4
+                )
+            )
+            SELECT CASE WHEN e.ttm > 0 THEN d.debt / e.ttm END FROM d, e
+        """, [ticker, ticker]).fetchone()
+
+        # 3. Peer breadth. An industry-wide margin squeeze points to a cycle; a company alone in
+        #    its trough points to share loss or secular decline. This is what finally wires
+        #    sector_stats into the equity researcher.
+        industry = conn.execute(
+            "SELECT industry FROM av.company_overview WHERE ticker = ?", [ticker]).fetchone()
+        industry = industry[0] if industry else None
+        ind = conn.execute("""
+            SELECT operating_margin_median, earn_growth_1yr_median, month_end_date
+            FROM sector_stats
+            WHERE group_type = 'industry' AND UPPER(group_name) = UPPER(?)
+              AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
+            ORDER BY month_end_date
+        """, [industry or ""]).fetchall()
+    finally:
+        conn.close()
+
+    notes: list[str] = []
+
+    revenue_vs_peak = None
+    demand_intact = None
+    if rev and rev[0] and rev[0] > 0 and rev[1] is not None:
+        revenue_vs_peak = rev[1] / rev[0]
+        demand_intact = revenue_vs_peak >= _TROUGH_REV_VS_PEAK
+
+    leverage = lev[0] if lev and lev[0] is not None else None
+    survivable = None if leverage is None else (0 <= leverage <= _TROUGH_MAX_LEVERAGE)
+    if leverage is None:
+        notes.append("No usable debt or EBITDA figure, so survivability could not be established.")
+
+    industry_wide = None
+    margins = [r[0] for r in ind if r[0] is not None]
+    if len(margins) >= 24:
+        current_margin, current_growth = ind[-1][0], ind[-1][1]
+        signals = []
+        if current_margin is not None:
+            median_margin = float(np.median(margins))
+            signals.append(current_margin - median_margin <= _INDUSTRY_MARGIN_GAP)
+        if current_growth is not None:
+            signals.append(current_growth < 0)
+        if signals:
+            industry_wide = any(signals)
+    elif industry:
+        notes.append(f"Too little {industry} history to judge whether the trough is industry-wide.")
+
+    cleared = [demand_intact, industry_wide, survivable]
+    quality = OPPORTUNITY if all(c is True for c in cleared) else POSSIBLE_VALUE_TRAP
+    if quality == POSSIBLE_VALUE_TRAP:
+        failed = []
+        if demand_intact is not True:
+            failed.append("revenue is below its own recent peak, so demand — not just margin — "
+                          "may be impaired")
+        if industry_wide is not True:
+            failed.append("the industry is not depressed alongside it, pointing to a "
+                          "company-specific problem rather than a cycle")
+        if survivable is not True:
+            failed.append("leverage at trough earnings is too high to fund the company through "
+                          "a recovery")
+        notes.extend(failed)
+
+    return TroughQuality(quality, demand_intact=demand_intact, industry_wide=industry_wide,
+                         survivable=survivable, revenue_vs_peak=revenue_vs_peak,
+                         leverage=leverage, industry=industry, notes=notes)

@@ -1,16 +1,22 @@
 # AI Researcher — Industry Cycle Awareness
 
-Created 2026-08-17. **Status: Phases 0-3 complete. Next: Phase 4.**
+Created 2026-08-17. **Status: Phases 0-4 complete. Next: Phase 5.**
 
 ## Resume here
 
-Next action: **Phase 4 — trough vs. value trap.** This is the phase that makes the feature a
-profit-opportunity rather than a second warning label, and Phase 3 deliberately left the gap it
-fills: the rubric can say TROUGH, but the prompt is currently instructed **not** to call a trough
-an opportunity, because a depressed cyclical and a structurally impaired business are
-indistinguishable on the five trough conditions. Phase 4 supplies the discriminator (revenue
-trajectory, peer breadth via `get_industry_aggregates`, debt/EBITDA survivability) and the prompt
-instruction should be relaxed in step with it.
+Next action: **Phase 5 — schema, prompt, rendering.** This is the phase that finally makes the
+fix user-visible: today the schema field is still `peak_earnings_analysis` and its renderer at
+`api/research_router.py:540` prints `> **Warning:**`, so a TROUGH narrative — including an
+OPPORTUNITY one — renders under a warning header. Everything upstream of the schema is done.
+
+Carry into Phase 5: the block now emits `CYCLE POSITION: <PEAK|TROUGH|MID|NOT_CYCLICAL>` and,
+for troughs, a TROUGH QUALITY verdict of OPPORTUNITY or POSSIBLE_VALUE_TRAP. The callout branch
+should key off both — a TROUGH/OPPORTUNITY is an Opportunity callout, a TROUGH/POSSIBLE_VALUE_TRAP
+is closer to a Warning. The plan's Phase 5 text predates the quality verdict and only branches on
+PEAK vs TROUGH.
+
+Also open, and bigger than this plan: **`pe_stats.debt_to_ebitda` is wrong universe-wide** and the
+same root cause understates enterprise value. See the end of Phase 4. Not fixed, deliberately.
 
 Settled, do not relitigate: F/GM false negatives **accepted 2026-08-18** (8/10 recall, zero false
 positives). Rubric conditions are scored in Python, not by the model — see the Phase 3 deviation
@@ -385,23 +391,74 @@ rubric level.
 
 Tests: 34 in `tests/test_cycle_data.py` (9 new). Full suite 555 passed, 3 skipped.
 
-## Phase 4 — Trough vs. value trap  [ ]
+## Phase 4 — Trough vs. value trap  [x] Complete
 
-The discriminator that makes this a profit-opportunity feature rather than a second warning
-label. For a `TROUGH` verdict, classify mean-reverting vs. structurally impaired using:
+`assess_trough_quality` in `api/cycle_data.py`, rendered as a TROUGH QUALITY block whenever the
+position is TROUGH, with the prompt relaxed in step: the Chief may now frame a trough as an
+opportunity, but only on an `OPPORTUNITY` verdict.
 
-- **Revenue trajectory** — `rev_growth_1yr` against `rev_cagr_5yr`. Is revenue also structurally
-  declining, or is this a margin event on intact demand?
-- **Peer breadth** — is the whole industry depressed, or only this company? Industry-grain
-  medians with 3/6/12-month deltas already exist in `api/industry_data.py:176-209, 261-270`
-  (`get_industry_aggregates`) but are currently unused by the equity researcher. Industry-wide
-  margin compression points to cycle; company-only points to share loss or secular decline.
-  This is the phase that genuinely wires the industry dimension into the researcher.
-- **Survivability** — `debt_to_ebitda` at trough earnings. A cyclical that cannot fund itself to
-  the recovery is not an opportunity.
+All three tests must clear, and **UNKNOWN never counts as a pass** — an unestablished
+survivability test is not a pass, because the cost of that error is telling someone to buy a
+company that cannot fund itself to the recovery. Measured over the 183 TROUGH names:
 
-Only a trough that clears all three is framed as an opportunity; otherwise it is reported as a
-possible value trap.
+| Test | Passes | Unknown |
+|---|---|---|
+| Demand intact — TTM revenue vs. its own 5yr peak, >=90% | 39.9% | 0% |
+| Industry-wide — industry margin under its own median, or industry earnings shrinking | 57.4% | 4.4% |
+| Survivable — total debt / TTM EBITDA <= 4x at trough earnings | 42.1% | 19.1% |
+| **All three -> OPPORTUNITY** | **9.3% (17 of 183)** | |
+
+Pairwise co-passing is 16-24%, so no test is implied by another — the check this plan now runs
+by reflex. Sample opportunities: FANG, CHRD, MTDR, NOV, TEX, TPR. CLF is the instructive
+negative: 12.4x leverage, revenue 80% of peak, and a steel industry that is *not* depressed
+alongside it — three failures, reported as a possible value trap rather than a cheap cyclical.
+
+**`rev_cagr_5yr` was rejected as the demand test.** The plan specified it, but its 5-year window
+starts in the depressed 2021 base, so it reads positive for **93.4%** of troughs and discriminates
+nothing. TTM revenue against its own 5-year peak asks the same question without the window
+artifact: a cyclical margin trough keeps revenue near its highs, a melting ice cube does not.
+
+### `pe_stats.debt_to_ebitda` is wrong across the whole database
+
+The survivability test computes leverage from `short_long_term_debt_total` rather than reading
+`pe_stats.debt_to_ebitda`, because that column is broken. `_get_ev_debt_cash`
+(`historic_fundamentals/pe.py:464`) builds total debt as
+`long_term_debt_noncurrent + short_term_debt + current_long_term_debt`, and treats a NULL
+component as zero as long as one component is present. **`long_term_debt_noncurrent` is NULL in
+100% of the 193,441 quarterly balance-sheet rows that carry a debt total**, so the column measures
+only the *current portion* of debt.
+
+Understatement is a median of **6.1x**. Verified against raw financials:
+
+| Ticker | Stored | True |
+|---|---|---|
+| T | 0.25x | 3.24x |
+| CCL | 0.43x | 3.91x |
+| VZ | 1.26x | 4.18x |
+| NUE | 0.10x | 1.26x |
+
+Among TROUGH names the true leverage distribution is p50 3.9x / p75 8.8x / p90 21.3x, against the
+stored column's p50 of 0.4x — the difference between "no cyclical is over-levered" and "half of
+them are".
+
+**This is not confined to this feature and has not been fixed.** The same helper supplies
+`total_debt` to the enterprise-value calculation at `pe.py:689`, so `ev`, `ev_ebitda` and
+`ebitda_ev_yield` are all understated on the debt side, and those feed `ml_comps_model.py`,
+`scripts/run_walkforward.py` factor sets, and the `sector_stats` medians. The code fix is a
+one-liner (prefer `short_long_term_debt_total`, fall back to the component sum), but it
+invalidates the computed columns until `monthly_pe` is recomputed across the universe, which
+reaches the ML comps models and any backtest baseline. **That decision is deliberately left
+open** — it is a re-import and possibly a retrain, not a phase step.
+
+Tests: 40 in `tests/test_cycle_data.py` (6 new), including a guard that leverage does not track
+the broken column. Full suite 561 passed, 3 skipped.
+
+**One latent bug fixed here, caught by the existing integration tests.** `classify_cyclicality`
+and `assess_trough_quality` both `ATTACH` the av database; DuckDB shares a catalog across
+connections to the same file, so the second attach raised
+`Binder Error: database with name "av" already exists` whenever the research fan-out held
+connections open concurrently. Both now use `ATTACH IF NOT EXISTS`. Phases 1-3 shipped with the
+single-attach version and passed the regression harness, so this only became reachable in Phase 4.
 
 ## Phase 5 — Schema, prompt, rendering  [ ]
 

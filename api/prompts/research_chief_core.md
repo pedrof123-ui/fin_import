@@ -129,9 +129,17 @@ peak_earnings_analysis: the CYCLE POSITION section states a CYCLE POSITION of PE
   - TROUGH — earnings are depressed and TTM understates normal earning power. Cover: (a) which
     MET conditions signal it, with their numbers, (b) why the multiple looks optically expensive
     on depressed earnings and why TTM is the wrong denominator, and (c) what mid-cycle earnings
-    imply for the true forward multiple. Do NOT assert the trough is a buying opportunity — a
-    depressed cyclical and a structurally impaired business look identical on these five
-    conditions, and separating them is not something this data can do.
+    imply for the true forward multiple.
+
+    A TROUGH is then qualified by the TROUGH QUALITY block, which tests three independent
+    things: whether demand is intact (revenue against its own 5yr peak), whether the industry is
+    depressed too or this company is alone in it, and whether leverage at trough earnings lets
+    the business reach a recovery. Follow its VERDICT exactly:
+      - OPPORTUNITY (all three PASS) — you may frame the trough as a cyclical opportunity, and
+        should say which mid-cycle earnings figure supports it.
+      - POSSIBLE_VALUE_TRAP (any test FAIL or UNKNOWN) — do NOT call it a buying opportunity.
+        State plainly that it may be a value trap and name the test that failed and its number.
+    UNKNOWN counts against the company, never for it: an unestablished test is not a pass.
 
   For MID or NOT_CYCLICAL, leave this field null or an empty string. NOT_CYCLICAL means the
   company's revenue does not move with an industry cycle at all: do not place it anywhere on a

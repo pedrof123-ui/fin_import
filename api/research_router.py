@@ -51,7 +51,11 @@ from historic_fundamentals.dispersion import (
 from api.cycle_data import (
     AMPLITUDE_MIN as _CYCLICAL_AMPLITUDE_MIN,
     NOT_CYCLICAL_POSITION,
+    OPPORTUNITY,
+    TROUGH,
+    assess_trough_quality,
     _PEAK_MIN_CONDITIONS,
+    _TROUGH_MAX_LEVERAGE,
     _TROUGH_MIN_CONDITIONS,
     classify_cyclicality,
     evaluate_cycle_position,
@@ -1006,6 +1010,33 @@ def get_cycle_position_data(ticker: str) -> str:
             lines.append(f"    no   - {c}")
     for note in pos.notes:
         lines.append(f"  NOTE: {note}")
+
+    # A TROUGH on its own is not an investment case — a depressed cyclical and a structurally
+    # impaired business score identically on the five conditions above.
+    if pos.position == TROUGH:
+        q = assess_trough_quality(ticker)
+        lines += ["", "  TROUGH QUALITY (cycle vs. value trap):", f"    VERDICT: {q.quality}"]
+
+        def _mark(ok, label, detail=""):
+            state = {True: "PASS", False: "FAIL"}.get(ok, "UNKNOWN")
+            lines.append(f"    [{state:7}] {label}{detail}")
+
+        _mark(q.demand_intact, "Demand intact — TTM revenue vs. its own 5yr peak",
+              f" ({q.revenue_vs_peak:.0%})" if q.revenue_vs_peak is not None else "")
+        _mark(q.industry_wide, "Industry-wide — peers depressed too, not this company alone",
+              f" ({q.industry})" if q.industry else "")
+        _mark(q.survivable, "Survivable — total debt / TTM EBITDA at trough earnings",
+              f" ({q.leverage:.1f}x, limit {_TROUGH_MAX_LEVERAGE:.0f}x)"
+              if q.leverage is not None else "")
+        for note in q.notes:
+            lines.append(f"    NOTE: {note}")
+        if q.quality == OPPORTUNITY:
+            lines.append("    All three cleared: depressed earnings understate normal earning "
+                         "power and the business can reach the recovery. This may be framed as a "
+                         "cyclical opportunity.")
+        else:
+            lines.append("    Not all cleared: do NOT frame this as a buying opportunity. Report "
+                         "it as a possible value trap and say which test failed.")
 
     return "\n".join(lines)
 
