@@ -1,20 +1,22 @@
 # AI Researcher — Industry Cycle Awareness
 
-Created 2026-08-17. **Status: Phases 0-5 complete. Next: Phase 6.**
+Created 2026-08-17. **Status: Phases 0-6 complete (7 dropped). Next: Phase 8.**
 
 ## Resume here
 
-Next action: **Phase 6 — make it affect the valuation.** This is the structural fix the whole
-plan is built around: until it lands, a detected cycle position changes prose and nothing else.
-Hand `valuation_analyst_context` a **price-free** mid-cycle block — TTM/forward/5yr min/mid-cycle/
-max EPS and margin-versus-median, with no `current_pe` and no `normalized_pe_5y`, both of which
-embed today's price and would break the blindness `api/valuation_data.py:266-270` exists to
-protect.
+Next action: **Phase 8 — QC and regression.** Part of it already landed in Phase 5: the
+two-directional `cycle_position` check is live in `_validate_report`, and it gates the harness.
+What remains:
 
-**Run `scripts/research_regression.py` once after Phase 6 lands** (agreed 2026-08-18: two more
-runs total, one here and one at Phase 8, rather than one per phase). Phase 6 is the phase that
-can move `fair_value_low/base/high`, which the harness asserts on, and Phase 5's schema change
-has not yet been exercised against a live model.
+- Extend `scripts/research_regression.py` with one known cyclical at a trough and one at a peak
+  (NUE or CLF, and MU or UAL), asserting the section renders with the expected polarity. Today
+  all three harness tickers are NOT_CYCLICAL, so no run has ever exercised a rendered callout.
+- The **output-truncation check**, now more pressing than when this plan was written: the Chief's
+  input grew by ten scored conditions, a TROUGH QUALITY block and the cycle-earnings-power block,
+  and a TROUGH/OPPORTUNITY narrative is the longest output case in the feature. Generate that
+  worst case and confirm the JSON completes well inside `max_tokens=32000`. Truncation here is
+  silent and surfaces as a malformed report rather than an error.
+- Full-universe fire-rate report confirming finding 3's 40.5% false-positive rate is gone.
 
 Phase 7 is **dropped** by agreement — lowest value in the plan, duplicates what the cycle block
 already says, in a section the Chief does not use for the rating. Go 6 -> 8 -> 9.
@@ -520,18 +522,47 @@ Tests: 49 in `tests/test_cycle_data.py` (9 new). Full suite 570 passed, 3 skippe
 exercised against a live model — the schema change means the Chief must actually populate
 `cycle_position`, which only a real generation proves. That is the next regression run.
 
-## Phase 6 — Make it affect the valuation  [ ]
+## Phase 6 — Make it affect the valuation  [x] Complete
 
-The structural fix. Add a **price-free** mid-cycle earnings block to `valuation_analyst_context`
-(`research_router.py:2222-2233`): TTM EPS, forward EPS, 5yr min/mid-cycle/max EPS, current vs.
-5yr-median operating margin, and the cyclicality classification. No `current_pe`, no
-`normalized_pe_5y` — nothing carrying today's price, preserving the blindness that
-`api/valuation_data.py:266-270` exists to protect.
+The structural fix. Until this landed, a detected cycle position changed prose and nothing else —
+it never reached the agent that sets `fair_value_low/base/high`.
 
-Extend the PEAK-EARNINGS AWARENESS instruction (`api/prompts/research_valuation.md:114-116`) to
-be symmetric: on a cyclical trough, a multiples cross-check anchored on forward consensus EPS
-understates fair value the same way TTM overstates it at a peak; anchor on mid-cycle earnings
-power instead and say so in `valuation_methodology`.
+`get_cycle_earnings_power(ticker)` produces a **price-free** block, added to the fan-out and to
+`valuation_analyst_context`: cyclicality verdict, cycle position, TTM and forward EPS, 5yr
+trough / mid-cycle / peak EPS restated on the current share count, and current-vs-5yr-median
+operating margin. No `current_pe`, no `normalized_pe_5y`, no price, market cap or multiple
+anywhere — the cycle-position block itself can never be handed to this agent, since
+`normalized_pe_5y` is literally today's price over average EPS. Five tickers are asserted
+clean against a banned-term list in `tests/test_cycle_data.py`.
+
+`api/prompts/research_valuation.md` replaces PEAK-EARNINGS AWARENESS with a symmetric CYCLE
+AWARENESS instruction that names the anchor for each position:
+
+| Position | Anchor |
+|---|---|
+| NOT_CYCLICAL / MID | forward consensus EPS, as before |
+| PEAK | mid-cycle EPS — TTM overstates normal earning power |
+| TROUGH + OPPORTUNITY | mid-cycle EPS — TTM *and* forward both understate it |
+| TROUGH + POSSIBLE_VALUE_TRAP | forward consensus, and say which test failed |
+
+**The trough case carries a trap the plan did not mention.** The plan asks for a symmetric
+instruction: anchor on mid-cycle at a trough as at a peak. But normalising a trough that failed
+Phase 4's demand, peer-breadth or survivability tests inflates fair value on an impaired
+business — the exact mirror of the peak error, applied to a company that may never regain
+mid-cycle earnings. The block therefore carries the trough-quality verdict and the prompt gates
+normalisation on it. CLF is the worked example: TROUGH, but POSSIBLE_VALUE_TRAP, so the analyst
+stays on forward consensus and must say why.
+
+**A latent concurrency bug surfaced here and is fixed.** DuckDB shares one catalog across all
+connections to a file, so `ATTACH IF NOT EXISTS` is a check-then-act that races. Phase 6 added a
+second concurrent attacher to the fan-out and both tasks began passing the check in the same
+instant, with the loser raising `Binder Error: database with name "av" already exists`. Losing
+the race is harmless — the winner's attach is what makes `av` resolvable for every connection —
+so `_attach_av` swallows exactly that error. The three pre-existing attach pairs in
+`research_router.py` were made idempotent at the same time; `api/sector_router.py` has the same
+latent pattern and was left alone, being off this code path.
+
+Tests: 59 in `tests/test_cycle_data.py` (8 new). Full suite 580 passed, 3 skipped.
 
 ## Phase 7 — Industry cycle framing  [~] Dropped by agreement 2026-08-18
 

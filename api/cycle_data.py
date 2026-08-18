@@ -68,6 +68,22 @@ class Cyclicality:
         return self.verdict == CYCLICAL
 
 
+def _attach_av(conn) -> None:
+    """Attach the av_financials database, tolerating a concurrent attach of the same alias.
+
+    DuckDB shares one catalog across every connection to the same file, so ATTACH IF NOT EXISTS
+    is a check-then-act that races: the research fan-out runs these lookups concurrently, and two
+    tasks attaching in the same instant both pass the check and the loser raises. Losing the race
+    is harmless — the winner's attach is what makes `av` resolvable for every connection — so the
+    error is swallowed rather than serialised behind a lock.
+    """
+    try:
+        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
+    except duckdb.BinderException as e:
+        if "already exists" not in str(e):
+            raise
+
+
 def _yoy_growth(rev: np.ndarray) -> np.ndarray:
     """Year-over-year log growth of TTM revenue, demeaned so the series carries
     deviation from the company's own trend rather than its growth level."""
@@ -116,7 +132,7 @@ def classify_cyclicality(ticker: str) -> Cyclicality:
 
     conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
     try:
-        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
+        _attach_av(conn)
         peers, group = _peer_tickers(conn, ticker)
         if not peers:
             return Cyclicality(ticker, INSUFFICIENT_HISTORY, peer_group=group,
@@ -378,7 +394,7 @@ def assess_trough_quality(ticker: str) -> TroughQuality:
 
     conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
     try:
-        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
+        _attach_av(conn)
 
         # 1. Demand. Is revenue itself in decline, or are only margins compressed? A cyclical
         #    margin trough keeps revenue near its highs; a melting ice cube does not. Revenue is

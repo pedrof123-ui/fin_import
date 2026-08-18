@@ -401,3 +401,43 @@ def test_qc_flags_a_missing_or_overridden_cycle_position():
 
     right = rr._validate_report(_report("TROUGH"), tech, val)
     assert not any("cycle_position" in f for f in right)
+
+
+# --- Phase 6: the price-free valuation input --------------------------------------------------
+
+_PRICE_LEAKS = ["current price", "current_pe", "normalized_pe", "market cap", "upside",
+                "price target", "analyst_target", "goal_low", "goal_high", "P/E", "EV/",
+                "$/share price", "share price"]
+
+
+@pytest.mark.parametrize("ticker", ["MU", "CLF", "AAPL", "DAL", "KO"])
+def test_earnings_power_block_is_price_free(ticker):
+    """The Valuation Analyst values the business blind (api/valuation_data.py:266-270). The
+    cycle-position block cannot be handed to it — that one carries current_pe and
+    normalized_pe_5y, which is literally today's price over average EPS."""
+    from api.research_router import get_cycle_earnings_power
+    text = get_cycle_earnings_power(ticker).lower()
+    for term in _PRICE_LEAKS:
+        assert term.lower() not in text, f"{ticker} earnings-power block leaks '{term}'"
+
+
+def test_earnings_power_states_the_anchor_for_each_position():
+    from api.research_router import get_cycle_earnings_power
+    assert "OVERSTATE" in get_cycle_earnings_power("MU")            # PEAK
+    assert "UNDERSTATE" in get_cycle_earnings_power("CLF")          # TROUGH
+    assert "no cycle adjustment applies" in get_cycle_earnings_power("AAPL")
+
+
+def test_value_trap_trough_warns_against_normalising():
+    """A trough that failed the phase 4 tests must not be anchored on mid-cycle earnings — that
+    is the mirror of the peak error, and it inflates fair value on an impaired business."""
+    from api.research_router import get_cycle_earnings_power
+    text = get_cycle_earnings_power("CLF")
+    assert "POSSIBLE_VALUE_TRAP" in text
+    assert "may never be regained" in text
+
+
+def test_earnings_power_carries_midcycle_eps():
+    from api.research_router import get_cycle_earnings_power
+    text = get_cycle_earnings_power("MU")
+    assert "5yr mid-cycle EPS" in text and "5yr trough EPS" in text and "5yr peak EPS" in text

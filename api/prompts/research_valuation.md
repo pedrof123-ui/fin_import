@@ -111,9 +111,24 @@ fair_value_low / fair_value_high: anchor on the BEAR and BULL DCF scenarios resp
   arbitrary percentage — every low/high figure must trace to a scenario DCF run or a multiples/ML
   comps calculation shown in your reasoning.
 
-PEAK-EARNINGS AWARENESS: if TTM EPS is far above forward consensus EPS (check the per-share
-history and forward estimates in VALUATION INPUTS), anchor any multiples-based cross-check on
-forward or normalized earnings, not TTM — TTM would overstate fair value on a cyclical peak.
+CYCLE AWARENESS: the CYCLE-ADJUSTED EARNINGS POWER section gives a cyclicality verdict, a cycle
+position, and 5yr trough / mid-cycle / peak EPS restated on the current share count. Use it to
+choose the earnings anchor for any multiples-based cross-check, and state the choice in
+valuation_methodology.
+
+- NOT_CYCLICAL or MID: anchor on forward consensus EPS as usual.
+- PEAK: TTM earnings overstate normal earning power. Anchor on mid-cycle EPS, not TTM — TTM
+  would overstate fair value at a cyclical peak.
+- TROUGH: the mirror image, and the easier error to make. TTM understates normal earning power,
+  and forward consensus often understates it too, because analysts extend the trough rather than
+  forecast the recovery. Anchoring on either understates fair value exactly as TTM overstates it
+  at a peak. Anchor on mid-cycle EPS instead — **but only when Trough quality is OPPORTUNITY.**
+  On POSSIBLE_VALUE_TRAP, the company failed at least one of the demand, peer-breadth and
+  survivability tests, so mid-cycle earnings may never be regained: stay on forward consensus,
+  and say in valuation_methodology which test failed and why you did not normalise.
+
+Never infer a cycle position yourself from the earnings figures — use the stated one. This
+section is deliberately price-free; do not attempt to reconstruct a multiple from it.
 
 DEGRADATION: if BOTH DCF sources are [ERROR]/[INFO]-unavailable, or their warnings indicate the
 output is structurally unreliable (e.g. zero market cap, WACC below 5%, critical fields null),

@@ -839,6 +839,101 @@ def get_valuation_data(ticker: str) -> str:
     return "\n".join(lines)
 
 
+def get_cycle_earnings_power(ticker: str) -> str:
+    """Price-free mid-cycle earnings power, for the Valuation Analyst.
+
+    The Valuation Analyst is deliberately price-blind (see api/valuation_data.py:266-270), so it
+    cannot be handed the cycle-position block: that block carries current_pe and normalized_pe_5y,
+    and normalized_pe_5y is literally today's price over average EPS. Everything here is a
+    per-share earnings or margin figure with no price, market cap or multiple anywhere in it.
+
+    This is the phase that makes cycle position affect the valuation rather than only the prose:
+    the agent that actually sets fair_value_low/base/high can now see that TTM earnings are
+    depressed or inflated relative to mid-cycle, so the existing mechanical rating arithmetic
+    reaches the right answer on its own.
+    """
+    ticker = ticker.upper()
+    if not _HIST_FUND_DB.exists():
+        return "=== CYCLE-ADJUSTED EARNINGS POWER ===\n[ERROR] historic_fundamentals.duckdb not found"
+
+    cyclicality = classify_cyclicality(ticker)
+    position = compute_cycle_position(ticker)
+    conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+    try:
+        ps = conn.execute("""
+            SELECT current_ttm_eps, forward_12m_eps, current_operating_margin,
+                   operating_margin_5y_median
+            FROM pe_stats WHERE ticker = ?
+        """, [ticker]).fetchone()
+        hist = conn.execute("""
+            WITH now AS (
+                SELECT median(shares) AS shares_now FROM monthly_pe
+                WHERE ticker = ? AND shares > 0
+                  AND month_end_date >= CURRENT_DATE - INTERVAL 12 MONTHS
+            ), adj AS (
+                SELECT ttm_eps * shares / (SELECT shares_now FROM now) AS eps
+                FROM monthly_pe
+                WHERE ticker = ? AND ttm_eps IS NOT NULL AND shares > 0
+                  AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
+                  AND (SELECT shares_now FROM now) > 0
+            )
+            SELECT MIN(eps), AVG(eps), MAX(eps), COUNT(*) FROM adj
+        """, [ticker, ticker]).fetchone()
+    finally:
+        conn.close()
+
+    lines = ["=== CYCLE-ADJUSTED EARNINGS POWER ==="]
+    if not ps:
+        lines.append(f"[INFO] No pe_stats row for {ticker}; cycle adjustment unavailable.")
+        return "\n".join(lines)
+
+    def f(v):
+        return f"${float(v):.2f}" if v is not None else "n/a"
+
+    def pct(v):
+        return f"{float(v) * 100:+.1f}%" if v is not None else "n/a"
+
+    lines.append(f"Cyclicality: {cyclicality.verdict}")
+    if position:
+        lines.append(f"Cycle position: {position}")
+    lines.append("")
+    lines.append(f"TTM EPS:                    {f(ps[0])}")
+    lines.append(f"Forward 12M EPS (consensus):{f(ps[1])}")
+    if hist and hist[3]:
+        lines.append(f"5yr trough EPS:             {f(hist[0])}")
+        lines.append(f"5yr mid-cycle EPS:          {f(hist[1])}")
+        lines.append(f"5yr peak EPS:               {f(hist[2])}")
+        lines.append("(EPS history restated on the current share count and inclusive of loss "
+                     "periods, so mid-cycle is comparable to today's TTM.)")
+    lines.append("")
+    lines.append(f"Operating margin (current): {pct(ps[2])}")
+    lines.append(f"Operating margin (5yr med): {pct(ps[3])}")
+
+    if position == "PEAK":
+        lines += ["", "TTM earnings are near a cyclical peak: they OVERSTATE normal earning "
+                      "power. Anchor any multiples cross-check on mid-cycle EPS, not TTM."]
+    elif position == "TROUGH":
+        quality = assess_trough_quality(ticker)
+        lines += ["", "TTM earnings are depressed: they UNDERSTATE normal earning power, and "
+                      "forward consensus may too if it only extends the trough."]
+        lines.append(f"Trough quality: {quality.quality}")
+        if quality.quality == OPPORTUNITY:
+            lines.append("Demand, peer breadth and leverage all check out, so mid-cycle EPS is a "
+                         "defensible anchor for a multiples cross-check.")
+        else:
+            lines.append("This trough did NOT clear the demand, peer-breadth and survivability "
+                         "tests, so mid-cycle EPS may never be regained — do not anchor on it "
+                         "without saying why. Reasons it failed: "
+                         + "; ".join(quality.notes[:3]))
+    elif position == "MID":
+        lines += ["", "Earnings are mid-cycle: TTM is a fair baseline."]
+    elif position == "NOT_CYCLICAL":
+        lines += ["", "Not a cyclical business — no cycle adjustment applies; use the normal "
+                      "forward-earnings anchor."]
+
+    return "\n".join(lines)
+
+
 def compute_cycle_position(ticker: str) -> Optional[str]:
     """The deterministic cycle position for a ticker, independent of anything the model returns.
 
@@ -1499,8 +1594,8 @@ def _peer_df(ticker: str):
     ticker = ticker.upper()
     try:
         conn = duckdb.connect(":memory:")
-        conn.execute(f"ATTACH '{_HIST_FUND_DB}' AS hf (READ_ONLY)")
-        conn.execute(f"ATTACH '{_AV_FIN_DB}' AS av (READ_ONLY)")
+        conn.execute(f"ATTACH IF NOT EXISTS '{_HIST_FUND_DB}' AS hf (READ_ONLY)")
+        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
 
         self_row = conn.execute("""
             SELECT sector, industry FROM av.company_overview
@@ -1970,8 +2065,8 @@ def render_direct_competitors_table(competitive) -> str:
     if tickers and _HIST_FUND_DB.exists() and _AV_FIN_DB.exists():
         try:
             conn = duckdb.connect(":memory:")
-            conn.execute(f"ATTACH '{_HIST_FUND_DB}' AS hf (READ_ONLY)")
-            conn.execute(f"ATTACH '{_AV_FIN_DB}' AS av (READ_ONLY)")
+            conn.execute(f"ATTACH IF NOT EXISTS '{_HIST_FUND_DB}' AS hf (READ_ONLY)")
+            conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
             placeholders = ",".join("?" for _ in tickers)
             df = conn.execute(f"""
                 WITH latest_co AS (
@@ -2341,7 +2436,7 @@ async def _run_research_agent(
 
     (financials, valuation, cycle_position, mda, risks, earnings, web,
      price_analyst, estimates, technical, peer, dcf_summary, valuation_inputs,
-     beat_miss, balance_sheet, market_size) = await asyncio.gather(
+     beat_miss, balance_sheet, market_size, cycle_earnings_power) = await asyncio.gather(
         _run(get_financial_summary,         "financials",     _DB_TIMEOUT),
         _run(get_valuation_data,            "valuation",      _DB_TIMEOUT),
         _run(get_cycle_position_data,       "cycle_position", _DB_TIMEOUT),
@@ -2358,6 +2453,7 @@ async def _run_research_agent(
         _run(get_beat_miss_summary,         "beat_miss",      _EARNINGS_TIMEOUT),
         _run(get_balance_sheet_summary,     "balance_sheet",  _DB_TIMEOUT),
         _run(get_market_size_search,        "market_size",    _TAVILY_TIMEOUT),
+        _run(get_cycle_earnings_power,      "cycle_earnings", _DB_TIMEOUT),
     )
 
     log.info("[%s] research: data gathering done in %.1fs — running AI DCF", ticker,
@@ -2450,6 +2546,7 @@ async def _run_research_agent(
         f"=== FINANCIAL PERFORMANCE ===\n{financials}\n\n"
         f"{peer}\n\n"
         f"{_format_ml_comps_summary(ticker)}\n\n"
+        f"{cycle_earnings_power}\n\n"
         f"=== EARNINGS TRANSCRIPTS (last 4 quarters, for recent trend/guidance context) ===\n{earnings}\n\n"
         f"{beat_miss}\n\n"
         f"=== MD&A (latest 10-K) ===\n{mda}\n\n"
@@ -2938,8 +3035,8 @@ def _tool_screen_stocks(filters: dict) -> str:
 
     try:
         conn = duckdb.connect(":memory:")
-        conn.execute(f"ATTACH '{_HIST_FUND_DB}' AS hf (READ_ONLY)")
-        conn.execute(f"ATTACH '{_AV_FIN_DB}' AS av (READ_ONLY)")
+        conn.execute(f"ATTACH IF NOT EXISTS '{_HIST_FUND_DB}' AS hf (READ_ONLY)")
+        conn.execute(f"ATTACH IF NOT EXISTS '{_AV_FIN_DB}' AS av (READ_ONLY)")
         df = conn.execute(sql, params).df()
         conn.close()
     except Exception as e:
