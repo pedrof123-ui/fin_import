@@ -359,3 +359,45 @@ def test_cycle_fields_are_on_the_core_schema():
     assert "cycle_position" in rr.ChiefCoreOutput.model_fields
     assert "cycle_position_analysis" in rr.ChiefCoreOutput.model_fields
     assert "peak_earnings_analysis" not in rr.ChiefCoreOutput.model_fields
+
+
+def test_null_cycle_position_is_backfilled_not_lost():
+    """The callout is gated on cycle_position, which the Chief fills in. A null field would
+    erase the whole section with no error, so the renderer falls back to the computed verdict."""
+    from api.research_router import compute_cycle_position
+    assert compute_cycle_position("MU") == PEAK
+    assert compute_cycle_position("CLF") == TROUGH
+    assert compute_cycle_position("AAPL") == NOT_CYCLICAL_POSITION
+    assert compute_cycle_position("ZZZZNOTATICKER") is None
+
+
+def test_qc_flags_a_missing_or_overridden_cycle_position():
+    import api.research_router as rr
+    header = rr.ResearchHeader(
+        company_name="Cleveland-Cliffs", ticker="CLF", prepared_date="2026-08-18", ai_model="m",
+        rating="HOLD", target_low=10.0, target_high=20.0, thesis_summary="t")
+
+    def _report(position):
+        return rr.EquityResearchReport(
+            header=header, key_highlights=[], financial_performance=[], financial_years=[],
+            valuation=rr.ValuationSummary(current_price=15.0),
+            company_overview="o", competitive_analysis="c", industry_outlook="i",
+            strategic_framework_analysis="s", mda_summary="m", risk_factors=[],
+            near_term_catalysts=[], earnings_highlights="e", quarterly_trend_analysis="q",
+            technical_analysis="t", technical_rating="NEUTRAL", intrinsic_valuation="iv",
+            investment_thesis="th", cycle_position=position)
+
+    tech = rr.TechnicalOutput(technical_analysis="t", technical_rating="NEUTRAL")
+    val = rr.ValuationOutput(
+        fair_value_low=10.0, fair_value_base=15.0, fair_value_high=20.0,
+        dcf_reconciliation="", valuation_methodology="m", dcf_assessment="d",
+        relative_valuation="r", valuation_risks=[])
+
+    missing = rr._validate_report(_report(None), tech, val)
+    assert any("cycle_position was not set" in f for f in missing)
+
+    wrong = rr._validate_report(_report("PEAK"), tech, val)
+    assert any("overrode a deterministic verdict" in f for f in wrong)
+
+    right = rr._validate_report(_report("TROUGH"), tech, val)
+    assert not any("cycle_position" in f for f in right)

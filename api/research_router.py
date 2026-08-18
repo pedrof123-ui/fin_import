@@ -839,6 +839,54 @@ def get_valuation_data(ticker: str) -> str:
     return "\n".join(lines)
 
 
+def compute_cycle_position(ticker: str) -> Optional[str]:
+    """The deterministic cycle position for a ticker, independent of anything the model returns.
+
+    The rendered callout is gated on EquityResearchReport.cycle_position, which the Chief fills
+    in. A model that leaves it null would silently erase the whole feature from the report — no
+    error, no QC finding, just a missing section. This is the fallback that makes that
+    unreachable; _validate_report additionally reports the disagreement so it is visible rather
+    than merely papered over.
+    """
+    ticker = ticker.upper()
+    if not _HIST_FUND_DB.exists():
+        return None
+    cyclicality = classify_cyclicality(ticker)
+    conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+    try:
+        ps = conn.execute("""
+            SELECT current_ttm_eps, forward_12m_eps, earn_growth_1yr, earn_cagr_3yr,
+                   current_operating_margin, operating_margin_5y_median, current_pe,
+                   pe_rolling_5yr_median, rev_growth_1yr
+            FROM pe_stats WHERE ticker = ?
+        """, [ticker]).fetchone()
+        hist = conn.execute("""
+            WITH now AS (
+                SELECT median(shares) AS shares_now FROM monthly_pe
+                WHERE ticker = ? AND shares > 0
+                  AND month_end_date >= CURRENT_DATE - INTERVAL 12 MONTHS
+            ), adj AS (
+                SELECT ttm_eps * shares / (SELECT shares_now FROM now) AS eps
+                FROM monthly_pe
+                WHERE ticker = ? AND ttm_eps IS NOT NULL AND shares > 0
+                  AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
+                  AND (SELECT shares_now FROM now) > 0
+            )
+            SELECT MAX(eps), AVG(eps) FROM adj
+        """, [ticker, ticker]).fetchone()
+    finally:
+        conn.close()
+    if not ps:
+        return None
+    return evaluate_cycle_position(
+        cyclicality.verdict,
+        ttm_eps=ps[0], fwd_eps=ps[1], earn_growth_1yr=ps[2], earn_cagr_3yr=ps[3],
+        operating_margin=ps[4], operating_margin_median=ps[5],
+        pe=ps[6], pe_median=ps[7], rev_growth_1yr=ps[8],
+        eps_max=hist[0] if hist else None, eps_midcycle=hist[1] if hist else None,
+    ).position
+
+
 def get_cycle_position_data(ticker: str) -> str:
     if not _HIST_FUND_DB.exists():
         return f"[ERROR] historic_fundamentals.duckdb not found"
@@ -2237,6 +2285,25 @@ def _validate_report(
                 "(research_valuation.md) does not appear to have been followed"
             )
 
+    # Cycle position is computed deterministically from calibrated thresholds; the Chief only
+    # copies it. A null field is the dangerous case — the callout is gated on it, so a model that
+    # omits it would erase the whole section with no error. render_to_markdown backfills the
+    # computed value so nothing is lost, and this makes the omission visible rather than silent.
+    # A mismatch is reported but NOT overridden: the prose the Chief wrote matches the position it
+    # claimed, so swapping the heading underneath it would pair trough framing with peak text.
+    computed_position = compute_cycle_position(report.header.ticker)
+    if computed_position is not None:
+        if report.cycle_position is None:
+            findings.append(
+                f"cycle_position was not set by the Chief but the cycle block computed "
+                f"{computed_position} — rendered from the computed value"
+            )
+        elif report.cycle_position != computed_position:
+            findings.append(
+                f"cycle_position is {report.cycle_position} but the cycle block computed "
+                f"{computed_position} — the Chief overrode a deterministic verdict"
+            )
+
     return findings
 
 
@@ -2629,7 +2696,11 @@ async def _background_generate(ticker: str, model: str):
             usage_tracker = await _run_research_agent(ticker, model, status_key=key)
         # Computed, not taken from the model: the callout label is the difference between
         # telling a reader a depressed cyclical is an opportunity and telling them it may be a
-        # value trap, which is not a judgement to leave to a narrative field.
+        # value trap, which is not a judgement to leave to a narrative field. The position is
+        # backfilled the same way when the Chief omits it, so a null field degrades the prose
+        # rather than deleting the section.
+        if report.cycle_position is None:
+            report.cycle_position = compute_cycle_position(ticker)
         trough_quality = (
             assess_trough_quality(ticker).quality if report.cycle_position == TROUGH else None
         )

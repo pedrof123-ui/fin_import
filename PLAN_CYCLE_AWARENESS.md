@@ -494,12 +494,27 @@ presented to a reader as an opportunity. `trough_quality` is passed into the ren
 computed argument rather than an LLM-set field, for the same reason the conditions are scored in
 Python: the callout label is the difference between "buy this" and "this may be a value trap".
 
-**Risk carried into Phase 8, and it is a silent one.** The callout is gated on
-`report.cycle_position`, which the *model* now fills in. If the Chief leaves it null, the whole
-feature renders nothing at all — no error, no QC finding, just a report with no cycle section.
-The Phase 8 check should therefore be two-directional: flag PEAK/TROUGH on a ticker the gate
-called NOT_CYCLICAL (as specified), **and** flag a null `cycle_position` when the block stated
-one. The block already carries the computed verdict, so the comparison is available.
+**The silent-failure risk is closed, not just flagged** (done 2026-08-18, pulling part of Phase 8
+forward). The callout is gated on `report.cycle_position`, which the *model* fills in, so a Chief
+that omitted it would have erased the whole feature from the report with no error and no QC
+finding. Both halves are now in place:
+
+- *Defence.* `compute_cycle_position(ticker)` recomputes the verdict deterministically, and
+  `render_to_markdown` backfills it when the field is null. A missing field degrades the prose
+  rather than deleting the section.
+- *Detection.* `_validate_report` reports both a null `cycle_position` and a mismatch against the
+  computed verdict.
+
+A mismatch is reported but deliberately **not** overridden. The prose the Chief wrote matches the
+position it claimed, so swapping the heading underneath it would pair a trough heading with peak
+text — worse than either error alone. Only the null case is backfilled, where there is no
+contradicting prose.
+
+**Consequence to expect:** this check gates the regression harness, which asserts
+`qc_findings == []`. If the live Chief omits `cycle_position`, the next regression run fails.
+That is the intended signal — it fires only on a real defect — but it is the failure to look for
+first if the Phase 6 run comes back red. Two existing fixtures in
+`tests/test_research_ai_dcf_integration.py` had to start setting the field for the same reason.
 
 Tests: 49 in `tests/test_cycle_data.py` (9 new). Full suite 570 passed, 3 skipped. Not yet
 exercised against a live model — the schema change means the Chief must actually populate
@@ -524,7 +539,7 @@ Lowest value of the set; do last or drop if the earlier phases land well. Add a 
 cluster to `industry_outlook` in `api/prompts/research_competitive.md:44-53`, so the industry
 section carries a cycle read alongside its secular TAM framing.
 
-## Phase 8 — QC and regression  [ ]
+## Phase 8 — QC and regression  [ ]  (cycle_position checks already landed in Phase 5)
 
 - One narrow `_validate_report` check before `return findings` (`research_router.py:2085`):
   flag a `cycle_position` of `PEAK` or `TROUGH` on a ticker the Phase 1 gate classified

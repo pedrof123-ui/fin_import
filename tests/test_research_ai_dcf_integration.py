@@ -395,6 +395,9 @@ class _FakeRunner:
                 key_highlights=["h1"], financial_performance=[], financial_years=[],
                 valuation=rr.ValuationSummary(current_price=65.0, upside_pct=15.4),
                 risk_factors=["r1"], near_term_catalysts=["c1"],
+                # The Chief is required to copy the computed CYCLE POSITION verbatim, and QC
+                # flags a null. TXN computes TROUGH against the live database.
+                cycle_position="TROUGH",
             ))
         if ot is rr.ChiefNarrativeOutput:
             return _FakeResult(rr.ChiefNarrativeOutput(
