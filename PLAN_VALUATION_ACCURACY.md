@@ -136,3 +136,37 @@ level rather than DCF level — the reported fair value is a blend of mechanical
 multiples, and only the first is measured above. That needs a run across a few dozen tickers,
 which costs real money, and should wait until item 1 is fixed, since 21.7% of the inputs are
 currently negative and would poison any such measurement.
+
+---
+
+## Reading the post-recompute diffs
+
+Recorded 2026-08-19, before the numbers existed, so the outcome is falsifiable rather than
+rationalised afterwards.
+
+`debt_to_ebitda` and `ebitda_ev_yield` feed `historic_fundamentals/ml_comps_model.py` and the
+factor set in `scripts/run_walkforward.py`. **Those models were fitted and validated on the
+corrupted values**, so every dependent result will move. A moved result is ambiguous by
+construction: it can mean the fix broke something, or that the previous number was never real.
+Neither reading is the default.
+
+Expected direction, stated in advance:
+
+| Metric | Before | Expected after |
+|---|---|---|
+| `debt_to_ebitda` median | 0.255x | rises ~6x, toward ~1.5x |
+| `ev_ebitda` median | 11.03 | rises — EV gains the missing debt |
+| `ebitda_ev_yield` median | 7.63% | falls, being the reciprocal |
+| Negative DCFs | 567 (21.4%) | drops sharply; the remainder fail explicitly |
+
+The stated prediction for the ML comps diff is that **EV/EBITDA calibration improves**, since it
+is the model whose input was corrupted and the one already tracked as a persistent "stable
+near-miss". If it does not improve, the near-miss has another cause — also worth knowing.
+
+When a result moves unexpectedly, the first question is "which of these two numbers was computed
+from correct inputs?", not "did this get better or worse?". A baseline fitted on corrupted inputs
+needs refitting before it can be compared at all; comparing a fresh measurement against a stale
+baseline measures the defect, not the change.
+
+Backup of the pre-recompute database: `/tmp/hf_backup_pre_recompute.duckdb` (910M), with the
+baseline metrics in `/tmp/baseline_snapshot.json`.
