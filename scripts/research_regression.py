@@ -101,6 +101,18 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
 
     checks.append(_check("qc_findings == []", findings == [], str(findings)))
 
+    # Plausibility, not just ordering. The suite passed a base fair value of $23.58 against MU's
+    # $823 price because it only ever asserted low <= base <= high — a valuation 97% below the
+    # market sailed through green and was caught by hand. The band is deliberately wide: the
+    # point is to catch an anchoring error, not to disagree with a real call on a mispriced
+    # stock. Informational rather than gating for the same reason.
+    price = getattr(v, "current_price", None)
+    if price and v.fair_value_base:
+        ratio = float(v.fair_value_base) / float(price)
+        info.append(_check(
+            "fair_value_base within a sane band of price", 0.30 <= ratio <= 3.0,
+            f"base ${v.fair_value_base:.2f} vs price ${price:.2f} = {ratio:.2f}x"))
+
     # --- cycle position (PLAN_CYCLE_AWARENESS.md Phase 8) --------------------------------------
     expected = _EXPECTED_CYCLE.get(ticker)
     if expected:

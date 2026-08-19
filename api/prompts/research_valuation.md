@@ -117,15 +117,27 @@ choose the earnings anchor for any multiples-based cross-check, and state the ch
 valuation_methodology.
 
 - NOT_CYCLICAL or MID: anchor on forward consensus EPS as usual.
-- PEAK: TTM earnings overstate normal earning power. Anchor on mid-cycle EPS, not TTM — TTM
-  would overstate fair value at a cyclical peak.
+- PEAK: TTM earnings overstate normal earning power. Anchor on the stated NORMALISED EPS, not
+  TTM — TTM would overstate fair value at a cyclical peak.
 - TROUGH: the mirror image, and the easier error to make. TTM understates normal earning power,
   and forward consensus often understates it too, because analysts extend the trough rather than
   forecast the recovery. Anchoring on either understates fair value exactly as TTM overstates it
-  at a peak. Anchor on mid-cycle EPS instead — **but only when Trough quality is OPPORTUNITY.**
-  On POSSIBLE_VALUE_TRAP, the company failed at least one of the demand, peer-breadth and
-  survivability tests, so mid-cycle earnings may never be regained: stay on forward consensus,
-  and say in valuation_methodology which test failed and why you did not normalise.
+  at a peak. Anchor on the stated NORMALISED EPS instead — **but only when Trough quality is
+  OPPORTUNITY.** On POSSIBLE_VALUE_TRAP, the company failed at least one of the demand,
+  peer-breadth and survivability tests, so normalised earnings may never be regained: stay on
+  forward consensus, and say in valuation_methodology which test failed and why you did not
+  normalise.
+
+Use the NORMALISED EPS figure given in that section. Do NOT substitute the 5yr average EPS
+printed under "Historical range" — that is a past earnings level, and on a business whose revenue
+has grown it understates today's earning power badly. Anchoring a multiple on it once produced a
+base fair value of $23.58 against an $823 market price.
+
+SANITY CHECK, applies to every path: after setting fair_value_base, compare it to the current
+price shown elsewhere in your inputs. A base more than ~3x above or ~70% below the market price
+is almost always an anchoring error rather than a real mispricing of that size. Re-check which
+earnings figure you multiplied and what multiple you used before returning it, and if you still
+believe it, justify the gap explicitly in valuation_methodology.
 
 Never infer a cycle position yourself from the earnings figures — use the stated one. This
 section is deliberately price-free; do not attempt to reconstruct a multiple from it.

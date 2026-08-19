@@ -865,20 +865,40 @@ def get_cycle_earnings_power(ticker: str) -> str:
                    operating_margin_5y_median
             FROM pe_stats WHERE ticker = ?
         """, [ticker]).fetchone()
+        # Normalised EPS is the anchor, and it is NOT the 5-year average EPS. A raw average is
+        # not normal earning power for a business whose earnings level has structurally shifted:
+        # MU's 5-year window spans the 2023 memory trough (-$6.04/sh) and the current AI-driven
+        # peak ($44.31/sh), and its $4.72 mean describes neither. Anchoring a multiple on that
+        # figure produced a base fair value of $23.58 against an $823 market price.
+        #
+        # Normalising the MARGIN instead scales to today's business: current revenue at the
+        # company's own median net margin. Net margin rather than operating margin because it
+        # already carries interest and tax, so no tax-rate assumption is needed, and it is
+        # computed from aggregate earnings (ttm_eps * shares), which cancels the share-count
+        # defect around splits.
         hist = conn.execute("""
             WITH now AS (
                 SELECT median(shares) AS shares_now FROM monthly_pe
                 WHERE ticker = ? AND shares > 0
                   AND month_end_date >= CURRENT_DATE - INTERVAL 12 MONTHS
             ), adj AS (
-                SELECT ttm_eps * shares / (SELECT shares_now FROM now) AS eps
+                SELECT ttm_eps * shares / (SELECT shares_now FROM now) AS eps,
+                       CASE WHEN ttm_revenue > 0 THEN ttm_eps * shares / ttm_revenue END AS net_margin
                 FROM monthly_pe
                 WHERE ticker = ? AND ttm_eps IS NOT NULL AND shares > 0
                   AND month_end_date >= CURRENT_DATE - INTERVAL 5 YEARS
                   AND (SELECT shares_now FROM now) > 0
+            ), cur AS (
+                SELECT ttm_revenue AS rev FROM monthly_pe
+                WHERE ticker = ? AND ttm_revenue IS NOT NULL
+                ORDER BY month_end_date DESC LIMIT 1
             )
-            SELECT MIN(eps), AVG(eps), MAX(eps), COUNT(*) FROM adj
-        """, [ticker, ticker]).fetchone()
+            SELECT MIN(adj.eps), AVG(adj.eps), MAX(adj.eps), COUNT(*),
+                   median(adj.net_margin) AS net_margin_median,
+                   (SELECT rev FROM cur) * median(adj.net_margin)
+                       / (SELECT shares_now FROM now) AS normalised_eps
+            FROM adj
+        """, [ticker, ticker, ticker]).fetchone()
     finally:
         conn.close()
 
@@ -900,29 +920,37 @@ def get_cycle_earnings_power(ticker: str) -> str:
     lines.append(f"TTM EPS:                    {f(ps[0])}")
     lines.append(f"Forward 12M EPS (consensus):{f(ps[1])}")
     if hist and hist[3]:
-        lines.append(f"5yr trough EPS:             {f(hist[0])}")
-        lines.append(f"5yr mid-cycle EPS:          {f(hist[1])}")
-        lines.append(f"5yr peak EPS:               {f(hist[2])}")
-        lines.append("(EPS history restated on the current share count and inclusive of loss "
-                     "periods, so mid-cycle is comparable to today's TTM.)")
+        lines.append(f"NORMALISED EPS (anchor):    {f(hist[5])}")
+        if hist[4] is not None:
+            lines.append(f"  = current revenue x the company's own 5yr median net margin "
+                         f"({float(hist[4]) * 100:.1f}%), per current share.")
+            lines.append("  This scales to today's business, so it stays valid for a company "
+                         "whose earnings level has grown. USE THIS as the normalised anchor.")
+        lines.append("")
+        lines.append("Historical range, for context only — NOT anchors. These are past EPS "
+                     "levels, and on a growing business they understate today's earning power:")
+        lines.append(f"  5yr trough EPS:           {f(hist[0])}")
+        lines.append(f"  5yr average EPS:          {f(hist[1])}")
+        lines.append(f"  5yr peak EPS:             {f(hist[2])}")
+        lines.append("  (restated on the current share count and inclusive of loss periods)")
     lines.append("")
     lines.append(f"Operating margin (current): {pct(ps[2])}")
     lines.append(f"Operating margin (5yr med): {pct(ps[3])}")
 
     if position == "PEAK":
         lines += ["", "TTM earnings are near a cyclical peak: they OVERSTATE normal earning "
-                      "power. Anchor any multiples cross-check on mid-cycle EPS, not TTM."]
+                      "power. Anchor any multiples cross-check on NORMALISED EPS above, not TTM."]
     elif position == "TROUGH":
         quality = assess_trough_quality(ticker)
         lines += ["", "TTM earnings are depressed: they UNDERSTATE normal earning power, and "
                       "forward consensus may too if it only extends the trough."]
         lines.append(f"Trough quality: {quality.quality}")
         if quality.quality == OPPORTUNITY:
-            lines.append("Demand, peer breadth and leverage all check out, so mid-cycle EPS is a "
-                         "defensible anchor for a multiples cross-check.")
+            lines.append("Demand, peer breadth and leverage all check out, so NORMALISED EPS "
+                         "above is a defensible anchor for a multiples cross-check.")
         else:
             lines.append("This trough did NOT clear the demand, peer-breadth and survivability "
-                         "tests, so mid-cycle EPS may never be regained — do not anchor on it "
+                         "tests, so normalised earnings may never be regained — do not anchor on them "
                          "without saying why. Reasons it failed: "
                          + "; ".join(quality.notes[:3]))
     elif position == "MID":

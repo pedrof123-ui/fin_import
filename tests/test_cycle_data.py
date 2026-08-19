@@ -437,7 +437,45 @@ def test_value_trap_trough_warns_against_normalising():
     assert "may never be regained" in text
 
 
-def test_earnings_power_carries_midcycle_eps():
+def test_earnings_power_carries_the_anchor_and_the_range():
     from api.research_router import get_cycle_earnings_power
     text = get_cycle_earnings_power("MU")
-    assert "5yr mid-cycle EPS" in text and "5yr trough EPS" in text and "5yr peak EPS" in text
+    assert "NORMALISED EPS (anchor)" in text
+    assert "5yr trough EPS" in text and "5yr average EPS" in text and "5yr peak EPS" in text
+
+
+# --- Normalised anchor (defect fix, 2026-08-19) -----------------------------------------------
+
+def test_normalised_eps_is_not_the_raw_five_year_average():
+    """The raw average is not normal earning power for a business whose earnings level has
+    shifted: MU's window spans a -$6.04 trough and a $44.31 peak, and its $4.72 mean describes
+    neither. Anchoring on it produced a $23.58 base fair value against an $823 price."""
+    from api.research_router import get_cycle_earnings_power
+    text = get_cycle_earnings_power("MU")
+    anchor = [l for l in text.splitlines() if "NORMALISED EPS (anchor)" in l][0]
+    value = float(anchor.split("$")[1])
+    assert value > 10.0, f"normalised EPS {value} looks like the raw 5yr average (~4.72)"
+    assert "for context only — NOT anchors" in text
+
+
+@pytest.mark.parametrize("ticker,price", [("MU", 823.0), ("FANG", 203.0), ("NUE", 257.0),
+                                          ("UAL", 121.0), ("DVN", 45.0)])
+def test_normalised_eps_implies_a_sane_multiple(ticker, price):
+    """Guards the defect directly: price divided by the normalised anchor must land in a range a
+    multiple could plausibly close. The old raw average put MU at 174x."""
+    from api.research_router import get_cycle_earnings_power
+    anchor = [l for l in get_cycle_earnings_power(ticker).splitlines()
+              if "NORMALISED EPS (anchor)" in l][0]
+    value = float(anchor.split("$")[1])
+    assert value > 0
+    assert price / value < 100, f"{ticker} implies {price / value:.0f}x normalised earnings"
+
+
+def test_normalised_anchor_scales_with_current_revenue():
+    """Net margin rather than operating margin, so no tax assumption is needed and interest is
+    already included; and it is computed from aggregate earnings, which cancels the share-count
+    defect around splits."""
+    from api.research_router import get_cycle_earnings_power
+    text = get_cycle_earnings_power("MU")
+    assert "median net margin" in text
+    assert "current revenue" in text

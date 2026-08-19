@@ -1,6 +1,6 @@
 # AI Researcher — Industry Cycle Awareness
 
-Created 2026-08-17. **Status: Phases 0-6 complete (7 dropped). Next: Phase 8.**
+Created 2026-08-17. **Status: Phases 0-8 complete (7 dropped), Phase 6 defect fixed. Next: Phase 9.**
 
 ## Resume here
 
@@ -607,6 +607,74 @@ section carries a cycle read alongside its secular TAM framing.
 **Outstanding:** one run of the extended harness as the final gate. Watch for a `cycle_position`
 QC finding — the check gates on `qc_findings == []`, so a Chief that omits the field fails the
 suite by design.
+
+## DEFECT — Phase 6's mid-cycle anchor produced absurd fair values  [x] Fixed 2026-08-19
+
+Found by the first extended regression run, which **passed every check while carrying the bug**,
+because it asserted only `fair_value_low <= base <= high` and never that the numbers were
+plausible:
+
+| Ticker | Price | Base fair value | Base vs price |
+|---|---|---|---|
+| MU (PEAK) | $823.03 | $23.58 | -97% |
+| FANG (TROUGH, OPPORTUNITY) | $202.95 | $37.19 | -82% |
+
+MU's mechanism was unambiguous: mid-cycle EPS $4.72 x **exactly 5.00** = $23.58. The Valuation
+Analyst did what Phase 6's prompt told it — "anchor on mid-cycle EPS, not TTM" — and produced a
+valuation disconnected from reality. Before Phase 6 it would have anchored on forward consensus
+($73.44) and landed in a sane range, so this was a regression, not a pre-existing issue.
+
+**Root cause.** A raw 5-year average EPS is not normal earning power for a business whose earnings
+level has structurally shifted. MU's window spans the 2023 memory trough (-$6.04/sh) and the
+current AI-driven peak ($44.31/sh); the $4.72 mean describes neither. This is the same
+trend-versus-amplitude problem Phase 1 solved *for the gate* by demeaning the peer factor, and it
+was never applied to the mid-cycle figure itself.
+
+**Fix: normalise the margin, not the EPS level.**
+
+    normalised EPS = current TTM revenue x the company's own 5yr median NET margin / current shares
+
+Net margin rather than operating margin, because it already carries interest and tax — no
+tax-rate assumption, no interest handling — and because it is computed from aggregate earnings
+(`ttm_eps * shares`), which cancels the share-count defect around splits. Using *current* revenue
+is what makes it immune to secular growth.
+
+| Ticker | Price | Old anchor (5yr avg) | New anchor (normalised) | Price / new |
+|---|---|---|---|---|
+| MU | $823.03 | $4.72 | $14.59 | 56x |
+| FANG | $202.95 | $10.25 | $18.25 | 11x |
+| NUE | $257.29 | $19.60 | $18.92 | 14x |
+| UAL | $121.33 | $3.65 | $9.10 | 13x |
+| DVN | $45.13 | $5.63 | $5.92 | 8x |
+| CLF | $11.52 | $1.08 | $0.64 | 18x |
+
+The 5yr trough/average/peak figures are still shown, but explicitly relabelled as historical range
+"for context only — NOT anchors", and the prompt names the normalised figure and forbids
+substituting the average.
+
+**Second, independent lesson — the harness could not catch this class of error.** It asserted
+ordering only, so a fair value 97% below market passed green. Added a plausibility check
+comparing base fair value to current price, deliberately wide (0.3x-3.0x) and *informational*
+rather than gating: the goal is catching an anchoring error, not disagreeing with a real call on a
+genuinely mispriced stock. A matching SANITY CHECK instruction now asks the Valuation Analyst to
+re-check its own anchor before returning a base that far from the market.
+
+Tests: 66 in `tests/test_cycle_data.py`, including a parametrised guard that price divided by the
+normalised anchor stays inside a range a multiple could plausibly close. Full suite 587 passed.
+
+**End-to-end verification is still OUTSTANDING.** The deterministic half is confirmed — the
+anchor values above are computed in Python and checked offline. What has *not* been confirmed is
+that the Valuation Analyst uses the new anchor to produce sane fair values, which is the whole
+point of the fix. The verification run on 2026-08-19 is void: the OpenRouter account ran out of
+credits and returned HTTP 402 from NVDA's very first sub-agent call onward, so no ticker
+completed. Top up credits and re-run `scripts/research_regression.py`; the numbers to check are
+MU and FANG, which read -97% and -82% against market price before the fix.
+
+**Known limitation, deliberately not fixed here.** The Phase 3 rubric's trough condition still
+compares current EPS to the raw 5-year *average* ("EPS <= 50% of mid-cycle"). On a secular grower
+at a genuine trough that test under-fires, because the average is dragged down by a smaller past
+business. It is a recall gap rather than a wrong answer, and changing it would invalidate the
+Phase 3 calibration and require a full re-sweep, so it is left as a follow-up.
 
 ## Phase 9 — Fix `debt_to_ebitda` and enterprise value  [ ]  (follow-up, after Phase 8)
 
