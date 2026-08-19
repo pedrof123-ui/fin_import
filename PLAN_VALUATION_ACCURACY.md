@@ -74,21 +74,20 @@ delta: this model does not predict `ret_1y` out of sample, which was already tru
 Unlike the ML comps result above, this one had no pre-committed directional prediction, so it is
 an observation rather than a passed test.
 
-## Open: 3 tests now fail because of the recompute (587 -> 584 passed)
+## Open: 2 tests still failing after the recompute (was 3; 585 passed, 2 failed, 3 skipped)
 
-Confirmed to pre-date today's sector-join fix (stash-and-rerun: same 3 fail without it). All three
-are fallout from the universe recompute, and **the code is right in at least the first case — the
-test is what is stale.**
+Confirmed to pre-date today's sector-join fix (stash-and-rerun: the same 3 failed without it). All
+three are fallout from the universe recompute, not from today's changes.
 
-1. `test_cycle_data.py::test_leverage_is_not_read_from_the_broken_column`
-   Asserts `q.leverage > stored * 3`, where `stored` is `pe_stats.debt_to_ebitda`. It was written
+1. `test_cycle_data.py::test_leverage_is_not_read_from_the_broken_column` — **FIXED**
+   Asserted `q.leverage > stored * 3`, where `stored` is `pe_stats.debt_to_ebitda`. It was written
    when that column was the *broken* current-portion-only figure, so a correct computation had to
    be several times larger. The recompute fixed the column: CLF went 0.53 -> 12.38 (verified
    against the pre-recompute backup), and `assess_trough_quality` independently computes exactly
-   12.384244372990354. The two now agreeing is the *correct* outcome; the test fails precisely
-   because the defect it was pinned against is gone. It needs rewriting to assert leverage is far
-   above the historical broken value (0.53), not far above whatever the column currently holds —
-   a test must not use a live column as its own reference.
+   12.384244372990354. The two agreeing is the *correct* outcome — the test failed precisely
+   because the defect it was pinned against is gone. Rewritten to pin against the historical
+   broken constant (0.5299539170506913) rather than the live column, since a test must not use a
+   live column as its own reference. `tests/test_cycle_data.py`: 66 passed.
 
 2-3. `test_research_ai_dcf_integration.py::test_run_research_agent_with_ai_dcf_{success,failure_degrades_cleanly}`
    Both fail on an unexpected finding: `cycle_position is TROUGH but the cycle block computed MID
@@ -96,7 +95,7 @@ test is what is stale.**
    reading recomputed data, now returns MID. Not yet diagnosed — needs a decision on whether the
    fixture or the cycle block is wrong.
 
-None of these are blocking, but the suite is red and should not be left that way.
+Item 1 is fixed. Items 2-3 are still red and still need the fixture-vs-cycle-block decision.
 
 ## What landed 2026-08-19
 
@@ -118,7 +117,8 @@ Tests 587 passed throughout.
 **Consequence to watch in production:** ~17% of the universe now has no mechanical DCF, so the AI
 Researcher will take its DCF degradation path more often than before.
 
-Created 2026-08-19. **Status: fixes shipped and recomputed; validation diff outstanding.**
+Created 2026-08-19. **Status: fixes shipped, recomputed, and validated — the ML comps prediction
+held. Remaining open: the growth-fade decision in item 1, and the 2 AI-DCF fixture tests above.**
 
 Both items were found while verifying PLAN_CYCLE_AWARENESS.md, not by looking for them. Neither
 is caused by the cycle-awareness work, and neither belongs to that plan — they are recorded here

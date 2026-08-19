@@ -224,17 +224,24 @@ def test_high_leverage_trough_is_not_an_opportunity():
     assert q.leverage > 10
 
 
+# CLF's pe_stats.debt_to_ebitda when the test below was written: the current-portion-only sum,
+# understated ~23x. The 2026-08-19 recompute fixed the column to 12.38, matching what
+# assess_trough_quality computes independently.
+BROKEN_CLF_LEVERAGE = 0.5299539170506913
+
+
 def test_leverage_is_not_read_from_the_broken_column():
-    """pe_stats.debt_to_ebitda sums only the current portion of debt, because
-    long_term_debt_noncurrent is NULL in every quarterly row; it understates leverage by a median
-    of 6.1x. Phase 4 computes from short_long_term_debt_total instead."""
-    import duckdb
-    conn = duckdb.connect("data/historic_fundamentals.duckdb", read_only=True)
-    stored = conn.execute("SELECT debt_to_ebitda FROM pe_stats WHERE ticker = 'CLF'").fetchone()[0]
-    conn.close()
+    """assess_trough_quality computes leverage from short_long_term_debt_total, not from the
+    current-portion-only sum (long_term_debt_noncurrent is NULL in every quarterly row).
+
+    Do not re-point this at the live pe_stats.debt_to_ebitda column. This test used to read it
+    and assert leverage was several times larger, which held only while that column was broken —
+    once the recompute fixed it the two agreed and the test failed on correct code. A test must
+    not use a live column as its own reference.
+    """
     q = assess_trough_quality("CLF")
-    assert q.leverage > stored * 3, (
-        f"leverage {q.leverage} tracks the broken column {stored} — the fix regressed")
+    assert q.leverage > BROKEN_CLF_LEVERAGE * 3, (
+        f"leverage {q.leverage} looks like the current-portion-only figure — the fix regressed")
 
 
 def test_opportunity_requires_all_three_tests():
