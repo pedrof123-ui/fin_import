@@ -222,5 +222,6 @@ from correct inputs?", not "did this get better or worse?". A baseline fitted on
 needs refitting before it can be compared at all; comparing a fresh measurement against a stale
 baseline measures the defect, not the change.
 
-Backup of the pre-recompute database: `/tmp/hf_backup_pre_recompute.duckdb` (910M), with the
-baseline metrics in `/tmp/baseline_snapshot.json`.
+Backup of the pre-recompute database: `~/fin_import2_artifacts/hf_backup_pre_recompute_20260819.duckdb`
+(910M), with the baseline metrics in `~/fin_import2_artifacts/baseline_snapshot.json`. Moved out of
+`/tmp` before the 2026-08-19 reboot so it would survive; it is not recreatable.
