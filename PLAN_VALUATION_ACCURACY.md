@@ -192,6 +192,44 @@ a regime-filtered *and* vol-weighted portfolio, yet `_portfolio_label` can gener
 those rows would display `rf_*` numbers as though measured. Now stated in a comment rather than
 left silent. Fixing it properly means a change to `run_backtest.py`; not done.
 
+## Calibration-streak purge: not needed, and it surfaced a real gap
+
+Asked to purge the pre-2026-08-19 calibration months so the streak toward the Phase 9 review
+restarts on uncorrupted debt. **Inspected before deleting: there is nothing to purge.**
+
+`ml_model_metadata` holds 8 rows, one per (model_name, model_version, target) — model training
+records, not a monthly metrics log. Only the three currently-active `2026-08-01` rows (pe, pfcf,
+ps) carry OOS metrics at all; the `2026-07-20` and `2026-07-21` rows have NULL metrics.
+`update_active_ml_model_oos_metrics` is a targeted UPDATE on the *active* row, so today's
+validation already overwrote those three with post-fix numbers (pe 0.8336/+18.24%/0.7478 —
+matching today's report exactly). The report confirms it:
+
+    pe   (2026-08-01): OK, 1 consecutive month(s) holding
+    pfcf (2026-08-01): OK, 1 consecutive month(s) holding
+    ps   (2026-08-01): OK, 1 consecutive month(s) holding
+
+No pre-fix calibration metrics survive anywhere, so a purge would delete nothing. Deleting the
+07-20/07-21 rows would only destroy training provenance for no benefit.
+
+### The real gap: evebitda is not tracked at all
+
+`PASSING_MULTIPLES = ["pe", "pfcf", "ps"]` gates **four** things at once — training, production
+scoring, the streak report, and the tests. evebitda was excluded on 2026-07-20 for missing the
+RMSE bar "by 0.3pp ... until revisited", so it has no trained model, no active row, and
+`update_active_ml_model_oos_metrics` no-ops for it. It is validated every month and the result is
+discarded, which means **it can never accumulate the streak that its own promotion would depend
+on.**
+
+This is the revisit. evebitda now clears all three gate criteria decisively (+26.4% RMSE
+improvement, second-best of the four; 100% fold win; 74.5% coverage).
+
+**Decision needed, because there is no track-without-scoring path** short of splitting the
+constant: adding evebitda to `PASSING_MULTIPLES` also puts it into production AI Researcher
+scoring. Precedent argues for adding it — pe and pfcf were included on a single passing run
+(2026-07-20) and ps on a single run (2026-07-21), so requiring more of evebitda would be
+inconsistent. The 6-month streak exists to gate the *Phase 9 anchor promotion* (replacing
+`goal_pe`/`goal_low`/`goal_high`), not inclusion in the multiple set.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
@@ -226,7 +264,7 @@ done once, not three times.
 
 ---
 
-## 1. The mechanical DCF is driven by a non-fading revenue forecast  [~] Guard shipped, fade is an open decision
+## 1. The mechanical DCF is driven by a non-fading revenue forecast  [x] Fade SHIPPED (733b038); upper-tail guard still open
 
 **Priority: high.** It is live, it is wrong, and it is silent.
 
@@ -285,7 +323,46 @@ exception and writes `status='error'` with the message, so those 567 tickers cha
 wrong number to an explicit failure. This is the plan's step 3, and it is a strict improvement —
 but it makes the DCF *honest*, not *useful*.
 
-### OPEN DECISION: introduce a growth fade
+### RESOLVED — the fade shipped at `733b038`
+
+This section is kept for the reasoning, but the decision it describes was taken and implemented on
+2026-08-19. `extend_growth_years` now fades Y3-Y10 linearly from Y2's growth to `terminal_growth`,
+with Y2 itself capped at `MAX_FADE_START_GROWTH = 0.30`, and `_fade_capex_to_da` does the analogous
+thing for capex. Overrides re-anchor the fade rather than being overwritten.
+
+### STILL OPEN: the upper magnitude guard (step 4 below)
+
+The fade fixed the negative tail — **0 negative intrinsic values**, down from 567. It did **not**
+fix the upper tail, and nothing guards it. Measured 2026-08-19 across the 2,220 tickers currently
+marked `status='ok'`, intrinsic value as a multiple of price:
+
+| p10 | p25 | p50 | p75 | p90 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| 0.12x | 0.37x | 0.75x | 1.39x | 2.86x | 6.01x | 35.47x | **46,418x** |
+
+| Above | Count | Share of `ok` |
+|---|---|---|
+| 2x | 328 | 14.8% |
+| 3x | 215 | 9.7% |
+| 5x | 141 | 6.4% |
+| 10x | 75 | 3.4% |
+
+Worst offenders, all `status='ok'` and all flowing into the AI Researcher as valid:
+
+| Ticker | Intrinsic value/share | Price | Ratio |
+|---|---|---|---|
+| GNTX | $1,099,172 | $23.68 | 46,418x |
+| D | $904,809 | $68.61 | 13,188x |
+| KSPI | $178,834 | $98.09 | 1,823x |
+| MUR | $33,434 | $35.18 | 950x |
+
+**The median is healthy at 0.75x — this is a tail problem, not a centring problem.** A guard at
+some multiple of price would convert these to explicit failures, exactly as the non-positive guard
+did. The threshold is a real decision: 10x reclassifies 75 tickers (3.4%), 5x reclassifies 141
+(6.4%), 3x reclassifies 215 (9.7%). Since ~17% of the universe already has no DCF, a tight
+threshold pushes the AI Researcher onto its degradation path considerably more often.
+
+**Original reasoning, retained:**
 
 Making the DCF useful means fading the growth rate from year 2 toward terminal growth by year 10,
 which is standard practice and is what the docstring flags as absent. **This changes every DCF
