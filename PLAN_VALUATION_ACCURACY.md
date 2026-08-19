@@ -1,38 +1,102 @@
 # Valuation Engine — Accuracy Improvements
 
-## RESUME HERE (paused 2026-08-19 for a machine reboot)
+## ML comps validation — result (run 2026-08-19 12:55-15:05, 130 min)
 
-**One step outstanding: re-run the ML comps validation, then the walk-forward factor diff.**
-Everything else is committed and the working tree is clean.
+**The pre-committed prediction held.** `evebitda` was the multiple predicted to improve, and it is
+the only one that moved.
 
 ```
-uv run python scripts/validate_ml_comps_valuation.py      # ~30-45 min, rewrites docs/ml_comps_*
-uv run python scripts/run_walkforward.py                  # factor diff, not yet started
+Multiple   RMSE before  RMSE after   dRMSE    Improve before -> after   Result
+--------------------------------------------------------------------------------
+pe              0.8324      0.8336   +0.14%   +18.3% -> +18.2%   PASS -> PASS
+evebitda        0.8996      0.7552  -16.05%   +14.8% -> +26.4%   FAIL -> PASS
+pfcf            0.9063      0.9072   +0.10%   +19.0% -> +18.9%   PASS -> PASS
+ps              1.0681      1.0664   -0.16%   +23.4% -> +23.5%   PASS -> PASS
 ```
 
-Two attempts were lost to causes unrelated to the code: the first to a 50-minute `timeout` that
-was too tight (it was probably close to finishing), the second stopped externally after 2 folds.
-Neither wrote anything — the script only rewrites `docs/ml_comps_validation_report.md` and
-`docs/ml_comps_validation_folds.csv` at the very end, and both still carry their pre-run mtime.
-**Give it at least 90 minutes.** Fold-level progress logging now exists, so tail the log rather
-than guessing: ~5.5s per fold at the start, 144 folds total (36 folds x 4 multiples).
+The three control multiples moved 0.10-0.16% in RMSE — refit noise. `evebitda` moved 16%, about
+100x more, and crossed the 15% gate it had been failing. Because the three multiples that do not
+take debt as an input stayed still while the one that does moved, the change is attributable to
+the debt fix rather than to refitting. Coverage stayed in range (74.1% -> 74.5%).
 
-**The prediction being tested, committed in advance (1331f2e) so it cannot be adjusted after the
-fact:** `evebitda` should improve on its baseline of `0.8996 -> 1.0556, +14.8%, FAIL`. It is the
-model whose input was the corrupted debt figure and the one tracked as a persistent "stable
-near-miss". Baseline for all four multiples is in `docs/ml_comps_validation_report.md` as
-committed at `5ed5d0f` — do not regenerate it, that file IS the before-state until the new run
-overwrites it.
+**This closes the "stable near-miss" tracked since 2026-08-13.** Its cause was the
+`debt_to_ebitda` defect feeding enterprise value, not a modelling shortfall. No EV/EBITDA-specific
+model work is needed.
 
-**Trap to avoid on resume:** an unchanged report is not a result. The first attempt produced
-before/after tables that were byte-identical, which reads exactly like "the fix changed nothing"
-and would have falsified the prediction on the basis of a job that never ran. Check the exit code
-and the file mtime before reading the numbers.
+Run was verified to have actually executed before the numbers were read — exit clean, report mtime
+15:05, both output files' checksums changed from the committed baseline, zero error lines. (The
+two earlier lost attempts wrote nothing and left byte-identical files, which reads exactly like
+"the fix changed nothing".)
 
-**Rollback safety net:** `~/fin_import2_artifacts/hf_backup_pre_recompute_20260819.duckdb` (910M)
-is the pre-recompute database, with `baseline_snapshot.json` and the recompute/DCF logs alongside.
-Moved out of `/tmp` before the reboot. Not recreatable — the old computed values are gone from the
-live database.
+## Sector-join fan-out found while running the factor diff
+
+`_join_sector` merged `company_overview` without deduping. That table holds one row per refresh —
+9,336 rows for 2,661 tickers — so the merge fanned every `(ticker, month_end_date)` row out into
+up to 5 copies: 651,684 rows became 2,409,325, and the walk-forward universe 267,594 became
+1,019,621. Duplicates carry identical sector values, so nothing was misclassified; the damage is
+silent re-weighting, with a ticker counted up to 5 times in fold sizes, model fitting and IC.
+
+This exact bug was fixed in `run_backtest.py` at `0d16007`, comment and all, but only there. The
+other three call sites still had it. Fixed all of them: `run_walkforward.py`, `run_risk.py`, and
+`run_baselines.py`.
+
+`run_baselines.py` additionally selected `symbol AS ticker`; the column is `ticker`, so the query
+raised `BinderException`, the bare `except` swallowed it, and that script had **never** joined
+sector at all — it only ever logged a warning. Fixed with the same dedupe.
+
+The first factor-diff run was started before this was found and was killed; its inputs were the
+duplicated ones. The re-run is the one that counts.
+
+## Walk-forward factor diff — result (run 2026-08-19 15:08, 60s)
+
+Run after the sector-join fix, so the universe is 267,594 rows / 1,954 tickers rather than the
+inflated 1,019,621. 35 folds, 33 features, target `ret_1y`.
+
+| Aggregate OOS | Before (Jun 29) | After |
+|---|---|---|
+| `mean_oos_r2` | -0.5536 | -0.5121 |
+| `mean_rank_ic` | -0.0169 | -0.0163 |
+| `mean_rank_icir` | -0.2289 | -0.4335 |
+| `mean_rank_icir_nw` | -1.2068 | -2.4771 |
+| `mean_hit_rate` | - | 0.4619 |
+
+**The debt fix did not change this model's verdict, and the verdict is negative.** Mean rank IC is
+-0.016 before and after: no out-of-sample edge on `ret_1y` in either version, with R2 negative
+throughout. `debt_to_ebitda` importance moved 0.0263 -> 0.0276, mid-pack among 33 features, which
+is the reason a large correction to its values barely moves the aggregate.
+
+**Read this diff with care — two changes are confounded in it.** The before-column predates both
+the debt fix *and* the sector-join fix, and the baseline itself was produced on 3.8x duplicated
+rows. So the small aggregate movements cannot be attributed to the debt fix alone, and the
+before-column is not a trustworthy baseline in any case. The durable finding is the level, not the
+delta: this model does not predict `ret_1y` out of sample, which was already true in June.
+
+Unlike the ML comps result above, this one had no pre-committed directional prediction, so it is
+an observation rather than a passed test.
+
+## Open: 3 tests now fail because of the recompute (587 -> 584 passed)
+
+Confirmed to pre-date today's sector-join fix (stash-and-rerun: same 3 fail without it). All three
+are fallout from the universe recompute, and **the code is right in at least the first case — the
+test is what is stale.**
+
+1. `test_cycle_data.py::test_leverage_is_not_read_from_the_broken_column`
+   Asserts `q.leverage > stored * 3`, where `stored` is `pe_stats.debt_to_ebitda`. It was written
+   when that column was the *broken* current-portion-only figure, so a correct computation had to
+   be several times larger. The recompute fixed the column: CLF went 0.53 -> 12.38 (verified
+   against the pre-recompute backup), and `assess_trough_quality` independently computes exactly
+   12.384244372990354. The two now agreeing is the *correct* outcome; the test fails precisely
+   because the defect it was pinned against is gone. It needs rewriting to assert leverage is far
+   above the historical broken value (0.53), not far above whatever the column currently holds —
+   a test must not use a live column as its own reference.
+
+2-3. `test_research_ai_dcf_integration.py::test_run_research_agent_with_ai_dcf_{success,failure_degrades_cleanly}`
+   Both fail on an unexpected finding: `cycle_position is TROUGH but the cycle block computed MID
+   - the Chief overrode a deterministic verdict`. The fixtures pin TROUGH while the cycle block,
+   reading recomputed data, now returns MID. Not yet diagnosed — needs a decision on whether the
+   fixture or the cycle block is wrong.
+
+None of these are blocking, but the suite is red and should not be left that way.
 
 ## What landed 2026-08-19
 
