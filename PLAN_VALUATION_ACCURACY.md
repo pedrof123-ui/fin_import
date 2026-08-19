@@ -1,6 +1,60 @@
 # Valuation Engine — Accuracy Improvements
 
-Created 2026-08-19. **Status: findings recorded, no work started.**
+## RESUME HERE (paused 2026-08-19 for a machine reboot)
+
+**One step outstanding: re-run the ML comps validation, then the walk-forward factor diff.**
+Everything else is committed and the working tree is clean.
+
+```
+uv run python scripts/validate_ml_comps_valuation.py      # ~30-45 min, rewrites docs/ml_comps_*
+uv run python scripts/run_walkforward.py                  # factor diff, not yet started
+```
+
+Two attempts were lost to causes unrelated to the code: the first to a 50-minute `timeout` that
+was too tight (it was probably close to finishing), the second stopped externally after 2 folds.
+Neither wrote anything — the script only rewrites `docs/ml_comps_validation_report.md` and
+`docs/ml_comps_validation_folds.csv` at the very end, and both still carry their pre-run mtime.
+**Give it at least 90 minutes.** Fold-level progress logging now exists, so tail the log rather
+than guessing: ~5.5s per fold at the start, 144 folds total (36 folds x 4 multiples).
+
+**The prediction being tested, committed in advance (1331f2e) so it cannot be adjusted after the
+fact:** `evebitda` should improve on its baseline of `0.8996 -> 1.0556, +14.8%, FAIL`. It is the
+model whose input was the corrupted debt figure and the one tracked as a persistent "stable
+near-miss". Baseline for all four multiples is in `docs/ml_comps_validation_report.md` as
+committed at `5ed5d0f` — do not regenerate it, that file IS the before-state until the new run
+overwrites it.
+
+**Trap to avoid on resume:** an unchanged report is not a result. The first attempt produced
+before/after tables that were byte-identical, which reads exactly like "the fix changed nothing"
+and would have falsified the prediction on the basis of a job that never ran. Check the exit code
+and the file mtime before reading the numbers.
+
+**Rollback safety net:** `~/fin_import2_artifacts/hf_backup_pre_recompute_20260819.duckdb` (910M)
+is the pre-recompute database, with `baseline_snapshot.json` and the recompute/DCF logs alongside.
+Moved out of `/tmp` before the reboot. Not recreatable — the old computed values are gone from the
+live database.
+
+## What landed 2026-08-19
+
+| Change | Commit | Verified effect |
+|---|---|---|
+| Revenue growth fades to terminal, year 2 capped at 30% | `733b038` | NVDA 13x -> 0.55x of price |
+| Capex fades to D&A | `a7b4aba` | FANG 0.02x -> 2.48x |
+| Non-positive intrinsic values rejected | `a7b4aba` | 567 negative DCFs -> **0** |
+| Total debt from the reported field | `f0b3267` | AT&T 0.25x -> 3.03x debt/EBITDA |
+| Universe recompute + DCF rebuild | (data) | `debt_to_ebitda` median 0.255 -> 2.697 |
+
+All four pre-stated directional predictions held. Per-ticker leverage now matches values computed
+independently from raw financials before the work began (NUE exactly at 1.26x; T, CCL, VZ just
+under, consistent with a different quarter's EBITDA). `dcf_results`: `status='ok'` 2,616 -> 2,220
+and `status='error'` 39 -> 441, which is the intended trade — 402 tickers moved from a silently
+wrong number to an explicit, explained failure, and total problem tickers fell from 606 to 441.
+Tests 587 passed throughout.
+
+**Consequence to watch in production:** ~17% of the universe now has no mechanical DCF, so the AI
+Researcher will take its DCF degradation path more often than before.
+
+Created 2026-08-19. **Status: fixes shipped and recomputed; validation diff outstanding.**
 
 Both items were found while verifying PLAN_CYCLE_AWARENESS.md, not by looking for them. Neither
 is caused by the cycle-awareness work, and neither belongs to that plan — they are recorded here

@@ -33,11 +33,15 @@ Design notes
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
 from historic_fundamentals.model import _apply_sector_zscore
+
+log = logging.getLogger(__name__)
 
 _MIN_PEERS = 5  # matches historic_fundamentals/sector.py
 
@@ -296,6 +300,13 @@ def walk_forward_validate_quantile(
             X_train[np.isnan(X_train[:, j]), j] = col_medians[j]
             X_test[np.isnan(X_test[:, j]), j] = col_medians[j]
 
+        # Progress logging: this loop fits 3 quantile models per fold across 36 folds and 4
+        # multiples (432 fits), takes tens of minutes, and previously emitted nothing between
+        # "training frame loaded" and the final report — so a run could not be distinguished from
+        # a hang, and a 50-minute attempt was killed by a timeout with no way to tell how far it
+        # had got.
+        log.info("  fold %d: train=%d rows test=%d rows (%s)",
+                 len(fold_results) + 1, len(train_df), len(test_df), target_col)
         model = fit_quantile_model(X_train, y_train, params)
         preds = predict_quantiles(model, X_test)
         p10, p50, p90 = preds[:, 0], preds[:, 1], preds[:, 2]
