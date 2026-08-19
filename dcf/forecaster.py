@@ -432,6 +432,42 @@ def forecast_assumptions(
 MAX_FADE_START_GROWTH = 0.30
 
 
+def _fade_capex_to_da(year_forecasts: list, overrides) -> None:
+    """Fade capex toward D&A by the final forecast year.
+
+    Capex as a share of revenue is a 5-year historical mean applied flat to every forecast year,
+    which is the same error the growth rate had: an assumption read during a heavy investment
+    phase and then projected forever, with the company never growing into the spend. FANG carried
+    capex at 51.5% of revenue against a 39.9% EBIT margin, so free cash flow was negative in all
+    ten years and its intrinsic value came out at 0.02x of market price; MU at 40.1% against a
+    5.2% margin failed outright.
+
+    In steady state capex converges to replacement capex, which is D&A — the standard terminal
+    assumption, and the exact analogue of fading growth to terminal growth. The gap between the
+    two is growth investment, and growth investment is precisely what should not persist into
+    perpetuity. Years above D&A fade down to it linearly; a company already spending below D&A is
+    left alone rather than faded upward, since under-investment is a real state and inventing
+    extra spending would understate value.
+    """
+    fadeable = [yf for yf in year_forecasts[1:] if not _has_capex_override(overrides, yf.year)]
+    if len(fadeable) < 2:
+        return
+    start = fadeable[0].capex_pct_revenue
+    steps = len(fadeable) - 1
+    for i, yf in enumerate(fadeable):
+        target = yf.da_pct
+        if start <= target:
+            continue
+        yf.capex_pct_revenue = float(start + (target - start) * (i / steps))
+
+
+def _has_capex_override(overrides, year: int) -> bool:
+    if overrides is None or not getattr(overrides, "years", None):
+        return False
+    yo = overrides.years.get(year)
+    return yo is not None and getattr(yo, "capex_pct_revenue", None) is not None
+
+
 def extend_growth_years(year_forecasts: list, overrides, terminal_growth: float) -> list:
     """
     Y3-Y10 fade linearly from Y2's revenue growth rate to `terminal_growth` by the final year.
@@ -461,6 +497,8 @@ def extend_growth_years(year_forecasts: list, overrides, terminal_growth: float)
     remaining = [yf for yf in year_forecasts[2:]]
     if not remaining:
         return year_forecasts
+
+    _fade_capex_to_da(year_forecasts, overrides)
 
     prev_rev = y2.revenue
     steps = len(remaining)

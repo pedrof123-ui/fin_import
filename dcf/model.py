@@ -847,6 +847,19 @@ def _run_dcf_core(
         shares = 1.0
 
     intrinsic = equity_value / shares if shares > 0 else 0.0
+
+    # The terminal-FCFF guard above catches only one route to a negative valuation. Equity value
+    # can still land below zero from the explicit forecast years alone — MU reaches -$38.67/share
+    # that way once its terminal year is healthy but the earlier years are not. A negative
+    # intrinsic value per share is not a valuation; it means the assumptions do not describe a
+    # going concern, and the honest answer is that this model cannot value the company.
+    if intrinsic <= 0:
+        raise ValueError(
+            f"Intrinsic value per share is not positive ({intrinsic:,.2f}); enterprise value "
+            f"{enterprise_value:,.0f} less net debt {net_debt:,.0f} leaves no equity value. The "
+            "forecast assumptions do not describe a going concern for this company."
+        )
+
     upside = (intrinsic - effective_price) / effective_price if effective_price > 0 else None
 
     sensitivity = _compute_sensitivity(
