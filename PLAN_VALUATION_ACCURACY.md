@@ -74,28 +74,39 @@ delta: this model does not predict `ret_1y` out of sample, which was already tru
 Unlike the ML comps result above, this one had no pre-committed directional prediction, so it is
 an observation rather than a passed test.
 
-## Open: 2 tests still failing after the recompute (was 3; 585 passed, 2 failed, 3 skipped)
+## Two test-fragility bugs, both now fixed (suite green)
 
-Confirmed to pre-date today's sector-join fix (stash-and-rerun: the same 3 failed without it). All
-three are fallout from the universe recompute, not from today's changes.
+Both were tests that used **live data as their own reference**, so they passed only while the
+data happened to agree with them. Neither was a code regression.
 
-1. `test_cycle_data.py::test_leverage_is_not_read_from_the_broken_column` — **FIXED**
-   Asserted `q.leverage > stored * 3`, where `stored` is `pe_stats.debt_to_ebitda`. It was written
-   when that column was the *broken* current-portion-only figure, so a correct computation had to
-   be several times larger. The recompute fixed the column: CLF went 0.53 -> 12.38 (verified
-   against the pre-recompute backup), and `assess_trough_quality` independently computes exactly
-   12.384244372990354. The two agreeing is the *correct* outcome — the test failed precisely
-   because the defect it was pinned against is gone. Rewritten to pin against the historical
-   broken constant (0.5299539170506913) rather than the live column, since a test must not use a
-   live column as its own reference. `tests/test_cycle_data.py`: 66 passed.
+**1. `test_cycle_data.py::test_leverage_is_not_read_from_the_broken_column` — FIXED**
+Asserted `q.leverage > stored * 3` where `stored` is the live `pe_stats.debt_to_ebitda`. That
+held only while the column was broken. The recompute fixed it (CLF 0.53 -> 12.38, verified
+against the pre-recompute backup) and `assess_trough_quality` independently computes
+12.384244372990354, so code and column now agree exactly and the assertion inverted. Repointed to
+the historical broken constant (0.5299539170506913).
 
-2-3. `test_research_ai_dcf_integration.py::test_run_research_agent_with_ai_dcf_{success,failure_degrades_cleanly}`
-   Both fail on an unexpected finding: `cycle_position is TROUGH but the cycle block computed MID
-   - the Chief overrode a deterministic verdict`. The fixtures pin TROUGH while the cycle block,
-   reading recomputed data, now returns MID. Not yet diagnosed — needs a decision on whether the
-   fixture or the cycle block is wrong.
+**2. `test_research_ai_dcf_integration.py` (2 tests) — FIXED**
+The fixture hardcodes `cycle_position="TROUGH"` with a comment reading "TXN computes TROUGH
+against the live database", and QC compares the two, so `findings == []` silently depended on TXN
+remaining a trough-cycle name. It no longer is. `compute_cycle_position` is now pinned in the
+shared `_patch_network_calls` helper.
 
-Item 1 is fixed. Items 2-3 are still red and still need the fixture-vs-cycle-block decision.
+**Correction to an earlier note in this file:** these two were first recorded here as recompute
+fallout. That was an inference, and checking it showed it was wrong — TXN computes `MID` against
+**both** the live database and the pre-recompute backup, so the recompute did not cause it. They
+were already failing beforehand, from an earlier data refresh that moved TXN off TROUGH. The
+stash-and-rerun only established that today's sector-join fix was not responsible; it did not
+establish what was.
+
+Suite: **587 passed, 3 skipped, 0 failed.**
+
+**Still open, needs a paid run to settle:** the plan notes below that `research_regression.py`
+gates fair value to 0.15x-5.0x of price and that MU fails it. MU's mechanical DCF is now an
+explicit `status='error'` ("Intrinsic value per share is not positive (-50.64)") rather than
+-$16,932, so the AI Researcher takes its degradation path. Whether the report-level fair value now
+lands in the gate cannot be read from the database — it needs an actual report run, which costs
+money. Not run.
 
 ## Backtest baseline regeneration — prediction stated before the run
 

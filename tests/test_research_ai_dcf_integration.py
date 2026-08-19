@@ -419,7 +419,15 @@ def _patch_llm_chain(monkeypatch):
 def _patch_network_calls(monkeypatch):
     """EDGAR/Tavily/AV-transcript-probe calls are network-dependent — canned for a fast,
     deterministic test. Local-DB reads (financials, valuation, technical, peer, DCF summary,
-    etc.) run for real against TXN."""
+    etc.) run for real against TXN.
+
+    compute_cycle_position is the one exception, and it is pinned deliberately. The fixture
+    report hardcodes cycle_position="TROUGH", and QC compares that against whatever the live
+    database computes, so the assertion `findings == []` silently depended on TXN staying a
+    trough-cycle name. It stopped being one and both tests went red without any code changing.
+    A fixture must not have to agree with live data to pass.
+    """
+    monkeypatch.setattr(rr, "compute_cycle_position", lambda ticker: "TROUGH")
     monkeypatch.setattr(rr, "get_edgar_mda", lambda ticker: "[INFO] MD&A skipped for test")
     monkeypatch.setattr(rr, "get_edgar_risks", lambda ticker: "[INFO] risks skipped for test")
     monkeypatch.setattr(rr, "get_web_search", lambda ticker: "[INFO] web search skipped for test")

@@ -1,6 +1,6 @@
 # AI Researcher — Industry Cycle Awareness
 
-Created 2026-08-17. **Status: Phases 0-8 complete (7 dropped), Phase 6 defect fixed. Next: Phase 9.**
+Created 2026-08-17. **Status: Phases 0-9 complete (7 dropped). Phase 9 step 4 declined by decision — see below.**
 
 ## Resume here
 
@@ -704,7 +704,7 @@ at a genuine trough that test under-fires, because the average is dragged down b
 business. It is a recall gap rather than a wrong answer, and changing it would invalidate the
 Phase 3 calibration and require a full re-sweep, so it is left as a follow-up.
 
-## Phase 9 — Fix `debt_to_ebitda` and enterprise value  [ ]  (follow-up, after Phase 8)
+## Phase 9 — Fix `debt_to_ebitda` and enterprise value  [x] COMPLETE 2026-08-19
 
 Agreed 2026-08-18 to run this immediately after the cycle plan closes. Scoped as its own piece
 because the one-line code change is not the work — the recompute and the diff review are.
@@ -729,9 +729,13 @@ and the `sector_stats` medians.
    `sector_stats`.
 3. Re-run the ML comps validation and the factor walk-forward, and **diff against the current
    baselines**. This is the deliverable, not the code change.
-4. Simplify `api/cycle_data.py` `assess_trough_quality` to read the repaired column instead of
-   computing leverage locally, and drop the regression guard that pins it away from
-   `pe_stats.debt_to_ebitda`. Do this only once step 3 confirms the repair.
+4. ~~Simplify `api/cycle_data.py` `assess_trough_quality` to read the repaired column instead of
+   computing leverage locally, and drop the regression guard.~~ **DECLINED 2026-08-19.** The
+   precondition was met (step 3 confirmed the repair), but the decision was to keep the local
+   computation and the guard. It costs almost nothing, it is the code that stayed correct through
+   the entire period the column was wrong, and an independent second computation is worth more
+   than the few lines it saves. The guard was repointed to a historical constant rather than the
+   live column — see below.
 
 **Stated hypothesis, so the recompute is an experiment and not a chore.** EV/EBITDA is the one
 ML comps model tracked as a persistent "stable near-miss" on calibration, and it is the model
@@ -742,6 +746,23 @@ direction is predicted for any individual factor result.
 
 **Risk to weigh before step 2:** every previously validated factor result and backtest baseline
 used the broken EV. Some "validated" conclusions may move. Budget the diff review, not the fix.
+
+### Outcome, 2026-08-19
+
+Steps 1-3 done; step 4 declined (above). **The stated hypothesis held.** EV/EBITDA ML comps went
+`0.8996 -> 0.7552` RMSE, `+14.8% -> +26.4%`, **FAIL -> PASS**, while the three multiples that do
+not take debt as an input moved 0.10-0.16% — refit noise. That separation is the evidence; a
+global shift would have moved all four. The "stable near-miss" was the debt defect, not a
+modelling shortfall.
+
+The factor walk-forward barely moved (mean rank IC -0.0169 -> -0.0163) and shows no OOS edge on
+`ret_1y` either way; `debt_to_ebitda` is mid-pack in importance there. That diff also confounds
+two changes and its baseline was computed on duplicated rows — see PLAN_VALUATION_ACCURACY.md.
+
+Backtest baselines in `score_live.py` `_BACKTEST_METRICS` are being regenerated separately: the
+composite's `ev_ebitda` factor moved, so the live-facing numbers were measured on broken inputs.
+
+Full detail, including the two test-fragility bugs this surfaced, in PLAN_VALUATION_ACCURACY.md.
 
 ## Decisions taken
 
