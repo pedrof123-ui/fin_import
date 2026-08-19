@@ -662,7 +662,35 @@ re-check its own anchor before returning a base that far from the market.
 Tests: 66 in `tests/test_cycle_data.py`, including a parametrised guard that price divided by the
 normalised anchor stays inside a range a multiple could plausibly close. Full suite 587 passed.
 
-**End-to-end verification is still OUTSTANDING.** The deterministic half is confirmed — the
+**Verification result (2026-08-19, after credits restored) — the anchor fix works; the residual
+gap is NOT this feature.**
+
+The analyst now uses the normalised anchor: MU's `fair_value_high` of $290 is exactly normalised
+EPS $14.59 x MU's own rolling 5yr median P/E of 19.9, and the base rose from $23.58 to $80. The
+instruction is being followed and the earnings figure is right.
+
+MU's base is still 0.09x of its $940.76 price, but the cause is now attributed and it is not the
+cycle feature:
+
+- **MU's mechanical DCF returns negative intrinsic values** — bear -$4,021, base -$16,673, bull
+  -$5,527 per share. NVDA's mechanical DCF in the same run was $401.62, so the engine works
+  generally and fails specifically on MU. That is a pre-existing DCF defect and the actual driver
+  of MU's base.
+- **The pipeline runs structurally conservative regardless of cycle.** NVDA 0.43x and KO 0.53x of
+  market are both NOT_CYCLICAL and never touch this code, and read 0.62x / 0.57x in the Phase 6
+  run. So a low base is the pipeline's normal behaviour, not a cyclical artifact.
+
+Both belong to follow-up work, not to this plan. What this plan owned — anchoring on a raw
+5-year average — is fixed.
+
+**Harness correction.** The plausibility check was first written informational-only, on the
+argument that a gating check would eventually overrule a genuine contrarian call. MU at 0.09x
+proved that the wrong default: the suite reported ALL CHECKS PASSED with a base 91% below market.
+It is now two bands — **gating** outside 0.15x-5.0x, where no defensible valuation lands, and
+**informational** outside 0.30x-3.0x. Against the current run that fails MU alone and passes
+FANG, NVDA, KO and UPS, which is the intended split between absurdity and disagreement.
+
+**Superseded note (kept for history) — The deterministic half is confirmed — the
 anchor values above are computed in Python and checked offline. What has *not* been confirmed is
 that the Valuation Analyst uses the new anchor to produce sane fair values, which is the whole
 point of the fix. The verification run on 2026-08-19 is void: the OpenRouter account ran out of
