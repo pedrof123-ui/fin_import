@@ -230,6 +230,53 @@ scoring. Precedent argues for adding it — pe and pfcf were included on a singl
 inconsistent. The 6-month streak exists to gate the *Phase 9 anchor promotion* (replacing
 `goal_pe`/`goal_low`/`goal_high`), not inclusion in the multiple set.
 
+## Upper guard result (rebuild 2026-08-19, 1,042s)
+
+`MAX_INTRINSIC_TO_PRICE = 10.0` in `dcf/model.py`, symmetric with the non-positive guard and
+skipped when no usable price exists. Rebuild reclassified **74 tickers** (predicted ~75).
+
+| | Before guard | After guard |
+|---|---|---|
+| `status='ok'` | 2,220 | 2,144 |
+| `status='error'` | 441 | 517 |
+| negative intrinsic values | 0 | 0 |
+
+Distribution of intrinsic value as a multiple of price, across `ok` rows:
+
+| | p50 | p90 | p95 | p99 | max |
+|---|---|---|---|---|---|
+| before | 0.75x | 2.86x | 6.01x | 35.47x | **46,418x** |
+| after | 0.72x | 2.21x | 3.50x | 6.64x | **9.6x** |
+
+The tail is gone and the centre is untouched — the median moved 0.75x -> 0.72x. 250 tickers
+(11.7%) still sit above 2x, which is intended: a genuinely mispriced company can be worth several
+times its price, and the guard only rejects the indefensible.
+
+**76 tickers moved ok -> error, of which the guard explains 74.** The other two come from price
+movement between the measurement and the rebuild, which also shifted individual ratios (GNTX read
+46,418x when measured and 46,496x on the rebuild; D moved 13,188x -> 18,037x).
+
+**Now ~19.4% of the universe has no mechanical DCF** (517 of 2,661), up from ~16.6%. The AI
+Researcher takes its degradation path that much more often. This is the cost that was accepted
+when choosing 10x over a tighter bound; revisit with `5x -> 64 more tickers (3.0%)` and
+`3x -> 138 (6.4%)` once the production degradation rate has been observed.
+
+## EV/EBITDA promoted to production (`1b0c40e`)
+
+Added to `PASSING_MULTIPLES`, which gates training, production scoring, the streak report and the
+tests together. Model trained (`evebitda_2026-08-19.joblib`); scoring verified end-to-end,
+`ml_fair_evebitda_*` populated and feeding `ml_fair_price`.
+
+Included on the same basis as the other three — one passing gate run each — now that it clears all
+criteria decisively (+26.4% RMSE improvement, second-best of four; 100% fold win; 74.5% coverage).
+
+`report_ml_comps_calibration.py` currently prints `evebitda: WARNING no OOS metrics for latest run`
+and a shortest-streak of 0. That is expected and self-resolving: the row was created after today's
+validation ran, and the monthly pipeline runs validation before the report, so 2026-09-01 fills it.
+Metrics were deliberately **not** hand-written into the row — the report's precision exceeds what
+the summary table carries, and transcribing rounded numbers into a database that feeds a
+promotion decision is not worth the convenience.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
@@ -264,7 +311,7 @@ done once, not three times.
 
 ---
 
-## 1. The mechanical DCF is driven by a non-fading revenue forecast  [x] Fade SHIPPED (733b038); upper-tail guard still open
+## 1. The mechanical DCF is driven by a non-fading revenue forecast  [x] COMPLETE — fade (733b038) + 10x guard (1b0c40e)
 
 **Priority: high.** It is live, it is wrong, and it is silent.
 
@@ -330,7 +377,7 @@ This section is kept for the reasoning, but the decision it describes was taken 
 with Y2 itself capped at `MAX_FADE_START_GROWTH = 0.30`, and `_fade_capex_to_da` does the analogous
 thing for capex. Overrides re-anchor the fade rather than being overwritten.
 
-### STILL OPEN: the upper magnitude guard (step 4 below)
+### RESOLVED — the 10x upper guard shipped at `1b0c40e`
 
 The fade fixed the negative tail — **0 negative intrinsic values**, down from 567. It did **not**
 fix the upper tail, and nothing guards it. Measured 2026-08-19 across the 2,220 tickers currently

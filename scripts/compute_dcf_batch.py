@@ -46,9 +46,19 @@ def _list_tickers(av_db_path: str) -> list[str]:
         conn.close()
 
 
+_PROGRESS_EVERY = 200
+
+
 def compute_dcf_batch(tickers: list[str], estimates_conn) -> pd.DataFrame:
     rows = []
+    # Progress at INFO every _PROGRESS_EVERY tickers. The per-ticker line below is DEBUG, so a
+    # ~2,600-ticker run otherwise emits nothing between start and finish across many minutes, and
+    # a working job cannot be told apart from a hung one. Same reason the walk-forward gained
+    # fold-level logging.
     for i, ticker in enumerate(tickers, 1):
+        if i % _PROGRESS_EVERY == 0 or i == len(tickers):
+            n_err = sum(1 for r in rows if r["status"] == "error")
+            log.info("  %d/%d done (%d error so far)", i, len(tickers), n_err)
         log.debug("[%d/%d] %s", i, len(tickers), ticker)
         now = datetime.now(UTC)
         try:
@@ -97,7 +107,7 @@ def main() -> None:
         print("No tickers found.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Running DCF for {len(tickers)} ticker(s)...")
+    print(f"Running DCF for {len(tickers)} ticker(s)...", flush=True)
     t0 = time.time()
 
     hf_db = HistoricFundamentalsDB(args.hf_db)

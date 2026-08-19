@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from historic_fundamentals.db import HistoricFundamentalsDB  # noqa: E402
+from historic_fundamentals.ml_comps_model import PASSING_MULTIPLES  # noqa: E402
 
 from report_ml_comps_calibration import (  # noqa: E402
     ML_COMPS_ANCHOR_REVIEW_COUNT, READY_FOR_REVIEW_MONTHS, build_ml_comps_triangulation_section,
@@ -31,7 +32,10 @@ def test_all_passing_reports_correct_streak(tmp_path):
     db_path = tmp_path / "hf.duckdb"
     HistoricFundamentalsDB(str(db_path)).close()
     conn = duckdb.connect(str(db_path))
-    for target in ("pe", "pfcf", "ps"):
+    # Seed every production multiple. Hardcoding three here meant adding a fourth to
+    # PASSING_MULTIPLES turned these green tests red for the wrong reason — the report warned
+    # about a multiple the fixture had simply forgotten to seed.
+    for target in PASSING_MULTIPLES:
         for i, month in enumerate(["2026-06-01", "2026-07-01", "2026-08-01"]):
             _seed_month(conn, target, month, 0.18, 0.80, is_active=(i == 2))
     conn.close()
@@ -94,12 +98,12 @@ def test_no_history_at_all_reports_warning_not_crash(tmp_path):
     assert "pe: WARNING no ml_model_metadata rows at all" in msg
 
 
-def test_ready_for_review_threshold_flags_all_three(tmp_path):
+def test_ready_for_review_threshold_flags_every_multiple(tmp_path):
     db_path = tmp_path / "hf.duckdb"
     HistoricFundamentalsDB(str(db_path)).close()
     conn = duckdb.connect(str(db_path))
     months = [f"2026-{m:02d}-01" for m in range(1, READY_FOR_REVIEW_MONTHS + 1)]
-    for target in ("pe", "pfcf", "ps"):
+    for target in PASSING_MULTIPLES:
         for i, month in enumerate(months):
             _seed_month(conn, target, month, 0.18, 0.80, is_active=(i == len(months) - 1))
     conn.close()
