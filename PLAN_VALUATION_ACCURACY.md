@@ -277,6 +277,49 @@ Metrics were deliberately **not** hand-written into the row — the report's pre
 the summary table carries, and transcribing rounded numbers into a database that feeds a
 promotion decision is not worth the convenience.
 
+## AI Researcher regression, run 2026-08-19 (~$2-3 of API spend)
+
+`scripts/research_regression.py`, 5 tickers plus the degradation case, 36 min.
+**NVDA, UPS, KO and FANG pass every gating check. The `ZZZZNOTATICKER` degradation case passes.
+MU is the only failure**, on two checks.
+
+Prediction stated before the run was that removing MU's bad mechanical DCF might not bring it into
+the 0.15x-5.0x gate. **It did not.** MU now fails at `base $33.15 vs price $937.11 = 0.04x`,
+below the floor rather than via the old -$16,932 route.
+
+### The second failure is a defect this plan's own guard introduced
+
+    [FAIL] has valuation model tables
+
+MU's report has **no Valuation Model Detail block at all** — no Key Fundamentals, no Comparable
+Companies, no Model Summary. `_assemble_deterministic_tables` (`api/research_router.py:2253`)
+builds the whole block as all-or-nothing:
+
+    valuation_tables_md = render_valuation_model_tables(...) if needs_valuation and scenarios is not None else ""
+
+`compute_dcf_scenarios` now raises for MU, so `scenarios is None` and the entire block is dropped.
+But of the four tables inside it, **two need nothing from the DCF** — `_fundamentals_table(ticker)`
+and `_comps_table(ticker)` take only the ticker. `_model_summary_table` takes scenarios but also
+takes the multiples and the Valuation Analyst's fair values, so it could render without the DCF row.
+
+**Scope: this got much worse today.** Before the guard, MU had a negative-but-`ok` DCF, scenarios
+computed, and all four tables rendered. Now 517 tickers (19.4%) have no mechanical DCF, and every
+one of them loses its comparables and triangulation tables too — not just its DCF table. The
+degradation path is more degraded than it was designed to be.
+
+There is a particular irony in the Model Summary vanishing: the Fair Value Triangulation table is
+exactly what would show a reader that $33.15 against a $937.11 price is not supported by the
+multiples sitting next to it.
+
+**Recommended fix (not made):** render the DCF-independent tables regardless, and skip only the
+DCF-dependent ones when `scenarios is None`. Contained change, but it alters what every degraded
+report looks like, so it is a decision rather than a cleanup.
+
+**MU's 0.04x is a separate question** and probably a real disagreement rather than a bug: MU is
+correctly flagged `PEAK` with the Peak-Earnings Trap Alert, and a peak-cycle semiconductor at
+$937 genuinely invites a low through-cycle valuation. But 0.04x is 25x below price, which is not a
+defensible number, and it is now produced with no triangulation table to sanity-check it against.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
