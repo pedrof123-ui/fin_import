@@ -813,9 +813,10 @@ def _run_dcf_core(
     if last_fcff <= 0:
         raise ValueError(
             f"Terminal-year free cash flow is negative ({last_fcff:,.0f}); a perpetuity-growth "
-            "terminal value is not meaningful for this company. This usually means the revenue "
-            "forecast outruns the margin and capex assumptions — see extend_growth_years, which "
-            "carries year 2's growth rate through year 10 without fading it."
+            "terminal value is not meaningful for this company. Revenue growth fades to terminal "
+            "growth and capex fades to D&A by the final year, so a company still burning cash in "
+            "that year is not projected to fund itself from operations at any point in the "
+            "forecast."
         )
 
     terminal_value = last_fcff * (1 + terminal_growth) / (wacc - terminal_growth)
