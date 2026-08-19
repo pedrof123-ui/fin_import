@@ -804,6 +804,20 @@ def _run_dcf_core(
         )
         terminal_growth = clamped_tg
 
+    # A perpetuity-growth terminal value is only meaningful on a positive terminal cash flow.
+    # With a negative one the formula capitalises the loss forever — at a 12-point spread that is
+    # roughly 8x the final year — and drives enterprise value deeply negative. Measured
+    # 2026-08-19: 567 of 2,655 tickers (21.7%) carried a negative intrinsic value per share, all
+    # marked status='ok', reaching -$5.7e15 for OCTV and -$16,932/share for MU. Silently
+    # returning such a number is worse than returning nothing, so this is now an explicit failure.
+    if last_fcff <= 0:
+        raise ValueError(
+            f"Terminal-year free cash flow is negative ({last_fcff:,.0f}); a perpetuity-growth "
+            "terminal value is not meaningful for this company. This usually means the revenue "
+            "forecast outruns the margin and capex assumptions — see extend_growth_years, which "
+            "carries year 2's growth rate through year 10 without fading it."
+        )
+
     terminal_value = last_fcff * (1 + terminal_growth) / (wacc - terminal_growth)
     pv_tv = terminal_value / (1 + wacc) ** len(fcff_series)
 

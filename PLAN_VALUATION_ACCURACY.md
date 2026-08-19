@@ -13,7 +13,7 @@ done once, not three times.
 
 ---
 
-## 1. The mechanical DCF returns negative intrinsic values for 21.7% of the universe  [ ]
+## 1. The mechanical DCF is driven by a non-fading revenue forecast  [~] Guard shipped, fade is an open decision
 
 **Priority: high.** It is live, it is wrong, and it is silent.
 
@@ -38,6 +38,53 @@ MU is the worked example that surfaced this. Its report base fair value came bac
 $940.76 price (0.09x), and the mechanical DCF underneath reads **-$16,673/share** on the base
 scenario. NVDA in the same run returned a healthy $401.62, so the engine is not globally broken —
 it fails on a large minority of tickers and says nothing.
+
+### Root cause found 2026-08-19: the revenue forecast never fades
+
+Not the terminal value — that is the symptom. `extend_growth_years`
+(`dcf/forecaster.py:421`) carries **year 2's growth rate flat through year 10**, and its own
+docstring says so: *"Y3-Y10 carry forward Y2's revenue growth rate (no fade to terminal growth)."*
+This is a deliberate, documented design choice, not broken code.
+
+For MU that means 103.34% revenue growth compounded for eight straight years:
+
+| Year | Forecast revenue |
+|---|---|
+| 1 | $110bn |
+| 5 | $1.9tn |
+| 10 | **$65tn** — larger than world GDP |
+
+Costs sum to 94.8% of revenue and capex is 40.1%, so FCFF is negative and scales with the
+exploding revenue: -$55bn in year 2 to **-$16tn** by year 10. The terminal value then capitalises
+that final figure into perpetuity.
+
+**It breaks in both directions.** MU is capex-heavy, so runaway growth drives value negative.
+NVDA has the same runaway growth with high margins and light capex, so it drives value *up*: a
+direct run on 2026-08-19 returns **$2,883/share against a $219.74 price (13x)**, where the
+2026-08-01 batch had it at $401.62. A sign check catches only the negative tail. Universe-wide,
+19.0% of positive DCF values already exceed 2x price and 10% exceed 4.11x.
+
+### Done 2026-08-19: the negative tail now fails honestly
+
+`dcf/model.py` raises when terminal-year FCFF is <= 0, with a message naming
+`extend_growth_years` as the likely cause. `scripts/compute_dcf_batch.py` already catches any
+exception and writes `status='error'` with the message, so those 567 tickers change from a silent
+wrong number to an explicit failure. This is the plan's step 3, and it is a strict improvement —
+but it makes the DCF *honest*, not *useful*.
+
+### OPEN DECISION: introduce a growth fade
+
+Making the DCF useful means fading the growth rate from year 2 toward terminal growth by year 10,
+which is standard practice and is what the docstring flags as absent. **This changes every DCF
+the system produces, not only the broken ones** — including tickers whose values look fine today.
+It therefore needs a decision, not just a commit:
+
+- every DCF-derived baseline moves, including the AI Researcher's mechanical anchor and the
+  reconciliation against the AI DCF
+- the fade shape (linear vs exponential) and the horizon are modelling choices worth stating
+  explicitly rather than defaulting
+- a cap on the year-1/year-2 growth rate is probably needed as well: 194% and 103% are not
+  forecasts at any horizon
 
 **Steps.**
 
