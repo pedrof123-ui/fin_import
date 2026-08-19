@@ -759,8 +759,8 @@ def _run_dcf_core(
                 yf.revenue = prev * (1 + yf.revenue_growth)
                 prev = yf.revenue
 
-    # Y3-Y10: carry forward Y2 growth (applied after all Y1/Y2 are settled)
-    year_forecasts = extend_growth_years(year_forecasts, overrides)
+    # Y3-Y10: fade Y2 growth toward terminal growth (applied after all Y1/Y2 are settled)
+    year_forecasts = extend_growth_years(year_forecasts, overrides, terminal_growth)
 
     # AV DCF: apply EBIT margin control (EBIT = revenue × ebit_margin exactly).
     # Per-year user value wins over default.

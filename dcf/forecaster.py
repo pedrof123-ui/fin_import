@@ -419,24 +419,68 @@ def forecast_assumptions(
     return forecasts
 
 
-def extend_growth_years(year_forecasts: list, overrides) -> list:
+# The starting altitude of the fade. Year 2's growth rate is derived from trailing and estimated
+# growth, so on a company at a cyclical peak it encodes the peak: MU's read 103.3% during the AI
+# memory upcycle. A ten-year forecast cannot distinguish a genuine structural shift from a
+# cyclical high, so it should not encode either at full height. Set to 30% on 2026-08-19 after
+# comparing year-10 revenue outcomes for MU: uncapped 103.3% still reaches $4.1tn even with the
+# fade applied (roughly 6x the entire global semiconductor market), against $0.4tn at this cap.
+# Binds only on the extreme tail — most tickers have year-2 growth well under 20% and are
+# unaffected. Deliberately a judgement call, not a tuned parameter: erring low understates a
+# genuine hypergrowth company, which is the more recoverable error here because the AI Researcher
+# triangulates this mechanical DCF against an AI DCF and multiples rather than trusting it alone.
+MAX_FADE_START_GROWTH = 0.30
+
+
+def extend_growth_years(year_forecasts: list, overrides, terminal_growth: float) -> list:
     """
-    Y3-Y10 carry forward Y2's revenue growth rate (no fade to terminal growth).
-    When a user overrides a year's revenue, subsequent non-overridden years carry
-    forward that year's implied growth rate instead.
-    Called after analyst estimates and user overrides are fully applied.
+    Y3-Y10 fade linearly from Y2's revenue growth rate to `terminal_growth` by the final year.
+
+    Previously Y3-Y10 carried Y2's rate flat, which compounded a cyclical peak into a forecast no
+    business could reach — MU's ran 103.3% for eight straight years to a $65tn year-10 revenue,
+    larger than world GDP, and its FCFF reached -$16tn. That drove a negative intrinsic value on
+    567 of 2,655 tickers (21.4%) and, on high-margin low-capex names, an inflated one instead
+    (NVDA at 13x its market price).
+
+    When a user overrides a year's revenue, subsequent non-overridden years resume the fade from
+    that year's implied growth rate, so an override re-anchors the path rather than being
+    overwritten by it.
     """
-    g = year_forecasts[1].revenue_growth
-    prev_rev = year_forecasts[1].revenue
-    for yf in year_forecasts[2:]:
+    # Cap year 2 itself, not merely the fade that follows it. Year 1 is left alone: it is
+    # largely analyst consensus one year out, which is a real estimate rather than an
+    # extrapolation. Year 2 is where trailing growth starts being projected, so it is the first
+    # year the model is guessing, and an uncapped year 2 would keep the peak in the revenue base
+    # for every year after it however gently the growth rate then fades.
+    y2 = year_forecasts[1]
+    if not _has_rev_override(overrides, y2.year) and y2.revenue_growth > MAX_FADE_START_GROWTH:
+        prior_rev = y2.revenue / (1 + y2.revenue_growth) if (1 + y2.revenue_growth) != 0 else y2.revenue
+        y2.revenue_growth = float(MAX_FADE_START_GROWTH)
+        y2.revenue = float(prior_rev * (1 + MAX_FADE_START_GROWTH))
+
+    g_start = min(float(y2.revenue_growth), MAX_FADE_START_GROWTH)
+    remaining = [yf for yf in year_forecasts[2:]]
+    if not remaining:
+        return year_forecasts
+
+    prev_rev = y2.revenue
+    steps = len(remaining)
+    step_index = 0
+    for yf in remaining:
         if _has_rev_override(overrides, yf.year):
+            # Re-anchor: the fade restarts from the override's implied growth over the years left.
             if prev_rev > 0:
-                g = yf.revenue / prev_rev - 1
+                g_start = min(yf.revenue / prev_rev - 1, MAX_FADE_START_GROWTH)
             prev_rev = yf.revenue
+            steps = len(remaining) - step_index - 1
+            step_index = 0
             continue
+        # Linear interpolation from g_start toward terminal_growth across the remaining years.
+        frac = (step_index + 1) / steps if steps > 0 else 1.0
+        g = g_start + (terminal_growth - g_start) * frac
         yf.revenue_growth = float(g)
         yf.revenue = float(prev_rev * (1 + g))
         prev_rev = yf.revenue
+        step_index += 1
     return year_forecasts
 
 
