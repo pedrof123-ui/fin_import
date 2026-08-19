@@ -11,6 +11,20 @@ def _coerce(val) -> float:
 
 DEFAULT_TERMINAL_GROWTH = 0.03  # 3%
 
+# An intrinsic value this far above the market price is a computation failure, not a valuation.
+# The growth fade (dcf/forecaster.extend_growth_years) removed the negative tail entirely, but the
+# same runaway assumptions push high-margin low-capex companies the other way, and nothing caught
+# that: measured 2026-08-19 across the 2,220 tickers marked status='ok', the median was a healthy
+# 0.75x of price while p99 was 35x and the maximum 46,418x — GNTX at $1,099,172 per share against
+# a $23.68 price, Dominion at $904,809. All were reported as valid.
+#
+# Set to 10x, which reclassifies 75 tickers (3.4% of ok) as explicit failures. Deliberately loose:
+# a genuinely mispriced company can be worth several times its price, and ~17% of the universe
+# already has no mechanical DCF, so a tighter bar pushes the AI Researcher onto its degradation
+# path more often for less certain gain. Tighten once the degradation rate has been observed in
+# production; 5x would take 141 tickers (6.4%) and 3x would take 215 (9.7%).
+MAX_INTRINSIC_TO_PRICE = 10.0
+
 # WACC sensitivity grid offsets (±)
 _WACC_OFFSETS = [-0.02, -0.01, 0.0, 0.01, 0.02]
 _TG_OFFSETS = [-0.01, -0.005, 0.0, 0.005, 0.01]
@@ -859,6 +873,17 @@ def _run_dcf_core(
             f"Intrinsic value per share is not positive ({intrinsic:,.2f}); enterprise value "
             f"{enterprise_value:,.0f} less net debt {net_debt:,.0f} leaves no equity value. The "
             "forecast assumptions do not describe a going concern for this company."
+        )
+
+    # Symmetric with the non-positive guard above: the fade fixed the downside tail, not the
+    # upside one. Skipped when there is no usable price to compare against, since the ratio is
+    # then undefined rather than acceptable.
+    if effective_price > 0 and intrinsic > MAX_INTRINSIC_TO_PRICE * effective_price:
+        raise ValueError(
+            f"Intrinsic value per share ({intrinsic:,.2f}) is "
+            f"{intrinsic / effective_price:,.1f}x the market price ({effective_price:,.2f}), above "
+            f"the {MAX_INTRINSIC_TO_PRICE:.0f}x plausibility bound. This is a computation failure "
+            "rather than a valuation — check the revenue and margin forecast."
         )
 
     upside = (intrinsic - effective_price) / effective_price if effective_price > 0 else None

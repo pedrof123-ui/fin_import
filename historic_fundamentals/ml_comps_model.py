@@ -66,11 +66,26 @@ MULTIPLE_TARGETS = {
 
 # Multiples that cleared the Phase 3 go/no-go gate. 2026-07-20 run: P/E and
 # P/FCF passed all 3 criteria; EV/EBITDA missed the RMSE-improvement bar by
-# 0.3pp and is excluded from production scoring until revisited. 2026-07-21
+# 0.3pp and was excluded from production scoring until revisited. 2026-07-21
 # run: P/S added as a 4th candidate and passed all 3 criteria (+23.6% RMSE
 # improvement, the best of the four, 100% fold win rate, 74.7% coverage — see
 # ml_comps_valuation_plan.md). Training/scoring scripts default to this list.
-PASSING_MULTIPLES = ["pe", "pfcf", "ps"]
+#
+# 2026-08-19: EV/EBITDA added. That 0.3pp miss was never a modelling shortfall —
+# its enterprise-value input counted only the current portion of debt (see
+# PLAN_CYCLE_AWARENESS.md Phase 9). With debt fixed and the universe recomputed
+# it clears all three criteria decisively: +26.4% RMSE improvement (second-best
+# of the four, up from +14.8%), 100% fold win rate, 74.5% coverage. Included on
+# the same basis P/E, P/FCF and P/S were — one passing gate run each. The
+# 6-month calibration streak gates the separate Phase 9 anchor promotion
+# (replacing goal_pe/goal_low/goal_high), not membership in this list.
+#
+# Note this constant gates four things at once: training, production scoring,
+# the streak report, and the tests. Until EV/EBITDA was added here it had no
+# active model row, so update_active_ml_model_oos_metrics no-op'd for it and its
+# monthly validation result was discarded every month — it could never have
+# accumulated the streak its own promotion depends on.
+PASSING_MULTIPLES = ["pe", "evebitda", "pfcf", "ps"]
 
 DEFAULT_QUANTILE_PARAMS: dict = {
     "objective": "reg:quantileerror",
