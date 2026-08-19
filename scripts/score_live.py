@@ -59,18 +59,29 @@ from historic_fundamentals.model import apply_zscore_stats  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-# Backtest reference metrics — sector-neutral composite score (Phase 3 validation).
-# Full universe 1983–2026, 404 months guardrailed, vol-weighted, regime-filtered.
-# rf_vw_* entries use vol-weighting + regime filter (the live portfolio configuration).
+# Backtest reference metrics — regenerated 2026-08-19 from
+# run_backtest.py --model --guardrails --vol-weight --regime-filter --tc-bps 10.
+# Full universe, 406 months, 1,921 tickers.
+#
+# The previous values were stale on two counts: they predated the _join_sector dedupe fix
+# (0d16007) and the debt/enterprise-value recompute, both of which move ev_ebitda — one of the
+# four factors in _VALUE_COLS. The xgb_* rows moved most because model.joblib itself had been
+# trained on 3.8x duplicated rows until train_model.py was fixed the same day; these figures come
+# from a model retrained on deduplicated data and are LOWER than the previous ones. That is the
+# correct number replacing an inflated one, not a regression.
+#
+# rf_vw_* are copies of the rf_* rows: run_backtest.py never produces a regime-filtered AND
+# vol-weighted portfolio, but _portfolio_label can generate that label. Noted here rather than
+# left to look like measured values.
 _BACKTEST_METRICS: dict[str, dict] = {
-    "gr_top_n_25":           dict(cagr="17.0%", sharpe="0.960", max_dd="-39.7%", beta="0.781", win_rate="65.6%", months=404),
-    "vw_gr_top_n_25":        dict(cagr="16.7%", sharpe="1.000", max_dd="-35.4%", beta="0.735", win_rate="67.1%", months=404),
-    "rf_gr_top_n_25":        dict(cagr="15.6%", sharpe="1.015", max_dd="-25.7%", beta="0.634", win_rate="67.1%", months=404),
-    "rf_vw_gr_top_n_25":     dict(cagr="15.6%", sharpe="1.015", max_dd="-25.7%", beta="0.634", win_rate="67.1%", months=404),
-    "xgb_gr_top_n_25":       dict(cagr="20.5%", sharpe="1.076", max_dd="-26.6%", beta="1.054", win_rate="62.6%", months=211),
-    "vw_xgb_gr_top_n_25":    dict(cagr="19.5%", sharpe="1.089", max_dd="-23.5%", beta="0.989", win_rate="62.6%", months=211),
-    "rf_xgb_gr_top_n_25":    dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
-    "rf_vw_xgb_gr_top_n_25": dict(cagr="18.0%", sharpe="1.143", max_dd="-21.5%", beta="0.870", win_rate="62.6%", months=211),
+    "gr_top_n_25":           dict(cagr="18.3%", sharpe="0.980", max_dd="-44.7%", beta="0.741", win_rate="64.3%", months=406),
+    "vw_gr_top_n_25":        dict(cagr="17.8%", sharpe="1.012", max_dd="-40.1%", beta="0.691", win_rate="66.3%", months=406),
+    "rf_gr_top_n_25":        dict(cagr="16.7%", sharpe="1.021", max_dd="-36.7%", beta="0.597", win_rate="66.3%", months=406),
+    "rf_vw_gr_top_n_25":     dict(cagr="16.7%", sharpe="1.021", max_dd="-36.7%", beta="0.597", win_rate="66.3%", months=406),
+    "xgb_gr_top_n_25":       dict(cagr="13.1%", sharpe="0.737", max_dd="-36.7%", beta="0.780", win_rate="63.5%", months=406),
+    "vw_xgb_gr_top_n_25":    dict(cagr="13.4%", sharpe="0.782", max_dd="-36.7%", beta="0.720", win_rate="65.0%", months=406),
+    "rf_xgb_gr_top_n_25":    dict(cagr="12.7%", sharpe="0.805", max_dd="-36.7%", beta="0.614", win_rate="65.0%", months=406),
+    "rf_vw_xgb_gr_top_n_25": dict(cagr="12.7%", sharpe="0.805", max_dd="-36.7%", beta="0.614", win_rate="65.0%", months=406),
 }
 
 

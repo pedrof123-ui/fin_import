@@ -142,6 +142,56 @@ was removed, not that the strategy earns more.
 Run: `run_backtest.py --model --guardrails --vol-weight --regime-filter --tc-bps 10`
 (pipeline uses only `--model --guardrails`; the `vw_`/`rf_` entries need the other two).
 
+## Backtest regeneration — result (2026-08-19). Prediction half held.
+
+`_BACKTEST_METRICS` updated in `scripts/score_live.py`. Run on a model retrained after a *fifth*
+fan-out site was found in `train_model.py` (see below), so these are the first figures in this
+file computed from fully deduplicated inputs.
+
+### Scoring the prediction
+
+| Predicted | Outcome | Verdict |
+|---|---|---|
+| Sharpe improves from 0.952 | 0.952 -> **0.980** | **held** |
+| MaxDD improves | -39.7% -> **-44.7%** | **failed** |
+| CAGR — no direction stated | 15.96% -> 18.33% | n/a (correctly not predicted) |
+
+**The MaxDD claim failed and the mechanism behind it was wrong.** The reasoning was that
+correcting enterprise value would push over-levered names down the `ev_ebitda` ranking and so
+shallow the drawdown. Drawdown got ~5pp deeper instead. Two caveats that do *not* rescue it: the
+only MaxDD available to compare against is the doubly-stale documented figure (no MaxDD was
+recorded for the intermediate post-join-fix run), and the sample is 406 months against 404. Both
+make the comparison imprecise — neither makes a predicted improvement into an observed one.
+
+Beta did improve (0.781 -> 0.741), which is consistent with the leverage story; MaxDD is not.
+The honest summary is that the risk profile changed in mixed directions, and the specific claim
+made in advance was not supported.
+
+### The model got worse, and that is the correct number
+
+| Portfolio | Before (stale model) | After (retrained, clean) |
+|---|---|---|
+| `xgb_gr_top_n_25` | 15.53% / 0.841 | **13.08% / 0.737** |
+| `vw_xgb_gr_top_n_25` | 15.18% / 0.861 | **13.36% / 0.782** |
+| `rf_xgb_gr_top_n_25` | 14.67% / 0.897 | **12.72% / 0.805** |
+
+Every model portfolio dropped 2-3pp of CAGR once trained on deduplicated rows. Read this the way
+[[feedback_baselines_fitted_on_wrong_inputs]] prescribes: the *new* number came from correct
+inputs, so the previous figures were inflated, not the new ones depressed. Plausible mechanism,
+stated as hypothesis: duplication weighted frequently-refreshed tickers up to 5x, and AV refreshes
+current index members most, so the training set was tilted toward names that survived — a
+survivorship tilt smuggled in through a join. Not proven here.
+
+**Consequence worth noting:** the composite now beats the model decisively on every configuration
+(live `vw_gr_top_n_25` 17.81% / 1.012 vs `vw_xgb_gr_top_n_25` 13.36% / 0.782). The live strategy
+is the composite, so this argues the current live choice is right — and it argues more strongly
+than the old numbers did, where the gap was ~1.5pp rather than ~4.5pp.
+
+**Also fixed while here:** `rf_vw_*` entries are copies of `rf_*`. `run_backtest.py` never produces
+a regime-filtered *and* vol-weighted portfolio, yet `_portfolio_label` can generate that label, so
+those rows would display `rf_*` numbers as though measured. Now stated in a comment rather than
+left silent. Fixing it properly means a change to `run_backtest.py`; not done.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
