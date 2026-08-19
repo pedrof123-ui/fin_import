@@ -97,6 +97,40 @@ three are fallout from the universe recompute, not from today's changes.
 
 Item 1 is fixed. Items 2-3 are still red and still need the fixture-vs-cycle-block decision.
 
+## Backtest baseline regeneration — prediction stated before the run
+
+Written 2026-08-19 before the numbers exist, same discipline as the ML comps prediction that held.
+
+**Why the documented baseline is stale on two counts.** `_BACKTEST_METRICS` in
+`scripts/score_live.py` (`gr_top_n_25` 17.0% CAGR / 0.960 Sharpe) predates (a) the `_join_sector`
+dedupe fix in `run_backtest.py` (`0d16007`, 2026-07-23) and (b) today's debt recompute. These
+numbers are displayed in live scoring output.
+
+**Use the right before-value.** A corrected post-`0d16007`, pre-debt-fix run recorded 15.96% CAGR
+/ 0.952 Sharpe for `gr_top_n_25`. **That is the apples-to-apples baseline, not the documented
+17.0% / 0.960**, because comparing against the documented figure would measure the join bug and
+the debt fix at once. This is the same reading rule as the walk-forward diff.
+
+**Mechanism.** `ev_ebitda` is 1 of 4 factors in `_VALUE_COLS` and is lower-is-better. The broken
+EV omitted most debt, so levered companies looked cheaper than they were and scored too well. The
+corrected EV moves them down the value ranking.
+
+**Prediction:**
+
+| Metric | Expectation |
+|---|---|
+| `gr_top_n_25` MaxDD | improves (less negative) — fewer over-levered names selected |
+| `gr_top_n_25` Sharpe | improves modestly from 0.952 |
+| `gr_top_n_25` CAGR | **no direction predicted** — leverage boosts returns in bull runs, so this can fall even if the portfolio is better |
+| `f_low_evebitda` single-factor | moves most of any single-factor portfolio; it is the direct read on the fix |
+
+Stating no direction for CAGR is deliberate: predicting everything improves is unfalsifiable.
+The claim under test is that the portfolio's *risk* profile improves because a leverage blind spot
+was removed, not that the strategy earns more.
+
+Run: `run_backtest.py --model --guardrails --vol-weight --regime-filter --tc-bps 10`
+(pipeline uses only `--model --guardrails`; the `vw_`/`rf_` entries need the other two).
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
