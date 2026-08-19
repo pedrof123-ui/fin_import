@@ -162,7 +162,9 @@ def compute_sector_coverage(df: pd.DataFrame) -> pd.DataFrame:
     """Fill rate of bcd_misp by sector."""
     try:
         conn = duckdb.connect(str(AV_DB), read_only=True)
-        sectors = conn.execute("SELECT ticker, sector FROM company_overview WHERE sector IS NOT NULL").df()
+        # one row per refresh in company_overview — keep the latest, else the merge fans out
+        sectors = conn.execute("""SELECT ticker, sector FROM company_overview WHERE sector IS NOT NULL
+            QUALIFY fetch_date = MAX(fetch_date) OVER (PARTITION BY ticker)""").df()
         conn.close()
         df = df.merge(sectors, on="ticker", how="left")
     except Exception:

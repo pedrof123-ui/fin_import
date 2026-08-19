@@ -93,7 +93,9 @@ def main() -> None:
     # Join sector
     try:
         conn = duckdb.connect(av_db, read_only=True)
-        overview = conn.execute("SELECT ticker, sector FROM company_overview").df()
+        # one row per refresh in company_overview — keep the latest, else the merge fans out
+        overview = conn.execute("""SELECT ticker, sector FROM company_overview
+            QUALIFY fetch_date = MAX(fetch_date) OVER (PARTITION BY ticker)""").df()
         conn.close()
         df = df.merge(overview, on="ticker", how="left")
         log.info("Sector joined: %d tickers with sector", df["sector"].notna().sum())

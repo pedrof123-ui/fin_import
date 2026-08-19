@@ -147,7 +147,9 @@ def main() -> None:
     raw["month_end_date"] = pd.to_datetime(raw["month_end_date"])
 
     av_conn = duckdb.connect(av_db, read_only=True)
-    sectors = av_conn.execute("SELECT ticker, sector FROM company_overview").df()
+    # one row per refresh in company_overview — keep the latest, else the merge fans out
+    sectors = av_conn.execute("""SELECT ticker, sector FROM company_overview
+        QUALIFY fetch_date = MAX(fetch_date) OVER (PARTITION BY ticker)""").df()
     av_conn.close()
     raw = raw.merge(sectors, on="ticker", how="left")
     raw["market_cap"] = raw["shares"] * raw["price"]
