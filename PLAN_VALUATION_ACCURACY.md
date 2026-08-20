@@ -319,7 +319,59 @@ whole block on `scenarios is not None`. Verified: MU now renders 2,151 character
 (Key Fundamentals, Comparable Companies, Model Summary) where it previously rendered `""`, and
 FANG is byte-for-byte unaffected with all four tables.
 
-### MU's 0.04x looks like a real bug, not a disagreement — corrected read
+### MU: corrected AGAIN 2026-08-20 — the cross-checks are not independent
+
+**This entry has now been wrong twice, in opposite directions.** First recorded as "probably a real
+disagreement rather than a bug", then revised to "looks like a real bug" on the grounds that the
+Valuation Analyst sat 14-65x below every other row in the triangulation table. That second reading
+was wrong, and the error was treating those rows as independent evidence.
+
+MU is in a historic memory/AI-datacentre boom. Its own numbers say so unambiguously:
+
+| MU | Value | Against its own history |
+|---|---|---|
+| TTM EPS | $44.08 | its all-time max; median since 2016 is **$3.61** -> **12.2x** |
+| Forward 12m EPS | $73.39 | analysts project the peak extending further |
+| Operating margin | 65.8% | 5yr median 22.6% -> **2.9x** |
+| 1yr earnings growth | +992% | against a 3yr CAGR of -0.7% |
+
+**Every row in that table is anchored on peak-cycle inputs.** The multiples rows multiply the
+ticker's *normal-times* historical multiple by its *peak* forward metric — `pe_med_5y 21.34 x
+fwd_eps 73.39 = $1,566`. That is the peak-earnings trap expressed as a number, and it is precisely
+what the peak rubric exists to warn against. The ML comps row is no better: it is peer-relative,
+and the entire memory/semiconductor peer group is at peak simultaneously, so the peer median
+carries the same inflation with no un-peaked reference anywhere in the cross-section.
+
+So "disagrees with every cross-check" carried far less weight than claimed — the cross-checks
+share one failure mode.
+
+**What the Analyst's number actually looks like:**
+
+| Anchor | Fair value |
+|---|---|
+| `pe_med_5y x fwd_eps` (peak) | $1,566 |
+| `pe_med_5y x half-way to mid-cycle` | $509 |
+| `pe_med_5y x mid-cycle EPS $3.61` | $77 |
+| `pe_p25 x mid-cycle EPS` | **$38** |
+| Valuation Analyst base | **$33.15** |
+
+$33.15 sits essentially on a 25th-percentile multiple applied to mid-cycle earnings. That is a
+coherent deep-bear normalisation, not a broken calculation, and normalising *downward* is the
+correct treatment for a company the system correctly flagged `PEAK`.
+
+**The genuine anomaly is narrower: the band, not the level.** `$18.61 / $33.15 / $34.11` puts the
+high only 2.9% above the base. For a cyclical at a 12x-median earnings peak, a plausible bull case
+is not 3% above the bear-normalised base. The compressed upper bound is what to investigate; the
+low level is defensible.
+
+**And the regression gate may itself be mis-specified.** `research_regression.py` requires fair
+value within 0.15x-5.0x of price. That assumes fair value tracks price — the exact assumption a
+peak-earnings trap denies. If MU is genuinely at 12x normalised earnings, a correct through-cycle
+valuation *should* fall below 0.15x of price, and the gate would flag correct behaviour as a
+failure. Before treating MU's gate failure as a defect, decide whether the gate should exempt
+tickers the cycle block flags `PEAK`.
+
+**Superseded reading follows, retained so the reasoning error stays visible:**
 
 This was first recorded here as "probably a real disagreement rather than a bug", on the reasoning
 that a peak-cycle semiconductor invites a low through-cycle valuation. **Restoring the
