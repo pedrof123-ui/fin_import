@@ -547,9 +547,26 @@ def _default_terminal_growth(income_df: pd.DataFrame) -> float:
     return DEFAULT_TERMINAL_GROWTH
 
 
+# One full cycle, not three arbitrary years. A 3-year window cannot produce a normalised margin
+# for a cyclical: MU's last three annual EBIT margins are 26.4%, 5.2% and -37.0%, so the median
+# landed on the bust-to-boom transition year at 5.2% and the DCF forecast MU to win the AI memory
+# boom on volume ($424bn of revenue) while never earning from it. Widening to 5 gives 22.7%,
+# matching the 22.6% `operating_margin_5y_median` that `pe_stats` and the cycle rubric already
+# treat as this company's normal margin — so the DCF and the cycle assessment now agree on what
+# "normal" means instead of contradicting each other.
+#
+# Measured across 372 sampled tickers: median change +0.00pp, i.e. no effect on the steady
+# majority. 26.3% move more than 2pp and 11.0% more than 5pp, and the large movers are cyclicals
+# in both directions — NUE +8.3pp, NBR +15.4pp, CNX +15.9pp up; BVN -29.5pp, HP -10.2pp down.
+# Correcting downward as readily as upward is what makes this normalisation rather than a bull
+# bias. Five rather than more: ~22 annual periods are typically available, but a longer window
+# imports margins from a business that may no longer exist.
+_EBIT_MARGIN_YEARS = 5
+
+
 def _median_ebit_margin(income_df: pd.DataFrame) -> float:
-    """Median EBIT margin from the 3 most recent annual periods. Clamped [1%, 50%]."""
-    df = income_df.head(3)
+    """Median EBIT margin over `_EBIT_MARGIN_YEARS` annual periods. Clamped [1%, 50%]."""
+    df = income_df.head(_EBIT_MARGIN_YEARS)
     rev = df["revenue"].replace(0, np.nan)
     ebit = df["operating_income"] if "operating_income" in df.columns else pd.Series(dtype=float)
     margins = (ebit / rev).dropna()

@@ -529,6 +529,39 @@ on a false premise and a 5,520% one-year forecast is indefensible per-ticker —
 moves universe-level numbers, which it barely does. Recorded so nobody later mistakes it for a
 headline improvement.
 
+## EBIT margin window 3yr -> 5yr — predictions before the rebuild (2026-08-20)
+
+`_EBIT_MARGIN_YEARS = 5` in `dcf/model.py`. The 3-year window could not produce a normalised
+margin for a cyclical: MU's last three annual EBIT margins are `26.4%, 5.2%, -37.0%`, so the
+median landed on the bust-to-boom transition year at 5.2% and the DCF forecast MU to win the AI
+boom on volume while never earning from it. Five years gives 22.7%, matching the 22.6%
+`operating_margin_5y_median` that `pe_stats` and the cycle rubric already treat as MU's normal
+margin — **the DCF and the cycle assessment now agree on what "normal" means.**
+
+Sample of 372 tickers: median change **+0.00pp** — no effect on the steady majority. 26.3% move
+>2pp, 11.0% >5pp. Large movers are cyclicals in both directions (NUE +8.3pp, NBR +15.4pp, CNX
++15.9pp up; BVN -29.5pp, HP -10.2pp down). Correcting downward as readily as upward is what makes
+this normalisation rather than a bull bias.
+
+**Verified before the batch, so these are observations not predictions:** MU's FCFF turns positive
+from year 2 (-4.1, +0.2, +2.3, +5.3, +9.5 $bn) and it now computes **$135.28** where it previously
+failed outright. Against a ~$937 price that is 0.14x — a coherent peak-earnings-trap reading:
+at normalised margins MU is worth $135 and the market is paying $937 for the peak.
+
+**Predictions:**
+
+| | Expectation |
+|---|---|
+| `status='error'` | **falls** from 506 — trough margins were a major source of negative FCFF |
+| 10x guard hits | **rises** from 71 — higher normalised margins push cyclical valuations up, and the guard catches the top tail |
+| median intrinsic/price | **rises** from 0.72x |
+
+**Flagged before measuring, because it could be the real story:** FANG moved $158.79 -> $616.00,
+from 0.76x to **2.95x** of price — a 4x jump. That is the largest single-ticker move seen in any
+change this session. The 5-year margin is the better-founded input, so by the standing reading
+rule the new number is the one from correct inputs. But a 4x move deserves scrutiny rather than
+acceptance, and if the guard-hit count rises sharply this is why.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
