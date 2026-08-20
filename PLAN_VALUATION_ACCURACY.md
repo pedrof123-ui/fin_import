@@ -562,6 +562,57 @@ change this session. The 5-year margin is the better-founded input, so by the st
 rule the new number is the one from correct inputs. But a 4x move deserves scrutiny rather than
 acceptance, and if the guard-hit count rises sharply this is why.
 
+## Margin window — result (rebuild 2026-08-20, 982s). **Two of three predictions failed.**
+
+| | Before | After | Predicted | |
+|---|---|---|---|---|
+| `status='error'` | 506 | **512** | falls | **FAILED** — rose by 6 |
+| 10x guard hits | 71 | **70** | rises | **FAILED** — fell by 1 |
+| median intrinsic/price | 0.72x | **0.73x** | rises | held, but by 0.01x — trivial |
+
+Distribution: above 2x `246 -> 276`, above 3x `140 -> 150`, above 5x `65 -> 59`.
+
+**Where the reasoning was right and where it was wrong.** The mechanism held — normalised margins
+did push cyclical valuations up, visible in the 2-3x band thickening. But I predicted that would
+show up as *more guard hits*, and it did not: the increases landed below the 10x threshold while
+the extreme tail actually thinned. Predicting a mechanism correctly is not the same as predicting
+the metric, and I picked the wrong metric.
+
+**Errors rose because the fix cuts both ways, which is the point.** Companies flattered by a
+favourable 3-year window now get a lower normalised margin and fail honestly — BVN's margin went
+32.1% -> 2.6%. This is normalisation, not improvement, and a net +6 errors is consistent with that.
+Anyone reading "errors went up" as a regression would have it backwards.
+
+### Correction: the FANG alarm was my own measurement error
+
+The previous section flagged FANG moving `$158.79 -> $616.00` (0.76x -> 2.95x) as the largest
+single-ticker move of the session and the thing to scrutinise. **That number was wrong, and the
+fault was in my test harness, not the engine.** The scratch script called `run_dcf_av(ticker)`
+without the `estimates_conn` argument that `compute_dcf_batch` passes, so it forecast from a
+different input set. In production FANG computes **$203.86** — 0.98x of its $208.55 price, an
+improvement on 0.76x rather than a 4x explosion.
+
+The guard-hit figures quoted elsewhere were checked against the database and are real: GNTX
+46,496x, D 12,428x, KSPI 1,763x, MUR 899x, ZTO 80x all genuinely carry `status='error'`.
+
+**Standing lesson:** verify a single-ticker figure through the same path production uses before
+raising it as a concern. A convenience wrapper that drops an argument produces numbers that look
+authoritative and are not.
+
+### Where the four regression tickers now land
+
+| Ticker | DCF | vs price |
+|---|---|---|
+| MU | **$135.28** (was: failed outright) | 0.14x |
+| FANG | $203.86 | 0.98x |
+| NVDA | $98.09 | 0.45x |
+| KO | $50.78 | 0.56x |
+| UPS | $117.20 | 1.14x |
+| NUE | $198.61 | — |
+
+MU finally producing a defensible number is the substantive win here, and it is a *cycle-correct*
+one: at normalised margins MU is worth $135 while the market pays ~$937 for the peak.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
