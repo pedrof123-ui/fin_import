@@ -431,6 +431,22 @@ def forecast_assumptions(
 # triangulates this mechanical DCF against an AI DCF and multiples rather than trusting it alone.
 MAX_FADE_START_GROWTH = 0.30
 
+# Year 1's ceiling. Higher than year 2's because year 1 is the most knowable year, but it is NOT
+# exempt: the docstring below used to justify leaving it alone on the grounds that it "is largely
+# analyst consensus one year out, which is a real estimate rather than an extrapolation". That was
+# simply untrue. _rev_forecast_y1y2 builds year 1 as 0.5 x quarterly momentum + 0.5 x annual EWM
+# growth, and _quarterly_momentum_signal includes an unbounded linear trend projected one step
+# ahead — so for an accelerating company it extrapolates the acceleration itself. No analyst
+# estimate enters the calculation at any point.
+#
+# Measured across a random 347-ticker sample (2026-08-20): median year-1 growth -2.0%, p90 31.0%,
+# p95 61.6%, then p99 2,257% and a maximum of 5,520% — a 55x revenue increase in a single year.
+# 60% sits at roughly p95, so it binds on ~5.5% of tickers and leaves genuine hypergrowth alone,
+# while removing a tail that is not a forecast at any horizon. MU read 194.4% (revenue ~$37.4bn ->
+# $110.0bn in one year), which then compounded to $424bn by year 10 and dragged $27.7bn of working
+# capital with it.
+MAX_YEAR1_GROWTH = 0.60
+
 
 def _fade_capex_to_da(year_forecasts: list, overrides) -> None:
     """Fade capex toward D&A by the final forecast year.
@@ -470,7 +486,8 @@ def _has_capex_override(overrides, year: int) -> bool:
 
 def extend_growth_years(year_forecasts: list, overrides, terminal_growth: float) -> list:
     """
-    Y3-Y10 fade linearly from Y2's revenue growth rate to `terminal_growth` by the final year.
+    Y1 is capped at MAX_YEAR1_GROWTH, Y2 at MAX_FADE_START_GROWTH, and Y3-Y10 fade linearly from
+    Y2's revenue growth rate to `terminal_growth` by the final year.
 
     Previously Y3-Y10 carried Y2's rate flat, which compounded a cyclical peak into a forecast no
     business could reach — MU's ran 103.3% for eight straight years to a $65tn year-10 revenue,
@@ -482,10 +499,23 @@ def extend_growth_years(year_forecasts: list, overrides, terminal_growth: float)
     that year's implied growth rate, so an override re-anchors the path rather than being
     overwritten by it.
     """
-    # Cap year 2 itself, not merely the fade that follows it. Year 1 is left alone: it is
-    # largely analyst consensus one year out, which is a real estimate rather than an
-    # extrapolation. Year 2 is where trailing growth starts being projected, so it is the first
-    # year the model is guessing, and an uncapped year 2 would keep the peak in the revenue base
+    # Cap year 1 first. Everything downstream is a percentage of a revenue base that starts here,
+    # so an inflated year 1 inflates working capital and capex for all ten years however well the
+    # later caps and fades behave. See MAX_YEAR1_GROWTH: year 1 is an extrapolation, not consensus.
+    y1 = year_forecasts[0]
+    if not _has_rev_override(overrides, y1.year) and y1.revenue_growth > MAX_YEAR1_GROWTH:
+        prior_rev = y1.revenue / (1 + y1.revenue_growth) if (1 + y1.revenue_growth) != 0 else y1.revenue
+        y1.revenue_growth = float(MAX_YEAR1_GROWTH)
+        y1.revenue = float(prior_rev * (1 + MAX_YEAR1_GROWTH))
+        # Rebase year 2 onto the corrected year-1 figure, keeping its own growth rate — the year-2
+        # cap below then applies to that rate exactly as before. Without this, year 2 keeps an
+        # absolute revenue derived from the uncapped year 1 and the correction is lost immediately.
+        y2_ = year_forecasts[1]
+        if not _has_rev_override(overrides, y2_.year):
+            y2_.revenue = float(y1.revenue * (1 + y2_.revenue_growth))
+
+    # Cap year 2 itself, not merely the fade that follows it. Year 2 is where trailing growth
+    # starts being projected hard, and an uncapped year 2 would keep the peak in the revenue base
     # for every year after it however gently the growth rate then fades.
     y2 = year_forecasts[1]
     if not _has_rev_override(overrides, y2.year) and y2.revenue_growth > MAX_FADE_START_GROWTH:

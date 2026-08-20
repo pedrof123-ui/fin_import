@@ -475,6 +475,35 @@ floor, so the gate was flagging correct output, and a gate that fires on correct
 people learn to ignore. For `PEAK` tickers the ratio is now informational; their real gate is the
 cycle-position and callout assertion, which MU already passes.
 
+## Year-1 growth cap — predictions stated before the universe rebuild (2026-08-20)
+
+`MAX_YEAR1_GROWTH = 0.60` in `dcf/forecaster.py`. Chosen from a random 347-ticker sample: median
+year-1 growth -2.0%, p90 31.0%, p95 61.6%, p99 2,257%, max 5,520% (BWAY; also FBRX 5,067%, NEO
+4,929%). 60% sits at ~p95, binds on ~5.5% of tickers, and is above MU's actual +48.9% trailing
+growth so it does not bind below observed reality.
+
+**The exemption it removes rested on a false premise.** `extend_growth_years` justified leaving
+year 1 alone because it "is largely analyst consensus one year out, which is a real estimate
+rather than an extrapolation". `_rev_forecast_y1y2` builds year 1 as `0.5 x quarterly momentum +
+0.5 x annual EWM growth`, and `_quarterly_momentum_signal` adds an unbounded linear trend projected
+one step ahead — so for an accelerating company it extrapolates the acceleration. No analyst
+estimate enters it at any point.
+
+Verified on MU before the batch: year 1 `194.4% -> 60.0%` ($110.0bn -> $59.8bn), year 2 correctly
+rebased ($223.7bn -> $77.7bn), FCFF year 1 `-$34.3bn -> -$12.9bn`.
+
+**Predictions:**
+
+| | Expectation |
+|---|---|
+| MU's DCF | **still fails.** The 5.2% margin is untouched and is now the binding constraint — with margin at the 22.6% median and capex at D&A, FCFF is now +$1.4bn where it was -$8.0bn, so scale is fixed and margin is not |
+| `status='error'` count | **falls** from 517 — fewer runaway-revenue negative-FCFF failures |
+| 10x guard hits | **falls** from 74 — inflated revenue drives absurd-high valuations too, not only negative ones |
+| intrinsic/price distribution | tightens; median moves little, having been a healthy 0.72x |
+
+Stating that MU still fails is the point: this cap targets scale, not profitability, and claiming
+it fixes MU would be claiming more than the mechanism supports.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
