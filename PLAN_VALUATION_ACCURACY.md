@@ -613,6 +613,31 @@ authoritative and are not.
 MU finally producing a defensible number is the substantive win here, and it is a *cycle-correct*
 one: at normalised margins MU is worth $135 while the market pays ~$937 for the peak.
 
+## Regression re-run 2026-08-20 — predictions before the run
+
+Validating the four DCF forecast changes end to end. Two are newer than the last regression.
+
+| | Expectation |
+|---|---|
+| Overall | **ALL CHECKS PASSED** |
+| MU `has valuation model tables` | **passes** — MU now has a real DCF ($135.28), so `compute_dcf_scenarios` succeeds, `scenarios` is not None and all four tables render. The degraded path is not exercised for MU at all any more |
+| MU price-proximity | **cannot fail** — now informational for `PEAK` tickers |
+| MU `cycle_position == PEAK` | holds |
+| FANG `TROUGH` + opportunity callout | holds |
+| NVDA / UPS / KO | keep passing; their DCFs are $98.09 / $117.20 / $50.78 |
+
+**The interesting number is MU's `fair_value_base`.** With a working DCF anchored at $135.28
+(0.14x of ~$937) the Valuation Analyst has a mechanical anchor it did not have last time. Two
+possibilities worth distinguishing:
+
+- it lands near $135 -> the compressed `$18.61/$33.15/$34.11` band was an artefact of the degraded
+  path, and the prompt conflict recorded above no longer fires on MU
+- it lands near $33 again -> the compression is independent of the DCF, and the prompt conflict is
+  real and still needs fixing
+
+**No prediction is offered between those two.** That is the question the run exists to answer, and
+guessing would only make the answer harder to read.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
