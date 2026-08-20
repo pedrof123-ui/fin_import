@@ -504,6 +504,31 @@ rebased ($223.7bn -> $77.7bn), FCFF year 1 `-$34.3bn -> -$12.9bn`.
 Stating that MU still fails is the point: this cap targets scale, not profitability, and claiming
 it fixes MU would be claiming more than the mechanism supports.
 
+## Year-1 cap — result (rebuild 2026-08-20, 1,022s). All four predictions held.
+
+| | Before | After | Predicted |
+|---|---|---|---|
+| `status='ok'` | 2,144 | 2,155 | — |
+| `status='error'` | 517 | **506** | falls — **held** |
+| 10x guard hits | 74 | **71** | falls — **held** |
+| MU | error (-50.56) | **error (-8.13)** | still fails — **held** |
+| median intrinsic/price | 0.72x | 0.72x | moves little — **held** |
+
+MU improved 6x toward zero (-$50.56 -> -$8.13) without crossing it, which is exactly what a
+scale fix and not a profitability fix should do. Its 5.2% EBIT margin is now unambiguously the
+sole remaining cause.
+
+**Honest note on the fourth prediction.** "Distribution tightens" is at best weakly supported:
+above 2x went 250 -> 246, but above 3x went 138 -> 140 and above 5x 64 -> 65. The distribution is
+essentially unchanged, not tightened. Only the "median moves little" half was clearly right.
+
+**And the aggregate effect is small: 11 fewer errors, 3 fewer guard hits.** Only ~5.5% of tickers
+have year-1 growth above 60%, and many of those were failing for other reasons as well, so the
+correction rarely changes an outcome on its own. This was worth doing because the exemption rested
+on a false premise and a 5,520% one-year forecast is indefensible per-ticker — not because it
+moves universe-level numbers, which it barely does. Recorded so nobody later mistakes it for a
+headline improvement.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
