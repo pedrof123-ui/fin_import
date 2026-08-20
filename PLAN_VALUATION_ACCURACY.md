@@ -311,14 +311,38 @@ There is a particular irony in the Model Summary vanishing: the Fair Value Trian
 exactly what would show a reader that $33.15 against a $937.11 price is not supported by the
 multiples sitting next to it.
 
-**Recommended fix (not made):** render the DCF-independent tables regardless, and skip only the
-DCF-dependent ones when `scenarios is None`. Contained change, but it alters what every degraded
-report looks like, so it is a decision rather than a cleanup.
+**FIXED 2026-08-20.** `_dcf_assumptions_table` returns `""` when `scenarios is None` (it is the
+one block that is wholly DCF-derived); `_model_summary_table` accepts None and marks the DCF row
+`n/a`, exactly as it already did for individual failed scenarios; the AI-vs-mechanical comparison
+table is skipped since there is nothing to compare against; and the assembly no longer gates the
+whole block on `scenarios is not None`. Verified: MU now renders 2,151 characters of tables
+(Key Fundamentals, Comparable Companies, Model Summary) where it previously rendered `""`, and
+FANG is byte-for-byte unaffected with all four tables.
 
-**MU's 0.04x is a separate question** and probably a real disagreement rather than a bug: MU is
-correctly flagged `PEAK` with the Peak-Earnings Trap Alert, and a peak-cycle semiconductor at
-$937 genuinely invites a low through-cycle valuation. But 0.04x is 25x below price, which is not a
-defensible number, and it is now produced with no triangulation table to sanity-check it against.
+### MU's 0.04x looks like a real bug, not a disagreement — corrected read
+
+This was first recorded here as "probably a real disagreement rather than a bug", on the reasoning
+that a peak-cycle semiconductor invites a low through-cycle valuation. **Restoring the
+triangulation table refutes that.** MU's Model Summary now reads:
+
+| Method | Low | Base | High |
+|---|---|---|---|
+| DCF (scenario) | n/a | n/a | n/a |
+| ML Comps (peer-relative) | $282.12 | $1450.10 | $5894.26 |
+| Multiples (P/S x Fwd Rev/Share) | $333.43 | $453.90 | $716.51 |
+| Multiples (P/E x Fwd EPS) | $768.06 | $1566.20 | $2373.36 |
+| Multiples (P/FCF x Fwd FCF/Share) | $814.35 | $2141.75 | $3396.42 |
+| **Valuation Analyst Fair Value** | **$18.61** | **$33.15** | **$34.11** |
+
+Every independent cross-check — peer-relative ML comps and all three of the ticker's-own-history
+multiples — lands between $454 and $2,142 at the midpoint. The Valuation Analyst returns $33.15,
+roughly 14-65x below every other row and 0.04x of the $937.11 price. A defensible bear case on a
+cyclical peak does not sit an order of magnitude under the most conservative cross-check
+available. **The likely fault is in the Valuation Analyst's behaviour when the mechanical DCF is
+unavailable** — the degradation path — not in the cycle assessment, which correctly flagged PEAK.
+
+Not yet diagnosed. It is now at least *visible*, which it was not before this fix: the table that
+exposes it is precisely the one that had been dropped along with the DCF.
 
 ## What landed 2026-08-19
 

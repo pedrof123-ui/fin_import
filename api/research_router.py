@@ -1743,7 +1743,13 @@ def _latest_diluted_shares(ticker: str) -> Optional[float]:
         conn.close()
 
 
-def _dcf_assumptions_table(scenarios: dict) -> str:
+def _dcf_assumptions_table(scenarios: Optional[dict]) -> str:
+    # No mechanical DCF (compute_dcf_scenarios raised — e.g. the non-positive or plausibility
+    # guard in dcf/model.py). This table is entirely DCF-derived, so it is the one block that
+    # genuinely has nothing to render; the rest of the Valuation Model Detail does not depend
+    # on it and must still be built.
+    if scenarios is None:
+        return ""
     rows = []
     for label, key in [("Bear", "bear"), ("Base", "base"), ("Bull", "bull")]:
         r = scenarios.get(key)
@@ -1994,13 +2000,17 @@ def _format_ml_comps_summary(ticker: str) -> str:
 
 
 def _model_summary_table(
-    ticker: str, scenarios: dict, pe_multiples: Optional[tuple], ps_multiples: Optional[tuple],
+    ticker: str, scenarios: Optional[dict], pe_multiples: Optional[tuple], ps_multiples: Optional[tuple],
     pfcf_multiples: Optional[tuple],
     fair_value_low: float, fair_value_base: float, fair_value_high: float,
     ai_dcf_engine: Optional[dict] = None,
 ) -> str:
     rows = []
-    bear, base, bull = scenarios.get("bear"), scenarios.get("base"), scenarios.get("bull")
+    # scenarios is None when the mechanical DCF failed outright. Keep the row and mark it n/a
+    # rather than dropping it: the multiples and ML comps rows below are the whole point of this
+    # table, and a reader needs to see that the DCF was attempted and produced nothing — not be
+    # left to infer it from a missing row.
+    bear, base, bull = (scenarios or {}).get("bear"), (scenarios or {}).get("base"), (scenarios or {}).get("bull")
     rows.append([
         "DCF (scenario)",
         f"${bear.intrinsic_value_per_share:.2f}" if bear else "n/a",
@@ -2051,8 +2061,8 @@ def _model_summary_table(
 
 
 def render_valuation_model_tables(
-    ticker: str, scenarios: dict, fair_value_low: float, fair_value_base: float, fair_value_high: float,
-    ai_dcf_result=None,
+    ticker: str, scenarios: Optional[dict], fair_value_low: float, fair_value_base: float,
+    fair_value_high: float, ai_dcf_result=None,
 ) -> str:
     """Assembles the Valuation Model Detail tables. Every number here is computed in
     Python from the DCF engine / database — never authored by an LLM — so it can't drift from
@@ -2074,7 +2084,9 @@ def render_valuation_model_tables(
             ai_dcf_engine=ai_dcf_engine,
         ),
     ]
-    if ai_dcf_engine is not None:
+    if ai_dcf_engine is not None and scenarios is not None:
+        # This table compares the AI DCF against the mechanical one; with no mechanical DCF there
+        # is nothing to compare against. The AI DCF's own triangulation row above still renders.
         from api.ai_dcf_router import render_ai_dcf_comparison_table
         blocks.append(render_ai_dcf_comparison_table(ai_dcf_engine, scenarios))
     return "### Valuation Model Detail\n\n" + "\n\n".join(b for b in blocks if b)
@@ -2256,7 +2268,7 @@ def _build_post_subagent_tables(
             valuation_out.fair_value_base, valuation_out.fair_value_high,
             ai_dcf_result=ai_dcf_result,
         )
-        if needs_valuation and scenarios is not None else ""
+        if needs_valuation else ""
     )
     direct_competitors_md = render_direct_competitors_table(competitive_out)
     market_share_md = render_market_share_table(ticker, scenarios, competitive_out) if needs_market_share else ""
