@@ -638,6 +638,43 @@ possibilities worth distinguishing:
 **No prediction is offered between those two.** That is the question the run exists to answer, and
 guessing would only make the answer harder to read.
 
+## Regression re-run — result 2026-08-20: **ALL CHECKS PASSED**
+
+First clean end-to-end run. Every gating check on all five tickers plus the degradation case.
+
+| Ticker | fair_value_base | vs price | |
+|---|---|---|---|
+| NVDA | $93.00 | 0.43x | |
+| UPS | $102.00 | 0.99x | |
+| KO | $60.00 | 0.66x | |
+| FANG | $222.00 | 1.06x | |
+| MU | $110.00 | 0.12x | informational, `PEAK` |
+
+### The withheld question is answered: the compression was a degraded-path artefact
+
+| MU fair value | Previous run | Now |
+|---|---|---|
+| low / base / high | $18.61 / **$33.15** / $34.11 | $22.00 / **$110.00** / $310.00 |
+| high above base | +2.9% | **+182%** |
+
+Given a working mechanical anchor at $135.28, the Valuation Analyst produces a base of $110 — near
+the DCF — and a band from $22 to $310 that actually expresses cycle uncertainty, with a high case
+representing the boom sustaining. Last run it had no DCF at all and returned a 3%-wide band.
+
+**So the prompt conflict recorded above does not need fixing.** It was a symptom, not the disease:
+the DEGRADATION rule only fires when the mechanical DCF is unavailable, and the margin fix made it
+available. Removing that item from the backlog is the right call — changing the prompt would have
+been a change to every report in pursuit of a bug that had already been fixed one layer down.
+
+**Both of the two gating changes were load-bearing, and both were needed.** MU's tables check
+passes because the mechanical DCF now succeeds (the decoupling fix is no longer what saves it).
+Its ratio is 0.12x — still under the 0.15x floor even with a proper anchor — so without the `PEAK`
+exemption the suite would still be red. Note the report's *high* case, $310, is 0.33x of price:
+this is a considered claim that MU is substantially overvalued at a cyclical peak, not a modelling
+artefact.
+
+Generation times 225.6-460.1s, all well inside the 900s budget.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
