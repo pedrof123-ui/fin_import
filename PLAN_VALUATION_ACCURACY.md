@@ -566,7 +566,7 @@ this is addressed, and the failure should not be mistaken for a cycle-awareness 
 
 ---
 
-## 2. Are report fair values systematically below market?  [ ]  NOT ESTABLISHED
+## 2. Are report fair values systematically below market?  [x] CLOSED — NOT SUPPORTED
 
 **Priority: low until measured.** Recorded because it was raised, and because the measurement
 that would settle it does not exist yet.
@@ -587,11 +587,33 @@ sample is far too small to establish a systematic bias, and the underlying engin
 low.
 
 This entry exists mainly to record that the claim was checked and **not** supported, so it is not
-re-raised from the same five observations. If it is worth pursuing, the honest test is at report
-level rather than DCF level — the reported fair value is a blend of mechanical DCF, AI DCF and
-multiples, and only the first is measured above. That needs a run across a few dozen tickers,
-which costs real money, and should wait until item 1 is fixed, since 21.7% of the inputs are
-currently negative and would poison any such measurement.
+re-raised from the same five observations.
+
+### Closed 2026-08-20 with report-level data
+
+The entry above asked for a *report-level* test rather than a DCF-level one, deferred until item 1
+was fixed. Item 1 is now fixed (0 negative DCFs) and the 2026-08-19 regression run supplied the
+measurement as a by-product — no additional spend:
+
+| Ticker | Before | After | |
+|---|---|---|---|
+| UPS | 0.97x | **1.00x** | |
+| FANG | 0.20x | **1.15x** | capex fade (`a7b4aba`) |
+| KO | 0.53x | **0.62x** | |
+| NVDA | 0.43x | **0.46x** | |
+| MU | 0.09x | **0.04x** | genuine cyclical peak, see above |
+
+Four of five now sit between 0.46x and 1.15x — median moved ~0.43x -> 0.62x, and the cluster is
+centred near 1.0x rather than below it. FANG's 0.20x -> 1.15x is the capex fade working on exactly
+the case that motivated it.
+
+**The hypothesis is not supported at report level either.** The one remaining low outlier is MU,
+and that is a company at 12.2x its median earnings where a low through-cycle valuation is the
+correct answer, not a bias. n=5 is still small, but it points the same way as the 2,615-ticker
+DCF-level distribution, and there is no longer a reason to spend on a wider run for this question.
+
+**Note the sample is not neutral:** these five tickers were chosen for cycle-position coverage,
+which deliberately over-weights cyclicals. If this is ever revisited, draw a random sample.
 
 ---
 
