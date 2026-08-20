@@ -10,8 +10,8 @@ Downloads SEC EDGAR financial statements (10-K annual, 10-Q quarterly) into Duck
 - **DuckDB** (`data/av_financials.duckdb`) — stores income, balance sheet, and cash flow tables from Alpha Vantage API, plus company overview (sector/industry/name/beta)
 - **DuckDB** (`data/historic_fundamentals.duckdb`) — monthly PE/P/FCF/EV/EBITDA timeseries, valuation stats, sector/industry aggregates (43K rows), analyst estimates
 - **DuckDB** (`data/earnings_transcripts.duckdb`) — earnings call transcripts for all AV tickers, fetched from Alpha Vantage and cached; used by the Earnings tab and AI Research
-- **DCF engine** (`dcf/`) — FCFF model: EWM+momentum revenue forecasting, historical mean for P&L ratios, normalized 5-year mean for D&A and CapEx, WACC via Hamada, Gordon Growth terminal value; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
-- **ML comps valuation** (`historic_fundamentals/ml_comps_model.py`) — XGBoost quantile regression predicting a fair P/E, P/FCF, and P/S multiple per stock vs. sector peers, converted to a fair-price range; additive to `goal_pe`/`goal_low`/`goal_high`. Opt-in via `--enable-ml-comps` (see [ML Comps Valuation](#ml-comps-valuation-experimental) below)
+- **DCF engine** (`dcf/`) — 10-year FCFF model: EWM+momentum revenue forecasting with growth capped and faded to terminal, historical mean for P&L ratios, CapEx faded to D&A, WACC via Hamada, Gordon Growth terminal value, plausibility guards on the output; historical and proforma financials with EBIT, EBITDA, income tax, net income margin, and proforma EPS; Y1 quarterly breakdown (actuals + seasonality-based estimates)
+- **ML comps valuation** (`historic_fundamentals/ml_comps_model.py`) — XGBoost quantile regression predicting a fair P/E, EV/EBITDA, P/FCF, and P/S multiple per stock vs. sector peers, converted to a fair-price range; additive to `goal_pe`/`goal_low`/`goal_high`. Enabled via `--enable-ml-comps`, which is live in the production monthly cron (see [ML Comps Valuation](#ml-comps-valuation) below)
 - **Bulk import CLI** (`run_bulk_import.py`) — batch-imports many tickers from a CSV with concurrent processing
 - **IB Trader** (`ib_trader/`) — Interactive Brokers execution layer: connects to TWS, computes target positions from live scores, diffs current holdings, and submits MOC/MKT/LMT orders; includes a CLI rebalancer and an interactive REPL for ad-hoc orders
 
@@ -131,19 +131,35 @@ EBIT   = Revenue × (1 - cogs_pct - sga_pct - rd_pct - other_opex_pct)
 NOPAT  = EBIT × (1 - tax_rate)
 FCFF   = NOPAT + D&A - CapEx - ΔNWC
 ΔNWC   = derived from DSO / DPO / DIO working capital days
-TV     = FCFF₅ × (1 + g) / (WACC - g)   [Gordon Growth]
-EV     = Σ PV(FCFF₁..₅) + PV(TV)
+TV     = FCFF₁₀ × (1 + g) / (WACC - g)  [Gordon Growth]
+EV     = Σ PV(FCFF₁..₁₀) + PV(TV)
 ```
 
 Forecasting:
-- **Revenue Y1-Y2**: exponentially weighted mean of historical annual growth rates (decay 0.5) blended with a quarterly momentum signal (EWM of last-4-quarter YoY growth + linear trend): 50% momentum / 50% annual for Y1, 25% / 75% for Y2
-- **Revenue Y3-Y5**: OLS slope from combined historical + Y1-Y2 series, anchored at Y2 level (eliminates stall when momentum boosts Y1/Y2 above trend)
-- **P&L ratios** (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean over the 5 most recent annual periods, applied flat across all 5 forecast years. Mean-reversion is the standard DCF assumption — margins are bounded by competitive dynamics over a 5-year horizon
+- **Revenue Y1-Y2**: exponentially weighted mean of historical annual growth rates (decay 0.5) blended with a quarterly momentum signal (EWM of last-4-quarter YoY growth + linear trend): 50% momentum / 50% annual for Y1, 25% / 75% for Y2. **Both are then capped** — Y1 at 60% (`MAX_YEAR1_GROWTH`), Y2 at 30% (`MAX_FADE_START_GROWTH`). Neither figure is an analyst estimate; both are extrapolations, and the momentum term's linear projection is unbounded, so an accelerating company extrapolates its own acceleration. Uncapped, MU read 194% for Y1 and 103% for Y2 during the AI-memory boom, and a random sample found year-1 forecasts up to 5,520%
+- **Revenue Y3-Y10**: fade linearly from Y2's capped growth rate to terminal growth by year 10. A user-pinned year re-anchors the fade rather than being overwritten by it
+- **P&L ratios** (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean over the 5 most recent annual periods, applied flat across all 10 forecast years. Mean-reversion is the standard DCF assumption — margins are bounded by competitive dynamics over the horizon
 - **other_opex_pct**: residual between gross profit and operating income, net of SG&A and R&D already captured. Absorbs operating costs reported outside standard line items (e.g. Amazon fulfillment, technology, content). Prevents EBIT from being overstated when companies have significant operating costs not mapped to COGS/SG&A/R&D
-- **D&A and CapEx**: normalized 5-year mean from the CF statement, applied flat across all growth years
+- **D&A**: normalized 5-year mean from the CF statement, applied flat
+- **CapEx**: starts from the same normalized 5-year mean, then **fades linearly to D&A** by year 10. The gap between them is growth investment, which should not persist into perpetuity — the direct analogue of fading growth to terminal growth. A company already spending below D&A is left alone rather than faded upward
+- **EBIT margin**: median over **5** annual periods (`_median_ebit_margin`). Three years cannot normalise a cyclical — MU's last three were 26.4%, 5.2% and -37.0%, so the median landed on the bust-to-boom transition year and the DCF forecast MU to win the AI boom on volume while never earning from it. Five years gives 22.7%, matching the `operating_margin_5y_median` that `pe_stats` and the cycle rubric already treat as normal
 - All forecasts use **annual** 10-K data; quarterly income data is used only for the momentum signal and is handled correctly for both standalone and YTD-cumulative filers
 - **Historical EBIT fallback**: when `operating_income` is null in the DB (common with pharma/healthcare XBRL filers), EBIT is derived as `gross_profit − SG&A − R&D`
 - **Y1 quarterly detail**: the DCF tab shows a quarterly breakdown of Y1 mixing reported actuals with seasonality-based estimates for unreported quarters. Quarterly revenue estimates can be overridden via `y1_quarter_revenues` in the run request
+
+**Output guards** (`dcf/model.py`) — a DCF that cannot produce a meaningful number fails explicitly
+rather than returning a wrong one. Both write `status='error'` with the reason into `dcf_results`:
+- **Non-positive intrinsic value** rejected. A negative value per share is not a valuation; it means
+  the assumptions do not describe a going concern.
+- **`MAX_INTRINSIC_TO_PRICE = 10.0`** — an intrinsic value above 10x the market price is a
+  computation failure, not a bargain. Before this guard the universe contained GNTX at $1,099,172
+  per share against a $23.64 price. Deliberately loose: a genuinely mispriced company can be worth
+  several times its price.
+
+As of 2026-08-20 this leaves ~19% of the universe with no mechanical DCF (2,149 ok / 512 error of
+2,661). That is intended — the AI Researcher takes its DCF degradation path for those tickers
+instead of anchoring on a number nobody can defend. **There is no accuracy measurement for the DCF**;
+these guards establish plausibility only. See `features/dcf/PLAN_DCF_ACCURACY.md`.
 
 **WACC** (`dcf/wacc.py`):
 - Cost of equity: CAPM — `ke = rf + β × MRP`. Beta from yfinance; rf from FRED DGS10; MRP defaults to 5.5% (Damodaran).
@@ -333,15 +349,16 @@ uv run scripts/rebalance.py --no-dry-run
 
 ---
 
-## ML Comps Valuation (Experimental)
+## ML Comps Valuation
 
-Cross-sectional peer-comps model: predicts a fair P/E, P/FCF, and P/S multiple for each stock from its fundamentals vs. sector peers (XGBoost quantile regression, low/mid/high range), converted to a fair-price band. Additive to the `goal_pe`/`goal_low`/`goal_high` fields already surfaced in the Fundamentals tab, which compare a ticker to its *own* multiple history rather than peers — both are shown side by side. Full build record and validation gate: `features/historic_fundamentals/ml_comps_valuation_plan.md`.
+Cross-sectional peer-comps model: predicts a fair P/E, EV/EBITDA, P/FCF, and P/S multiple for each stock from its fundamentals vs. sector peers (XGBoost quantile regression, low/mid/high range), converted to a fair-price band. Additive to the `goal_pe`/`goal_low`/`goal_high` fields already surfaced in the Fundamentals tab, which compare a ticker to its *own* multiple history rather than peers — both are shown side by side. Full build record and validation gate: `features/historic_fundamentals/ml_comps_valuation_plan.md`.
 
 ```bash
-# One-time / after retraining: validate the model beats a naive sector-median baseline (~2hr for 4 candidate multiples)
+# One-time / after retraining: validate the model beats a naive sector-median baseline
+# (~2-2.5hr for the 4 multiples; measured 130 min on 2026-08-19 — a 50-min timeout has killed it before)
 uv run scripts/validate_ml_comps_valuation.py
 
-# Train final production models (P/E, P/FCF, P/S — see plan doc for why EV/EBITDA is excluded)
+# Train final production models (all 4 — see PASSING_MULTIPLES in historic_fundamentals/ml_comps_model.py)
 uv run scripts/train_ml_comps_valuation.py
 
 # Score the current universe -> ml_comps_valuation table -> /av-fundamentals/{ticker} API fields
@@ -351,7 +368,14 @@ uv run scripts/score_ml_comps_valuation.py
 uv run scripts/report_ml_comps_history.py
 ```
 
-Not part of the monthly `av_update.py`/`hf_update.py` cycle by default — pass `--enable-ml-comps` to `scripts/run_pipeline.py` to include training + scoring in the pipeline run. Off by default; enabling it in the production cron is a separate deploy decision.
+Pass `--enable-ml-comps` to `scripts/run_pipeline.py` to include training + scoring. **This is
+already live in the production monthly cron** — it is off by default for a manual run only.
+
+EV/EBITDA was excluded until 2026-08-19 for missing the 15% RMSE-improvement gate by 0.3pp. That
+was never a modelling shortfall: the enterprise value feeding it counted only the current portion
+of debt. With that fixed and the universe recomputed it clears every criterion (+26.4% RMSE
+improvement, second-best of the four; 100% fold win rate; 74.5% coverage) and is now a production
+multiple.
 
 ---
 

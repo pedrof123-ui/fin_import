@@ -10,15 +10,26 @@ Forecast methodology:
   Revenue Y1-Y2: blended signal —
              50%/25% quarterly momentum (EWM of last-4-quarter YoY rates + linear trend)
              50%/75% annual EWM growth (exponentially weighted, half-life ~1.4 yrs).
-  Revenue Y3-Y10: carry forward Y2's growth rate flat across all remaining years. When a
-             user pins a year's revenue, subsequent years carry forward that year's implied
-             growth rate. Terminal growth is used only for the terminal value calculation.
+             Y1 is then capped at MAX_YEAR1_GROWTH (60%) and Y2 at MAX_FADE_START_GROWTH
+             (30%). Neither is an analyst estimate — both are extrapolations, and the
+             momentum term's linear projection is unbounded, so an accelerating company
+             extrapolates its own acceleration. See those two constants.
+  Revenue Y3-Y10: fade linearly from Y2's (capped) growth rate to terminal growth by the
+             final year. When a user pins a year's revenue, subsequent years resume the
+             fade from that year's implied growth rate, so an override re-anchors the path
+             rather than being overwritten by it.
   P&L ratios (cogs_pct, sga_pct, rd_pct, interest_pct, other_opex_pct): historical mean
              applied flat across all 10 forecast years. Mean-reversion is the standard DCF
              assumption — ratios are bounded by competitive dynamics over a 10-year horizon.
-  D&A and CapEx: normalized 5-year mean from the CF statement, applied flat across all
-             growth years. CapEx/revenue and D&A/revenue are mean-reverting; extrapolating
-             a spike would distort FCFF in the terminal period.
+  D&A: normalized 5-year mean from the CF statement, applied flat.
+  CapEx: starts from the same normalized 5-year mean, then fades linearly to D&A by the
+             final year. The gap between the two is growth investment, which is exactly
+             what should not persist into perpetuity — the direct analogue of fading growth
+             to terminal growth. A company already spending below D&A is left alone rather
+             than faded upward, since under-investment is a real state.
+
+  EBIT margin (dcf/model.py::_median_ebit_margin): median over 5 annual periods, not 3 —
+             a 3-year window cannot normalise a cyclical.
 """
 
 import numpy as np
@@ -221,7 +232,8 @@ def forecast_assumptions(
     annual: dict[str, pd.DataFrame],
 ) -> list:
     """
-    Returns model-computed YearForecast for years 1-5 using annual income data.
+    Returns model-computed YearForecast for the first years using annual income data;
+    extend_growth_years() in this module then caps Y1/Y2 and fades Y3-Y10 to terminal.
     """
     from dcf.assumptions import YearForecast
 

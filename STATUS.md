@@ -69,7 +69,7 @@ Follow-up to Barron's, "The Hidden Red Flag in Wall Street's Price Targets" (202
 analyst price-target dispersion predicting weaker forward returns (Diether-Malloy-Scherbina
 2002 / Zhang et al. 2024). Alpha Vantage serves no per-analyst price targets or historical
 estimate snapshots, so this uses the EPS high/low/avg band already in `earnings_estimates` as a
-proxy — full writeup and phase-by-phase spec in `PLAN_DISPERSION.md` (all 7 phases complete).
+proxy — full writeup and phase-by-phase spec in `archive/PLAN_DISPERSION.md` (all 7 phases complete).
 
 ### What shipped
 
@@ -404,11 +404,11 @@ Cross-sectional peer-comps ML model predicting a fair P/E, P/FCF, and P/S multip
 | Multiple | RMSE improvement vs. naive sector-median baseline | Fold win rate | Coverage p10–p90 | Result |
 |---|---:|---:|---:|---|
 | P/E | +18.3% | 100% (36/36) | 74.9% | PASS |
-| EV/EBITDA | +14.7% | 100% (36/36) | 74.1% | FAIL (missed 15% bar by 0.3pp) |
+| EV/EBITDA | +14.7% | 100% (36/36) | 74.1% | FAIL then — **PASS on 2026-08-19 re-validation at +26.4%**, see note below |
 | P/FCF | +18.7% | 100% (36/36) | 73.1% | PASS |
 | P/S | +23.6% | 100% (36/36) | 74.7% | PASS (best of the 4, added 2026-07-21) |
 
-P/E, P/FCF, and P/S are trained/scored in production; EV/EBITDA remains excluded. Result reproduced identically on a second full rerun (deterministic, fixed seeds). Model beat the naive baseline in 100% of individual folds across 36 years — the fold-level check this gate was specifically designed to enforce, not just an aggregate number.
+P/E, P/FCF and P/S were trained/scored in production from this run; **EV/EBITDA was added 2026-08-19** once the debt defect feeding its enterprise value was fixed (+26.4% RMSE improvement on re-validation, second-best of the four). All four are now production multiples. Result reproduced identically on a second full rerun (deterministic, fixed seeds). Model beat the naive baseline in 100% of individual folds across 36 years — the fold-level check this gate was specifically designed to enforce, not just an aggregate number.
 
 Adding P/S also closed a real coverage gap: full-universe scoring went from 2,122/2,653 tickers `ok` (515 `no_price_basis`) to 2,518/2,653 `ok` (119 `no_price_basis`) — P/S rescues tickers with negative/zero earnings or FCF (common for early-stage or cyclical-trough names) since revenue is defined almost everywhere. P/BV and PEG were also considered but not pursued: P/BV needs a per-sector model (book value is near-meaningless outside financials/industrials, would likely repeat EV/EBITDA's near-miss as a single universe-wide fit) and PEG doesn't fit this model's "multiple × ticker's own fundamental = fair price" mechanism at all.
 

@@ -10,4 +10,5 @@
 
 7. THE ALPHA VANTAGE API HAS A LIMITS OF 75 CALLS/MINUTE. MAKE SURE THAT API CALLS DON"T EXCEED 75 CALLS/MINUTE
 
-8. When implementing a plan, all mark phases and steps as Complete in PLAN.md
+8. When implementing a plan, mark all phases and steps Complete in that plan's own file
+   (root `PLAN_*.md` or `features/*/PLAN*.md`). Completed plans are moved to `archive/`.
