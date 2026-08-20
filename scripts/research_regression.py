@@ -116,8 +116,19 @@ async def _run_one(ticker: str) -> tuple[list[tuple[str, bool, str]], list[tuple
     if price and v.fair_value_base:
         ratio = float(v.fair_value_base) / float(price)
         detail = f"base ${v.fair_value_base:.2f} vs price ${price:.2f} = {ratio:.2f}x"
-        checks.append(_check("fair_value_base not absurd vs price (0.15x-5.0x)",
-                             0.15 <= ratio <= 5.0, detail))
+        # A price-proximity band assumes fair value tracks price. That is exactly the assumption a
+        # peak-earnings trap denies: MU sits at 12.2x its median EPS ($44.08 against $3.61) in the
+        # AI-memory boom, so a correct through-cycle valuation *should* fall well under the 0.15x
+        # floor. Gating on it would have flagged correct output as a failure, and a gate that fires
+        # on correct output is one people learn to ignore. PEAK tickers keep the check as
+        # informational — the cycle-position and callout assertions below are their real gate.
+        is_peak = _EXPECTED_CYCLE.get(ticker) == "PEAK"
+        if is_peak:
+            info.append(_check("fair_value_base vs price (informational: PEAK, not gated)",
+                               0.15 <= ratio <= 5.0, detail))
+        else:
+            checks.append(_check("fair_value_base not absurd vs price (0.15x-5.0x)",
+                                 0.15 <= ratio <= 5.0, detail))
         info.append(_check("fair_value_base within a comfortable band (0.30x-3.0x)",
                            0.30 <= ratio <= 3.0, detail))
 

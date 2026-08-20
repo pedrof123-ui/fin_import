@@ -396,6 +396,85 @@ unavailable** — the degradation path — not in the cycle assessment, which co
 Not yet diagnosed. It is now at least *visible*, which it was not before this fix: the table that
 exposes it is precisely the one that had been dropped along with the DCF.
 
+## MU DCF diagnosis 2026-08-20 — capex shape is the smallest of four problems
+
+Asked whether an exponential capex taper would serve better than the current linear one.
+**Measured answer: no.** Capex is the smallest of the drags and the fade already works — capex
+converges exactly to D&A by year 10 ($126.2bn = $126.2bn).
+
+FCFF decomposition, MU, $bn:
+
+| yr | NOPAT | D&A | capex | capex-D&A | dNWC | FCFF |
+|---|---|---|---|---|---|---|
+| 1 | 4.8 | 32.7 | 44.2 | 11.4 | **27.7** | **-34.3** |
+| 2 | 6.2 | 42.6 | 57.4 | 14.8 | 12.1 | -20.7 |
+| 3 | 7.9 | 53.9 | 70.3 | 16.4 | 13.9 | -22.5 |
+
+**The decisive test:** set capex to D&A *instantly* in year 1 — more aggressive than any
+exponential taper can be — and FCFF is still **-$22.9bn**. Fix the margin to the 22.6% 5-year
+median *as well* and it is still **-$8.0bn**. Capex shape cannot reach this.
+
+### Ranked by magnitude, the real causes
+
+**1. Year-1 revenue growth is 194.4% and is not capped.** `MAX_FADE_START_GROWTH` caps year 2
+(103.3% -> 30.0%, working correctly) but year 1 is deliberately exempt, on the stated reasoning
+that it "is largely analyst consensus one year out, which is a real estimate rather than an
+extrapolation". For MU it is not: revenue jumps ~$37.4bn -> $110.0bn in one year, and every later
+year compounds from that inflated base to $424bn by year 10. This plan already predicted it —
+*"a cap on the year-1/year-2 growth rate is probably needed as well: 194% and 103% are not
+forecasts at any horizon"* — and only the year-2 half shipped.
+
+**2. Working capital, $27.7bn in year 1** — the single largest term, larger than NOPAT, D&A and
+the capex gap combined. NWC is days-based, so it scales with that inflated revenue path. It is a
+symptom of (1) rather than an independent defect.
+
+**3. EBIT margin of 5.2%, from `_median_ebit_margin`** — the median of MU's last three annual
+margins, `26.4%, 5.2%, -37.0%`. The median lands on the transition year between the memory bust
+and the boom. **The model pairs peak-derived growth with cycle-spanning margins**, so MU is
+forecast to win the AI boom on volume ($424bn revenue) while never earning from it (5.2%). Those
+two assumptions come from different phases of the cycle and should not be combined. This is
+[[project_cycle_awareness]]'s "normalise the MARGIN not the EPS level" lesson surfacing in the DCF.
+
+**4. Capex above D&A, $11.4bn** — real, already faded, and the smallest of the four.
+
+**Recommended order if this is picked up: cap year-1 growth first.** It is the root of (1) and (2)
+and the same one-line shape as the year-2 cap already shipped. Leave the capex fade alone.
+
+## The compressed fair-value band — diagnosed, prompt conflict
+
+MU's `$18.61 / $33.15 / $34.11` has its high 2.9% above base. `api/prompts/research_valuation.md`
+contains a conflict for exactly this case:
+
+- **DEGRADATION rule (line 145)**: with both DCF sources unavailable, "fall back to a
+  multiples-only valuation (normalized P/E x **forward EPS** ...)". For MU that is
+  `21.34 x $73.39 = $1,566`.
+- **Cycle guidance (line 142)**: MU is stated `PEAK`; peak earnings are not to be trusted.
+
+The Analyst followed the cycle guidance over the literal degradation instruction and normalised
+EPS down to roughly mid-cycle — landing at $33.15, near `pe_p25 x mid-cycle EPS = $38`. That is
+the better judgement, but it means **the band is built by varying the multiple around a single
+normalised EPS**, which mechanically compresses it. Nothing instructs the high case to represent
+the cycle *sustaining*, which for a company in a real AI-driven boom is the obvious bull case.
+
+**Fix (not made — it is a prompt change affecting every report and needs a paid run to validate):**
+have the degradation rule defer explicitly to the cycle position, and require the high case to
+reflect the elevated cycle persisting while the low reflects full mean reversion.
+
+## Guard threshold decision, 2026-08-20
+
+`MAX_INTRINSIC_TO_PRICE` **stays at 10.0**. Reviewed and deliberately not tightened: the
+production degradation rate has not been observed yet, the first monthly pipeline under the new
+guard runs 2026-09-01, and 5x/3x are costed (64 and 138 further tickers) whenever that evidence
+arrives. Revisit after the September run, not before.
+
+## Regression gate now exempts PEAK tickers
+
+`research_regression.py`'s 0.15x-5.0x price-proximity band assumed fair value tracks price — the
+exact assumption a peak-earnings trap denies. MU at 12.2x its median EPS *should* value below the
+floor, so the gate was flagging correct output, and a gate that fires on correct output is one
+people learn to ignore. For `PEAK` tickers the ratio is now informational; their real gate is the
+cycle-position and callout assertion, which MU already passes.
+
 ## What landed 2026-08-19
 
 | Change | Commit | Verified effect |
