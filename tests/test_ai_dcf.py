@@ -1010,3 +1010,43 @@ def test_reconciliation_log_alter_table_migrates_existing_db(tmp_path, monkeypat
     )
     row = adr.get_reconciliation_log("TXN")[0]
     assert row["ml_comps_ground_truth"] == pytest.approx(57.0)
+
+
+# ── Silent scenario failure ──────────────────────────────────────────────────
+
+def test_missing_scenario_is_reported_not_swallowed():
+    """A failed scenario must reach the reader.
+
+    Every ordering comparison in check_scenario_ordering is guarded on `is not None`, so before
+    this a failed scenario skipped its checks and emitted nothing: the valuation range silently
+    lost an end. That is how tightening MAX_INTRINSIC_TO_PRICE tripled bull-scenario loss
+    (2/25 -> 7/25) with no warning, no log line, and no note in the report.
+    """
+    ok = _dcf_result(intrinsic=10.0) if "_dcf_result" in globals() else None
+
+    warnings = adr.check_scenario_ordering({"bear": None, "base": None, "bull": None})
+    assert len(warnings) == 3
+    assert all("failed to compute" in w for w in warnings)
+    assert any(w.startswith("bull") for w in warnings), "the bull loss must be named explicitly"
+    assert all("truncated" in w for w in warnings), (
+        "the warning must say the range is truncated — a reader who is told only that a scenario "
+        "failed does not know the presented spread is biased"
+    )
+
+
+def test_scenario_degradation_is_logged(caplog, monkeypatch):
+    """run_ai_dcf_engine used the only bare `except Exception: None` in this module, with no
+    logging, while every other failure path here logs. That made the regression invisible."""
+    import logging as _logging
+
+    def _boom(*a, **kw):
+        raise ValueError("Intrinsic value per share is 99.9x the market price")
+
+    monkeypatch.setattr(adr, "run_dcf_av", _boom)
+    with caplog.at_level(_logging.WARNING):
+        with pytest.raises(RuntimeError, match="AI DCF unavailable"):
+            adr.run_ai_dcf_engine("AAPL", _assumptions(), reports_cogs=True)
+
+    text = caplog.text
+    assert "degraded to None" in text, "a failed scenario must log why"
+    assert "99.9x" in text, "the underlying reason must survive into the log, not just the fact"

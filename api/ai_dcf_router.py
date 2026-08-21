@@ -274,9 +274,21 @@ def validate_assumptions(a: AiDcfAssumptions, bounds: dict) -> tuple[AiDcfAssump
 
 
 def check_scenario_ordering(engine_results: dict[str, Optional[DcfResult]]) -> list[str]:
-    """Post-engine sanity: bear <= base <= bull on intrinsic value/share (SPEC 6.5)."""
+    """Post-engine sanity: bear <= base <= bull on intrinsic value/share (SPEC 6.5).
+
+    Also reports a MISSING scenario. Every ordering comparison below is guarded on `is not None`,
+    so a scenario that failed used to skip its checks and emit nothing — the range silently lost
+    an end and the report showed no sign of it. A truncated range is not a narrower range; losing
+    the bull biases the presented valuation downward and the reader has to be told.
+    """
     warnings: list[str] = []
     bear, base, bull = engine_results.get("bear"), engine_results.get("base"), engine_results.get("bull")
+    for _label in ("bear", "base", "bull"):
+        if engine_results.get(_label) is None:
+            warnings.append(
+                f"{_label} scenario failed to compute — the valuation range is truncated and "
+                f"should not be read as the full spread of outcomes"
+            )
     if bear is not None and base is not None and bear.intrinsic_value_per_share > base.intrinsic_value_per_share:
         warnings.append(
             f"bear intrinsic value (${bear.intrinsic_value_per_share:.2f}) exceeds base "
@@ -337,7 +349,12 @@ def run_ai_dcf_engine(
             try:
                 overrides = to_overrides(scenario, assumptions, reports_cogs)
                 results[label] = run_dcf_av(ticker, overrides, estimates_conn=conn)
-            except Exception:
+            except Exception as e:
+                # Log the reason. This was a bare `except Exception: None` with no logging --
+                # the only silent failure path in this module, while every other one here logs.
+                # That is how a change to MAX_INTRINSIC_TO_PRICE tripled bull-scenario loss
+                # (2/25 -> 7/25) with nothing to see in the logs: a scenario just became None.
+                log.warning("[%s] ai_dcf: %s scenario degraded to None: %s", ticker, label, e)
                 results[label] = None
     finally:
         conn.close()
