@@ -497,6 +497,34 @@ class HistoricFundamentalsDB:
             )
         """)
 
+        # Append-only snapshot of every dcf_results rebuild. dcf_results itself is a single
+        # overwriting snapshot, so before this table existed no DCF output survived the next
+        # monthly run and accuracy could not be backtested at all. Carries the fields
+        # dcf_results does not: the price the valuation was made against (the screener computes
+        # upside against the *current* price, which is unrecoverable after the fact), the
+        # terminal-value share, and how many forecast years came from analyst consensus.
+        # See features/dcf/PLAN_DCF_ACCURACY.md.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS dcf_results_history (
+                ticker                    VARCHAR NOT NULL,
+                snapshot_date             DATE    NOT NULL,
+                intrinsic_value_per_share DOUBLE,
+                price_at_computation      DOUBLE,
+                wacc                      DOUBLE,
+                beta_raw                  DOUBLE,
+                terminal_growth_rate      DOUBLE,
+                tv_pct_enterprise_value   DOUBLE,
+                enterprise_value          DOUBLE,
+                net_debt                  DOUBLE,
+                diluted_shares            DOUBLE,
+                analyst_years_applied     INTEGER,
+                status                    VARCHAR NOT NULL,
+                error_message             VARCHAR,
+                computed_at               TIMESTAMP NOT NULL,
+                PRIMARY KEY (ticker, snapshot_date)
+            )
+        """)
+
         # ML comps-based fair valuation (additive to goal_pe/goal_low/goal_high;
         # see features/historic_fundamentals/ml_comps_valuation_plan.md)
         self.conn.execute("""
@@ -1067,6 +1095,30 @@ class HistoricFundamentalsDB:
             """)
         finally:
             self.conn.execute("DROP VIEW IF EXISTS _tmp_dcf_results")
+        return len(df)
+
+    def upsert_dcf_results_history(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        cols = [
+            "ticker", "snapshot_date", "intrinsic_value_per_share", "price_at_computation",
+            "wacc", "beta_raw", "terminal_growth_rate", "tv_pct_enterprise_value",
+            "enterprise_value", "net_debt", "diluted_shares", "analyst_years_applied",
+            "status", "error_message", "computed_at",
+        ]
+        data = df.copy()
+        for col in cols:
+            if col not in data.columns:
+                data[col] = None
+        self.conn.register("_tmp_dcf_hist", data[cols])
+        try:
+            col_csv = ", ".join(cols)
+            self.conn.execute(f"""
+                INSERT OR REPLACE INTO dcf_results_history ({col_csv})
+                SELECT {col_csv} FROM _tmp_dcf_hist
+            """)
+        finally:
+            self.conn.execute("DROP VIEW IF EXISTS _tmp_dcf_hist")
         return len(df)
 
     def upsert_ml_comps_valuation(self, df: pd.DataFrame) -> int:

@@ -87,3 +87,50 @@ def test_rerun_overwrites_previous_row(hf_db_copy):
         assert status == "error"
     finally:
         hf_db.close()
+
+
+def test_history_retains_prior_snapshots(hf_db_copy):
+    """dcf_results overwrites; dcf_results_history must not.
+
+    This is the whole point of the table — a rebuild on a later date has to leave the
+    earlier snapshot readable, otherwise DCF accuracy stays unbacktestable no matter how
+    many months pass. See features/dcf/PLAN_DCF_ACCURACY.md Phase 0.
+    """
+    from datetime import date, timedelta
+
+    hf_db = HistoricFundamentalsDB(hf_db_copy)
+    try:
+        df = compute_dcf_batch(_TICKERS, hf_db.conn)
+
+        earlier = date.today() - timedelta(days=30)
+        df["snapshot_date"] = earlier
+        hf_db.upsert_dcf_results_history(df)
+
+        df["snapshot_date"] = date.today()
+        hf_db.upsert_dcf_results_history(df)
+
+        dates = [
+            r[0] for r in hf_db.conn.execute(
+                "SELECT DISTINCT snapshot_date FROM dcf_results_history "
+                "WHERE ticker = ANY(?) ORDER BY snapshot_date",
+                [_TICKERS],
+            ).fetchall()
+        ]
+
+        ok_row = hf_db.conn.execute(
+            "SELECT price_at_computation, beta_raw, tv_pct_enterprise_value, analyst_years_applied "
+            "FROM dcf_results_history WHERE ticker = 'AAPL' AND snapshot_date = ?",
+            [earlier],
+        ).fetchone()
+    finally:
+        hf_db.close()
+
+    assert dates == [earlier, date.today()], f"expected both snapshots retained, got {dates}"
+
+    # The price is what makes a snapshot measurable at all: the screener computes upside
+    # against the *current* price, so without it a stored intrinsic value has no reference.
+    price, beta_raw, tv_pct, analyst_years = ok_row
+    assert price is not None and price > 0
+    assert beta_raw is not None
+    assert tv_pct is not None
+    assert analyst_years is not None

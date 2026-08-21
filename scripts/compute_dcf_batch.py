@@ -14,13 +14,18 @@ Usage:
 Writes one row per ticker to dcf_results (status='ok' or 'error'), full rebuild each
 run — a ticker that fails this run overwrites any previous 'ok' row for it, matching
 hf_update.py's rebuild style rather than an incremental merge.
+
+The same rows are also appended to dcf_results_history keyed by snapshot date, so the
+output of each rebuild survives the next one. dcf_results alone cannot be backtested:
+every rebuild overwrites it, and it does not record the price the valuation was made
+against. See features/dcf/PLAN_DCF_ACCURACY.md.
 """
 
 import argparse
 import logging
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import duckdb
@@ -66,11 +71,15 @@ def compute_dcf_batch(tickers: list[str], estimates_conn) -> pd.DataFrame:
             rows.append({
                 "ticker": ticker,
                 "intrinsic_value_per_share": result.intrinsic_value_per_share,
+                "price_at_computation": result.current_price,
                 "wacc": result.wacc_detail.wacc,
+                "beta_raw": result.wacc_detail.beta_raw,
                 "terminal_growth_rate": result.terminal_growth_rate,
+                "tv_pct_enterprise_value": result.tv_pct_enterprise_value,
                 "enterprise_value": result.enterprise_value,
                 "net_debt": result.net_debt,
                 "diluted_shares": result.diluted_shares,
+                "analyst_years_applied": result.analyst_years_applied,
                 "status": "ok",
                 "error_message": None,
                 "computed_at": now,
@@ -80,11 +89,15 @@ def compute_dcf_batch(tickers: list[str], estimates_conn) -> pd.DataFrame:
             rows.append({
                 "ticker": ticker,
                 "intrinsic_value_per_share": None,
+                "price_at_computation": None,
                 "wacc": None,
+                "beta_raw": None,
                 "terminal_growth_rate": None,
+                "tv_pct_enterprise_value": None,
                 "enterprise_value": None,
                 "net_debt": None,
                 "diluted_shares": None,
+                "analyst_years_applied": None,
                 "status": "error",
                 "error_message": str(e)[:500],
                 "computed_at": now,
@@ -114,12 +127,15 @@ def main() -> None:
     df = compute_dcf_batch(tickers, hf_db.conn)
 
     n_written = hf_db.upsert_dcf_results(df)
+    df["snapshot_date"] = date.today()
+    n_hist = hf_db.upsert_dcf_results_history(df)
     hf_db.close()
 
     elapsed = time.time() - t0
     n_ok = int((df["status"] == "ok").sum())
     n_error = int((df["status"] == "error").sum())
-    print(f"\nDone: {n_ok} ok, {n_error} error, {n_written} rows written to dcf_results ({elapsed:.1f}s)")
+    print(f"\nDone: {n_ok} ok, {n_error} error, {n_written} rows written to dcf_results, "
+          f"{n_hist} to dcf_results_history ({elapsed:.1f}s)")
     if n_error:
         print("\nErrors:")
         for _, row in df[df["status"] == "error"].iterrows():

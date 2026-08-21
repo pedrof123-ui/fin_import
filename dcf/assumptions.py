@@ -170,3 +170,7 @@ class DcfResult:
     warnings: List[str] = field(default_factory=list)
     y1_quarters: list = field(default_factory=list)
     analyst_estimates: list = field(default_factory=list)
+    # Count of forecast years whose revenue came from analyst consensus rather than the
+    # model's own extrapolation. Recorded per snapshot so the mechanical core and the
+    # analyst layer can be measured apart — they diverge by ~29% median intrinsic value.
+    analyst_years_applied: int = 0
