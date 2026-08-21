@@ -46,11 +46,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from historic_fundamentals.pe import _load_av_data, _load_shares_ts, _get_shares  # noqa: E402
+from historic_fundamentals.pe import (  # noqa: E402
+    _load_av_data, _load_shares_ts, _get_shares, LAG_QUARTERLY,
+)
 
 log = logging.getLogger(__name__)
-
-_LAG_QUARTERLY = timedelta(days=60)
 
 
 def _quarter_eps(fde, quarterly: pd.DataFrame, annual: pd.DataFrame, shares_ts: pd.DataFrame) -> float | None:
@@ -90,7 +90,7 @@ def _compute_for_ticker(ticker: str, month_ends: list, av_conn) -> pd.DataFrame:
 
     rows = []
     for month_end in month_ends:
-        q_pit = quarterly[quarterly["fiscal_date_ending"] + _LAG_QUARTERLY <= month_end]
+        q_pit = quarterly[quarterly["fiscal_date_ending"] + LAG_QUARTERLY <= month_end]
         if len(q_pit) < 5:
             rows.append({"ticker": ticker, "month_end_date": month_end, "q_earn_yoy": None, "q_earn_accel": None})
             continue

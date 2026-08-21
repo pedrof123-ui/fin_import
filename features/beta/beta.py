@@ -6,8 +6,8 @@ Public API:
     refresh_betas(window_days, db_path)                  -> int  (rows written)
 
 CLI:
-    uv run features/beta/beta.py backfill [--ticker AAPL]
-    uv run features/beta/beta.py refresh
+    uv run features/beta/beta.py backfill [--ticker AAPL] [--window 260]
+    uv run features/beta/beta.py refresh [--window 260]   # no --window: refreshes both
     uv run features/beta/beta.py show AAPL
 """
 
@@ -273,11 +273,14 @@ def get_beta(
 
 def _cmd_backfill(args: argparse.Namespace) -> None:
     tickers = [args.ticker] if args.ticker else None
-    backfill_betas(tickers=tickers, db_path=PRICES_DB)
+    backfill_betas(tickers=tickers, window_days=args.window, db_path=PRICES_DB)
 
 
-def _cmd_refresh(_args: argparse.Namespace) -> None:
-    refresh_betas(db_path=PRICES_DB)
+def _cmd_refresh(args: argparse.Namespace) -> None:
+    # Both windows: wacc.get_betas() reads 260d (drives cost of equity) and 104d
+    # (reported in WaccDetail). Refreshing only the default left the 2yr series stale.
+    for window in (WINDOW_5YR, WINDOW_2YR) if args.window is None else (args.window,):
+        refresh_betas(window_days=window, db_path=PRICES_DB)
 
 
 def _cmd_show(args: argparse.Namespace) -> None:
@@ -294,8 +297,10 @@ def main() -> None:
 
     p_back = sub.add_parser("backfill", help="Compute monthly historical betas")
     p_back.add_argument("--ticker", help="Limit to a single ticker")
+    p_back.add_argument("--window", type=int, default=DEFAULT_WINDOW, help="Window in weeks of returns")
 
-    sub.add_parser("refresh", help="Compute current-month betas (cron mode)")
+    p_ref = sub.add_parser("refresh", help="Compute current-month betas (cron mode)")
+    p_ref.add_argument("--window", type=int, default=None, help="Single window; default refreshes both")
 
     p_show = sub.add_parser("show", help="Print latest stored beta for a ticker")
     p_show.add_argument("ticker")

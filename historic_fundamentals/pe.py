@@ -104,8 +104,12 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-_LAG_QUARTERLY = timedelta(days=60)
-_LAG_ANNUAL    = timedelta(days=90)
+# The repo's single reporting-lag convention. Public because the DCF as-of reconstruction
+# (features/dcf/PLAN_DCF_ACCURACY.md Phase 2) filters the same AV statement tables and must
+# not invent a second convention — there were already three independent copies of these two
+# numbers before this was consolidated.
+LAG_QUARTERLY = timedelta(days=60)
+LAG_ANNUAL    = timedelta(days=90)
 
 
 def _feature_available_date(fiscal_date_ending: date, period_type: str) -> date:
@@ -118,8 +122,8 @@ def _feature_available_date(fiscal_date_ending: date, period_type: str) -> date:
         annual:    fiscal_date_ending + 90 days
     """
     if period_type == "annual":
-        return fiscal_date_ending + _LAG_ANNUAL
-    return fiscal_date_ending + _LAG_QUARTERLY
+        return fiscal_date_ending + LAG_ANNUAL
+    return fiscal_date_ending + LAG_QUARTERLY
 
 
 # Tickers where a large total_assets level-shift is a confirmed real event (e.g. a
@@ -600,10 +604,10 @@ def build_monthly_pe(
         # by month_end, using conservative reporting-lag assumptions:
         #   quarterly: fiscal_date_ending + 60 days <= month_end
         #   annual:    fiscal_date_ending + 90 days <= month_end
-        q_pit = q[q["fiscal_date_ending"] + _LAG_QUARTERLY <= month_end] if not q.empty else q
-        a_pit = a[a["fiscal_date_ending"] + _LAG_ANNUAL    <= month_end] if not a.empty else a
-        cfq_pit = cfq[cfq["fiscal_date_ending"] + _LAG_QUARTERLY <= month_end] if not cfq.empty else cfq
-        cfa_pit = cfa[cfa["fiscal_date_ending"] + _LAG_ANNUAL    <= month_end] if not cfa.empty else cfa
+        q_pit = q[q["fiscal_date_ending"] + LAG_QUARTERLY <= month_end] if not q.empty else q
+        a_pit = a[a["fiscal_date_ending"] + LAG_ANNUAL    <= month_end] if not a.empty else a
+        cfq_pit = cfq[cfq["fiscal_date_ending"] + LAG_QUARTERLY <= month_end] if not cfq.empty else cfq
+        cfa_pit = cfa[cfa["fiscal_date_ending"] + LAG_ANNUAL    <= month_end] if not cfa.empty else cfa
 
         # Safety net: log if any row would have been included without lag but is now excluded.
         # This should never fire after the lag fix is applied, but guards against future regressions.
