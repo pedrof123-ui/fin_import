@@ -195,6 +195,11 @@ const PRESETS: Record<string, Preset> = {
       ["DCF Upside", "> 20%"],
       ["", "Intrinsic value (DCF model)"],
       ["", "exceeds current price by 20%+"],
+      ["", ""],
+      ["Measured", "2010-2024 backtest:"],
+      ["", "ranks well below $1B market cap,"],
+      ["", "no signal above it. Small-cap"],
+      ["", "edge is survivorship-flattered."],
     ],
   },
   graham_net_net: {

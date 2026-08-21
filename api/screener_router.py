@@ -28,6 +28,16 @@ _AV_DB = Path(os.environ.get("AV_FINANCIALS_DB_PATH", str(Path(__file__).parent.
 # mp  = latest row from hf.monthly_pe
 # dr  = hf.dcf_results (status='ok' rows only), refreshed monthly by
 #       scripts/compute_dcf_batch.py — see DCF_SCREENER_PLAN.md
+#
+# dcf_upside was measured as a factor over 2010-2024 (features/dcf/PLAN_DCF_ACCURACY.md
+# Phase 3) and the answer splits sharply by size:
+#   >=$1B   mean rank IC 0.0157, ICIR-NW 0.56 at the old 10x bound -- no usable signal, and
+#           its incremental IC over earnings_yield/ebitda_ev_yield/fcf_yield was NEGATIVE.
+#           Tightening MAX_INTRINSIC_TO_PRICE to 2.5 lifts it to 0.0441 / 1.81.
+#   $300M-1B  mean rank IC 0.0615, ICIR-NW 3.13, positive quintile spread, 12/15 folds --
+#           works, but small caps are where survivorship bias is worst, so treat as a
+#           ceiling rather than a floor.
+# The filter is kept for that reason; the "DCF Undervalued" preset carries the caveat.
 RANGE_FIELDS: list[tuple[str, str]] = [
     ("market_cap_b",      "COALESCE(ps.market_cap_b, co.market_cap / 1e9)"),
     ("pe",                "ps.current_pe"),
