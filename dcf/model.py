@@ -45,6 +45,23 @@ DEFAULT_TERMINAL_GROWTH = 0.03  # 3%
 # number beats a number with no signal in it.
 MAX_INTRINSIC_TO_PRICE = 2.5
 
+# ...but 2.5 is a SIGNAL-QUALITY threshold, validated for ranking stocks under the forecaster's
+# own assumptions. It is the wrong test for a run whose forecast the CALLER supplied -- an AI DCF
+# bull scenario or a user-pinned year in the UI. The failure mode 2.5 was fitted against is
+# runaway extrapolation BY THE MODEL; when a caller deliberately specifies 15% growth at a 25%
+# margin, a 3x-price result is their stated case, not a computation failure.
+#
+# Measured 2026-08-21 across 25 tickers: applying 2.5 to override runs tripled bull-scenario loss
+# in the AI DCF from 2/25 to 7/25. Availability was unaffected (the base scenario never tripped),
+# but the AI DCF presents a bear/base/bull RANGE, and dropping the bull truncates it asymmetrically
+# -- biasing the presented valuation downward, which is worse than a wide range.
+#
+# So override runs keep the original 10x sanity backstop. That still catches what the guard was
+# built for -- GNTX at $1,099,172 against a $23.68 price was 46,418x -- while letting a
+# deliberately optimistic scenario through. Two thresholds because there are two questions:
+# "is this number useful for ranking?" and "is this number absurd?"
+MAX_INTRINSIC_TO_PRICE_OVERRIDE = 10.0
+
 # WACC sensitivity grid offsets (±)
 _WACC_OFFSETS = [-0.02, -0.01, 0.0, 0.01, 0.02]
 _TG_OFFSETS = [-0.01, -0.005, 0.0, 0.005, 0.01]
@@ -928,11 +945,16 @@ def _run_dcf_core(
     # Symmetric with the non-positive guard above: the fade fixed the downside tail, not the
     # upside one. Skipped when there is no usable price to compare against, since the ratio is
     # then undefined rather than acceptable.
-    if effective_price > 0 and intrinsic > MAX_INTRINSIC_TO_PRICE * effective_price:
+    # Caller-supplied per-year forecasts get the looser bound (see the constants above). Only
+    # `years` counts: a caller who overrode beta or terminal growth alone still has a
+    # forecaster-driven revenue and margin path, which is exactly what 2.5 was fitted against.
+    _caller_drove_forecast = bool(overrides and overrides.years)
+    _bound = MAX_INTRINSIC_TO_PRICE_OVERRIDE if _caller_drove_forecast else MAX_INTRINSIC_TO_PRICE
+    if effective_price > 0 and intrinsic > _bound * effective_price:
         raise ValueError(
             f"Intrinsic value per share ({intrinsic:,.2f}) is "
             f"{intrinsic / effective_price:,.1f}x the market price ({effective_price:,.2f}), above "
-            f"the {MAX_INTRINSIC_TO_PRICE:g}x plausibility bound. This is a computation failure "
+            f"the {_bound:g}x plausibility bound. This is a computation failure "
             "rather than a valuation — check the revenue and margin forecast."
         )
 

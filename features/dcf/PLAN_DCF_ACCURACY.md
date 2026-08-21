@@ -431,6 +431,32 @@ failure cannot be manufactured by a bias running in the factor's favour.
 
 ---
 
+### Follow-up: the bound had to split by caller  [x] **2026-08-21**
+
+Tightening `MAX_INTRINSIC_TO_PRICE` to 2.5 globally was a regression for the AI DCF, which runs
+bear/base/bull through the same `run_dcf_av`. Measured across 25 tickers: bull scenarios lost
+**2/25 -> 7/25**. Availability was never at risk (the base scenario did not trip), but the AI DCF
+presents a RANGE, and dropping the bull truncates it asymmetrically -- biasing the shown valuation
+downward, which is worse than a wide range.
+
+The fix is a second constant rather than a looser single bound, because there are two different
+questions:
+
+| | question | value |
+|---|---|---|
+| `MAX_INTRINSIC_TO_PRICE` | is this number useful for ranking? | 2.5 |
+| `MAX_INTRINSIC_TO_PRICE_OVERRIDE` | is this number absurd? | 10.0 |
+
+2.5 was fitted against runaway extrapolation **by the model**; it is the wrong test for a run whose
+forecast the caller supplied. 10x still catches what the guard was built for -- GNTX was 46,418x.
+Discriminator is `overrides.years` being non-empty: overriding beta or terminal growth alone leaves
+the revenue and margin path forecaster-driven, so it keeps the 2.5 bound.
+
+Regression tests: `tests/test_dcf_as_of.py::test_plausibility_bound_splits_by_who_drove_the_forecast`
+and `::test_non_forecast_overrides_still_get_the_default_bound`.
+
+---
+
 ### What this does and does not license
 
 - **No live trading change.** `dcf_upside` is not in `_VALUE_COLS`/`_QUALITY_COLS`/`_MOMENTUM_COL`

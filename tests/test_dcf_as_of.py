@@ -136,3 +136,40 @@ def test_live_path_unchanged_by_as_of_plumbing():
     latest_annual = load_av_annual_financials("AAPL")
     assert live.current_price is not None and live.current_price > 0
     assert not latest_annual["income"].empty
+
+
+# ── Plausibility bound: two thresholds, two questions ────────────────────────
+
+def test_plausibility_bound_splits_by_who_drove_the_forecast():
+    """The 2.5x bound is a signal-quality threshold fitted against runaway extrapolation BY THE
+    MODEL. A caller who supplies per-year forecasts owns the output, so those runs get the looser
+    10x sanity backstop instead.
+
+    Without this split, tightening the mechanical bound tripled AI-DCF bull-scenario loss
+    (2/25 -> 7/25), truncating the bear/base/bull range asymmetrically and biasing the presented
+    valuation downward.
+    """
+    from dcf.assumptions import UserOverrides, YearOverride
+    from dcf.model import MAX_INTRINSIC_TO_PRICE, MAX_INTRINSIC_TO_PRICE_OVERRIDE
+
+    assert MAX_INTRINSIC_TO_PRICE < MAX_INTRINSIC_TO_PRICE_OVERRIDE
+
+    as_of = date(2015, 6, 30)
+
+    # AAPL reconstructs to ~3.2x price here: over the default bound, under the override one.
+    with pytest.raises(ValueError, match=r"plausibility bound"):
+        run_dcf_av("AAPL", as_of=as_of)
+
+    overrides = UserOverrides(years={i: YearOverride(revenue_growth=0.10) for i in range(1, 6)})
+    result = run_dcf_av("AAPL", overrides=overrides, as_of=as_of)
+    assert result.intrinsic_value_per_share > 0
+
+
+def test_non_forecast_overrides_still_get_the_default_bound():
+    """Only `years` counts. Overriding beta or terminal growth alone leaves the revenue and
+    margin path forecaster-driven, which is exactly what the 2.5x bound was fitted against —
+    so it must NOT buy the looser threshold."""
+    from dcf.assumptions import UserOverrides
+
+    with pytest.raises(ValueError, match=r"2\.5x plausibility bound"):
+        run_dcf_av("AAPL", overrides=UserOverrides(beta=1.1), as_of=date(2015, 6, 30))

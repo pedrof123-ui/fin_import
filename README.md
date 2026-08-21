@@ -155,6 +155,13 @@ rather than returning a wrong one. Both write `status='error'` with the reason i
   computation failure, not a bargain. Before this guard the universe contained GNTX at $1,099,172
   per share against a $23.64 price. Was 10.0 until 2026-08-21, when the measurement below showed
   the DCF carries no cross-sectional signal at that bound.
+- **`MAX_INTRINSIC_TO_PRICE_OVERRIDE = 10.0`** — applies instead when the *caller* supplied the
+  per-year forecast (AI DCF bear/base/bull scenarios, user-pinned years in the UI). 2.5 is a
+  signal-quality threshold fitted against runaway extrapolation *by the model*; when a caller
+  deliberately specifies an optimistic case, a 3x result is their stated view, not a failure.
+  Measured: applying 2.5 to override runs tripled AI-DCF bull-scenario loss (2/25 → 7/25),
+  truncating the presented range asymmetrically. Overriding beta or terminal growth alone does
+  **not** qualify — only per-year forecasts do.
 
 **Accuracy measurement (2026-08-21).** `dcf_upside` was reconstructed point-in-time over 2010-2024
 (60 quarterly as-of dates, 61,289 valuations) and put through the same gauntlet that rejected
