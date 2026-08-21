@@ -1,9 +1,12 @@
 import os
+from datetime import date
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
+
+from historic_fundamentals.pe import LAG_ANNUAL, LAG_QUARTERLY
 
 ROOT = Path(__file__).resolve().parent.parent
 AV_DB = Path(os.environ.get("AV_FINANCIALS_DB_PATH", str(ROOT / "data" / "av_financials.duckdb")))
@@ -36,6 +39,19 @@ _CASHFLOW_RENAME = {
 
 def _open() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(AV_DB), read_only=True)
+
+
+def _as_of_clause(as_of: date | None, period_type: str) -> tuple[str, list]:
+    """SQL fragment restricting rows to those publicly available on `as_of`.
+
+    Uses the repo's single reporting-lag convention (historic_fundamentals.pe) rather than a
+    second one: a fiscal period is treated as knowable only once its lag has elapsed. Returns
+    an empty fragment when as_of is None, so the live path is byte-identical to before.
+    """
+    if as_of is None:
+        return "", []
+    lag = LAG_ANNUAL if period_type == "annual" else LAG_QUARTERLY
+    return " AND fiscal_date_ending <= ?", [as_of - lag]
 
 
 def _check(ticker: str, conn: duckdb.DuckDBPyConnection) -> None:
@@ -89,27 +105,29 @@ def _fill_gross_profit(inc: pd.DataFrame) -> pd.DataFrame:
     return inc
 
 
-def load_av_annual_financials(ticker: str) -> dict[str, pd.DataFrame]:
+def load_av_annual_financials(ticker: str, as_of: date | None = None) -> dict[str, pd.DataFrame]:
+    """Annual statements newest-first. `as_of` restricts to periods public by that date."""
+    where, params = _as_of_clause(as_of, "annual")
     conn = _open()
     try:
         _check(ticker, conn)
         inc = conn.execute(
-            """SELECT * FROM income_statements
-               WHERE ticker = ? AND period_type = 'annual'
+            f"""SELECT * FROM income_statements
+               WHERE ticker = ? AND period_type = 'annual'{where}
                ORDER BY fiscal_date_ending DESC""",
-            [ticker],
+            [ticker, *params],
         ).df()
         bs = conn.execute(
-            """SELECT * FROM balance_sheets
-               WHERE ticker = ? AND period_type = 'annual'
+            f"""SELECT * FROM balance_sheets
+               WHERE ticker = ? AND period_type = 'annual'{where}
                ORDER BY fiscal_date_ending DESC""",
-            [ticker],
+            [ticker, *params],
         ).df()
         cf = conn.execute(
-            """SELECT * FROM cash_flow_statements
-               WHERE ticker = ? AND period_type = 'annual'
+            f"""SELECT * FROM cash_flow_statements
+               WHERE ticker = ? AND period_type = 'annual'{where}
                ORDER BY fiscal_date_ending DESC""",
-            [ticker],
+            [ticker, *params],
         ).df()
     finally:
         conn.close()
@@ -128,27 +146,29 @@ def load_av_annual_financials(ticker: str) -> dict[str, pd.DataFrame]:
     return {"income": inc, "balance": bs, "cashflow": cf}
 
 
-def load_av_quarterly_financials(ticker: str) -> dict[str, pd.DataFrame]:
+def load_av_quarterly_financials(ticker: str, as_of: date | None = None) -> dict[str, pd.DataFrame]:
+    """Quarterly statements oldest-first. `as_of` restricts to periods public by that date."""
+    where, params = _as_of_clause(as_of, "quarterly")
     conn = _open()
     try:
         _check(ticker, conn)
         inc = conn.execute(
-            """SELECT * FROM income_statements
-               WHERE ticker = ? AND period_type = 'quarterly'
+            f"""SELECT * FROM income_statements
+               WHERE ticker = ? AND period_type = 'quarterly'{where}
                ORDER BY fiscal_date_ending ASC""",
-            [ticker],
+            [ticker, *params],
         ).df()
         bs = conn.execute(
-            """SELECT * FROM balance_sheets
-               WHERE ticker = ? AND period_type = 'quarterly'
+            f"""SELECT * FROM balance_sheets
+               WHERE ticker = ? AND period_type = 'quarterly'{where}
                ORDER BY fiscal_date_ending ASC""",
-            [ticker],
+            [ticker, *params],
         ).df()
         cf = conn.execute(
-            """SELECT * FROM cash_flow_statements
-               WHERE ticker = ? AND period_type = 'quarterly'
+            f"""SELECT * FROM cash_flow_statements
+               WHERE ticker = ? AND period_type = 'quarterly'{where}
                ORDER BY fiscal_date_ending ASC""",
-            [ticker],
+            [ticker, *params],
         ).df()
     finally:
         conn.close()

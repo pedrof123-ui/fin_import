@@ -1,3 +1,5 @@
+from datetime import date
+
 import numpy as np
 import pandas as pd
 
@@ -591,11 +593,22 @@ def run_dcf_av(
     ticker: str,
     overrides: "UserOverrides | None" = None,
     estimates_conn=None,
+    as_of: "date | None" = None,
 ) -> "DcfResult":
+    """Run the AV-sourced DCF. `as_of` reconstructs the valuation as of a historical date.
+
+    Every input is restricted to what was public on that date: statements by the repo's
+    reporting-lag convention, price and risk-free rate by date, beta by computed_date. Analyst
+    estimates are unavailable point-in-time (earnings_estimates only begins 2026-05-10), so an
+    as-of run is the *mechanical* model with no analyst layer — which diverges from the live
+    model by ~29% median intrinsic value. See features/dcf/PLAN_DCF_ACCURACY.md.
+    """
     import dataclasses
     from dcf.av_data import load_av_annual_financials, load_av_quarterly_financials
-    quarterly = load_av_quarterly_financials(ticker)
-    annual = load_av_annual_financials(ticker)
+    if as_of is not None:
+        estimates_conn = None
+    quarterly = load_av_quarterly_financials(ticker, as_of=as_of)
+    annual = load_av_annual_financials(ticker, as_of=as_of)
     if overrides is None or overrides.terminal_growth_rate is None:
         median_g = _default_terminal_growth(annual["income"])
         if overrides is None:
@@ -609,7 +622,7 @@ def run_dcf_av(
             overrides,
             default_ebit_margin_pct=_median_ebit_margin(annual["income"]),
         )
-    return _run_dcf_core(ticker, annual, quarterly, overrides, estimates_conn=estimates_conn)
+    return _run_dcf_core(ticker, annual, quarterly, overrides, estimates_conn=estimates_conn, as_of=as_of)
 
 
 def _run_dcf_core(
@@ -618,14 +631,15 @@ def _run_dcf_core(
     quarterly: dict,
     overrides: "UserOverrides | None" = None,
     estimates_conn=None,
+    as_of: "date | None" = None,
 ) -> "DcfResult":
     from dcf.assumptions import DcfResult
     from dcf.data import load_current_price, load_risk_free_rate, load_risk_free_rate_30y
     from dcf.wacc import compute_wacc, compute_effective_tax_rate, DEFAULT_MRP, DEFAULT_RF
     from dcf.forecaster import forecast_assumptions, merge_overrides, compute_nwc_days, extend_growth_years
 
-    price = load_current_price(ticker)
-    rf = load_risk_free_rate_30y() or load_risk_free_rate()
+    price = load_current_price(ticker, as_of=as_of)
+    rf = load_risk_free_rate_30y(as_of=as_of) or load_risk_free_rate(as_of=as_of)
 
     if overrides and overrides.risk_free_rate is not None:
         rf = overrides.risk_free_rate
@@ -657,6 +671,7 @@ def _run_dcf_core(
         cost_of_debt_override=overrides.cost_of_debt_override if overrides else None,
         tax_rate_override=overrides.tax_rate_override if (overrides and overrides.tax_rate_override is not None) else annual_tax_rate,
         annual_income_df=annual["income"],
+        as_of=as_of,
     )
 
     warnings: list[str] = []
@@ -945,4 +960,5 @@ def _run_dcf_core(
         warnings=warnings,
         y1_quarters=y1_quarters,
         analyst_estimates=analyst_estimates,
+        analyst_years_applied=len(_analyst_years),
     )

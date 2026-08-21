@@ -1,6 +1,7 @@
 import os
 import duckdb
 import pandas as pd
+from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -105,46 +106,64 @@ def load_annual_financials(db, ticker: str) -> dict[str, pd.DataFrame]:
     return stmts
 
 
-def load_current_price(ticker: str) -> float | None:
-    from historic_fundamentals.quote import fetch_live_price
+def load_current_price(ticker: str, as_of: date | None = None) -> float | None:
+    """Latest close, or the last close on/before `as_of`.
 
-    live = fetch_live_price(ticker)
-    if live is not None:
-        return live
+    The live quote is deliberately skipped when as_of is set — fetching today's price into a
+    historical valuation is the most direct look-ahead available, and it would not even error.
+    """
+    if as_of is None:
+        from historic_fundamentals.quote import fetch_live_price
+
+        live = fetch_live_price(ticker)
+        if live is not None:
+            return live
 
     try:
         conn = duckdb.connect(str(PRICES_DB), read_only=True)
-        row = conn.execute(
-            "SELECT close FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
-            [ticker],
-        ).fetchone()
+        if as_of is None:
+            row = conn.execute(
+                "SELECT close FROM stock_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+                [ticker],
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT close FROM stock_prices WHERE ticker = ? AND date <= ? "
+                "ORDER BY date DESC LIMIT 1",
+                [ticker, as_of],
+            ).fetchone()
         conn.close()
         return float(row[0]) if row else None
     except Exception:
         return None
 
 
-def load_risk_free_rate() -> float | None:
+def _load_fred_series(series_id: str, as_of: date | None) -> float | None:
+    try:
+        conn = duckdb.connect(str(FRED_DB), read_only=True)
+        if as_of is None:
+            row = conn.execute(
+                "SELECT value FROM economic_indicators WHERE series_id = ? "
+                "ORDER BY date DESC LIMIT 1",
+                [series_id],
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT value FROM economic_indicators WHERE series_id = ? AND date <= ? "
+                "ORDER BY date DESC LIMIT 1",
+                [series_id, as_of],
+            ).fetchone()
+        conn.close()
+        return float(row[0]) / 100.0 if row else None
+    except Exception:
+        return None
+
+
+def load_risk_free_rate(as_of: date | None = None) -> float | None:
     """Returns DGS10 as decimal (e.g. 0.045 for 4.5%). Returns None if unavailable."""
-    try:
-        conn = duckdb.connect(str(FRED_DB), read_only=True)
-        row = conn.execute(
-            "SELECT value FROM economic_indicators WHERE series_id = 'DGS10' ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return float(row[0]) / 100.0 if row else None
-    except Exception:
-        return None
+    return _load_fred_series("DGS10", as_of)
 
 
-def load_risk_free_rate_30y() -> float | None:
+def load_risk_free_rate_30y(as_of: date | None = None) -> float | None:
     """Returns DGS30 as decimal. Falls back to DGS10 + 0.005 if unavailable."""
-    try:
-        conn = duckdb.connect(str(FRED_DB), read_only=True)
-        row = conn.execute(
-            "SELECT value FROM economic_indicators WHERE series_id = 'DGS30' ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return float(row[0]) / 100.0 if row else None
-    except Exception:
-        return None
+    return _load_fred_series("DGS30", as_of)

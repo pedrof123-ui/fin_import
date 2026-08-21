@@ -1,3 +1,5 @@
+from datetime import date
+
 import numpy as np
 import pandas as pd
 
@@ -13,10 +15,13 @@ DEFAULT_MRP = 0.055  # 5.5% Damodaran estimate
 DEFAULT_RF = 0.045   # fallback if fred.duckdb unavailable
 
 
-def get_betas(ticker: str) -> tuple[float | None, float | None]:
-    """Return (beta_5yr, beta_2yr) from stored weekly betas."""
+def get_betas(ticker: str, as_of: date | None = None) -> tuple[float | None, float | None]:
+    """Return (beta_5yr, beta_2yr) from stored weekly betas, as of `as_of` when given."""
     from features.beta.beta import get_beta as _get_beta, WINDOW_5YR, WINDOW_2YR
-    return _get_beta(ticker, window_days=WINDOW_5YR), _get_beta(ticker, window_days=WINDOW_2YR)
+    return (
+        _get_beta(ticker, as_of_date=as_of, window_days=WINDOW_5YR),
+        _get_beta(ticker, as_of_date=as_of, window_days=WINDOW_2YR),
+    )
 
 
 def compute_effective_tax_rate(income_df: pd.DataFrame) -> float:
@@ -62,10 +67,11 @@ def compute_wacc(
     cost_of_debt_override: float | None = None,
     tax_rate_override: float | None = None,
     annual_income_df: pd.DataFrame | None = None,
+    as_of: date | None = None,
 ) -> "WaccDetail":
     from dcf.assumptions import WaccDetail
 
-    beta_5yr_stored, beta_2yr_stored = get_betas(ticker)
+    beta_5yr_stored, beta_2yr_stored = get_betas(ticker, as_of=as_of)
     beta_raw = beta_override if beta_override is not None else (beta_5yr_stored or 1.0)
     tax_rate = tax_rate_override if tax_rate_override is not None else compute_effective_tax_rate(income_df)
 
