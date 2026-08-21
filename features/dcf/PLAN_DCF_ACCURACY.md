@@ -1,6 +1,8 @@
 # DCF Accuracy — Measurement Plan
 
-Created 2026-08-20. **Status: Phase 0 complete 2026-08-21. Phase 1 accumulating. Phase 2 next.**
+Created 2026-08-20. **Status: Phases 0-3 complete 2026-08-21. Verdict: the DCF-upside factor is
+REJECTED at the old 10x bound; tightening the bound to 2.5x rescues it to earnings_yield-grade
+and is walk-forward validated. Phase 1 continues accumulating.**
 
 ## Why this exists
 
@@ -20,6 +22,25 @@ never faced it, and it feeds the Screener's `dcf_upside` filter and the AI Resea
 anchor regardless.
 
 Until this measurement exists, further DCF tuning is unfalsifiable by construction.
+
+**What "accuracy" means here, and what it does not.** There is no ground truth for intrinsic
+value, so this plan cannot measure whether a fair value is close to right in dollar terms. It
+measures a **proxy**: if the DCF is any good, stocks it calls cheap should outperform stocks it
+calls expensive. That proxy is the bar every other factor in this repo faced, but it answers "is
+this useful for ranking?" rather than "is this number right?" A DCF systematically 30% too low for
+every company would score perfectly here, because a constant bias cancels in a cross-sectional
+rank. Read every result below with that limit in mind.
+
+Three distinct things get reported and they are independent of each other:
+
+| | what it means |
+|---|---|
+| **completion / coverage** | `run_dcf_av` returned a number instead of raising |
+| **plausibility** | the number sits inside defensible bounds (the output guards) |
+| **predictive validity** | the number ranks stocks by forward return (IC, quintiles, folds) |
+
+Coverage is not accuracy. The Phase 3 guard change deliberately trades the first for the third:
+coverage 81% -> 72%, mean IC 0.016 -> 0.044.
 
 ---
 
@@ -217,6 +238,12 @@ and buys almost nothing, since the statement inputs do not change that fast.
 >=8 quarterly periods, vs 1,551 at 2010 and 2,556 at 2024), but survivorship worsens going back,
 so the extra folds are the most contaminated ones.
 
+**Cap floor $1B, to match the gauntlet's UNIVERSE_DEFAULTS.** NOTE: the justification originally
+given here — that sub-$1B names would "degrade panel quality" because they complete less often —
+was WRONG, and the small-cap panel run afterwards disproves it. See the small-cap section in
+Phase 3. The floor is defensible only as "matches the bar the rejected factors faced", not as a
+quality argument.
+
 **2.2 Pilot point-in-time correctness on one or two years before spending hours.** [x]
 **Complete 2026-08-21.** This is the whole risk of the exercise. A reconstruction that lets the forecaster see data published after the
 as-of date produces a look-ahead-biased result that will look excellent and mean nothing.
@@ -253,11 +280,30 @@ as_of=2019-06-30  iv=  64.16  px=  47.35  wacc=0.0778  beta=1.129  rf=0.0252  ay
 as_of=None        iv= 115.23  px= 311.30  wacc=0.1107  beta=1.105  rf=0.0519  ay=0
 ```
 
-**2.3 Only then run the full reconstruction.** [ ] Next.
+**2.3 Only then run the full reconstruction.** [x] **Complete 2026-08-21.**
+`scripts/reconstruct_dcf_panel.py`, 60 quarterly as-of dates 2010-2024, 6 workers, 88 minutes.
+**75,280 ticker-dates, 2,259 tickers, 61,289 ok valuations (81.4%)** — matching production's
+81.4% exactly, which is the check that the as-of path is not quietly starving the model.
+
+Two pre-flight checks before trusting it:
+
+- **Success rate by year is flat (77-85%) with no early-year decay** — 2010 at 82.8% sits on the
+  panel average. This was the real risk: had 2010-2012 come in worse it would have meant thin
+  point-in-time AV coverage, and any factor result would have been driven by which companies
+  survived the filter in early folds.
+- **The 2020-21 dip (78.1%/77.0%) is composition, not defect.** Verified rather than assumed:
+  insufficient-quarterly-history failures run 15.3% there vs 5.1% elsewhere — the IPO/SPAC cohort
+  crossing $1B without eight quarters of filings. Those had no computable DCF at the time, which
+  is correct behaviour.
+
+**Universe-filter integrity.** `universe_at()` derives market cap from `monthly_pe.shares`, which
+goes transiently wrong around splits. Measured: **21 ticker-dates, 0.028% of the panel**. It only
+decides where compute is spent — the DCF reads `diluted_shares` from the AV statements — so a
+spuriously included ticker still gets a correct valuation.
 
 ---
 
-## Phase 3 — The actual test  [ ]
+## Phase 3 — The actual test  [x] **Complete 2026-08-21 — REJECTED as-is**
 
 Treat **DCF-implied upside** (`intrinsic_value / price - 1`) as a factor and run it through the
 same gauntlet every other candidate faces: rank IC, ICIR with Newey-West, quintile spread, and
@@ -287,6 +333,112 @@ already in the composite can post a respectable standalone IC and still add noth
 **Report dispersion alongside every median.** The beta fix in Step 0.2 moved 40% of its group by
 more than 25% while showing a median change of +0.02% — a symmetric re-dispersion and a no-op are
 indistinguishable at the median. Quintile spread is the metric that separates them.
+
+---
+
+### Result (`scripts/test_dcf_upside_factor.py`)
+
+**1. Standalone rank IC vs ret_1y — indistinguishable from zero.**
+
+| factor | mean IC | ICIR (NW) | hit rate | t |
+|---|---|---|---|---|
+| **dcf_upside** | **0.0148** | **0.53** | **52.7%** | **1.43** |
+| fcf_yield | 0.0871 | 4.06 | 78.1% | 11.28 |
+| roic | 0.0513 | 3.77 | 75.7% | 8.99 |
+| earnings_yield | 0.0498 | 2.20 | 69.2% | 5.89 |
+| ebitda_ev_yield | 0.0489 | 1.64 | 64.5% | 4.70 |
+
+**2. Incremental IC — the unique component is negatively predictive.** Rank correlation with the
+existing value factors is 0.43-0.46. Residualised on them, dcf_upside's IC is **-0.0164**
+(ICIR-NW -0.75, hit rate 44.3%, t = -1.95). Whatever the DCF knows that `earnings_yield` and
+`ebitda_ev_yield` do not was actively wrong.
+
+**3. Quintiles are non-monotonic and the "cheapest" bucket is the worst:** Q1 (highest upside)
+0.1410, Q2 0.1506, Q3 0.1585, Q4 0.1538, Q5 0.1527. Mean Q1-Q5 spread -0.0117, positive in only
+45.5% of months. The mild positive IC comes from the middle of the distribution, not the extremes.
+
+**4. Fold win rate:** 8/15 (53%) standalone, 6/15 (40%) residualised.
+
+**Against the predictions committed above:** prediction 1 was correct (0.0148, inside the stated
+0.01-0.03, failing fold win rate). Prediction 2 was correct but understated — redundancy is
+moderate (0.43-0.46, not the ~0.8 implied) yet the incremental result is worse than "adds
+nothing", it is negative.
+
+**A pooled table by valuation bucket appears to show the opposite and is NOT evidence.** Pooling
+across months confounds the factor with time: periods with many high-upside stocks are post-crash
+periods with high forward returns. The per-month cross-sectional result is the valid one, which is
+why the gauntlet computes IC per month.
+
+### Follow-up: the guard is the fix  [x]
+
+The non-monotonic quintile pattern says extreme DCF outputs are where the model breaks. Trimming
+them rescues the factor:
+
+| bound | mean IC | ICIR (NW) | t | rows kept |
+|---|---|---|---|---|
+| 10.0 (old) | 0.0157 | 0.56 | 1.51 | 99.6% |
+| 3.0 | 0.0368 | 1.47 | 4.07 | 82.8% |
+| **2.5 (adopted)** | **0.0441** | **1.81** | **4.97** | **78.3%** |
+| 2.0 | 0.0451 | 1.92 | 5.20 | 71.8% |
+
+That sweep is in-sample selection — the same pattern that killed the MD&A contrarian composite —
+so it was validated out-of-sample (`scripts/test_dcf_guard_walkforward.py`, 5 train years /
+1 test year, matching `test_canslim_rs_updown_regime.py`):
+
+- **Adaptive** (threshold chosen on train, scored on the unseen next year): beats 10x in **8/10
+  folds**, and the selection is **stable** — 2 distinct values across 10 folds, converging on 1.5.
+- **Fixed 2.0x vs 10x**: wins **12/15 years**, mean IC delta +0.0285, and **stronger in the recent
+  half** (7/8 vs 5/7 early) — the opposite of the single-regime artifact that killed the CANSLIM
+  regime factors. The three losing years are all years when the baseline IC was already strongly
+  positive, i.e. tightening trades a little upside in good years for a lot in bad ones.
+
+**Adopted 2.5, the loosest bound the evidence supports** — the walk-forward's own choice was
+tighter, so 2.5 maximises coverage without leaving the validated range. Cost: 232 of 2,145 ok
+tickers reclassified as failures, universe with no mechanical DCF 19.4% -> ~28.1%.
+
+### Small-cap band ($300M-1B) — CORRECTS an earlier claim in this plan
+
+A second panel was reconstructed over the $300M-1B band (36 min, 21,969 ticker-dates, 1,575
+tickers, 72.5% completion vs 81.4% for >=$1B) and run through the same gauntlet:
+
+| bound | mean IC | ICIR (NW) | hit | t | Q1-Q5 spread | folds |
+|---|---|---|---|---|---|---|
+| 10.0 | 0.0615 | 3.13 | 73.1% | 7.69 | **+0.0465** | 12/15 |
+| 2.5 | 0.0672 | 2.98 | 70.7% | 6.82 | +0.0494 | 10/15 |
+| 2.0 | 0.0753 | 3.10 | 70.1% | 7.10 | +0.0533 | 10/15 |
+
+**The factor is far stronger in small caps than large caps, and it was never rejected there** —
+even at the untightened 10x bound it posts ICIR-NW 3.13 and a positive quintile spread, against
+0.56 and a *negative* spread for >=$1B.
+
+**This corrects the reasoning recorded earlier in this plan.** Small caps were excluded on the
+grounds that they would "degrade panel quality", citing DCF completion rates (73.5% vs 80.5%).
+That conflated two independent things: **completion is a coverage metric, not an accuracy
+metric.** A ticker-date "succeeds" when `run_dcf_av` returns a number instead of raising — it says
+nothing about whether the number was right. Small caps complete less often *and* rank better.
+
+**Treat the small-cap result with more suspicion than the large-cap one, not less.** This plan
+pre-committed to the rule that a pass on a survivorship-flattered panel should be blamed on the
+bias first, and small caps are where that bias is worst by a wide margin: delisting rates are far
+higher than the large-cap 51%-of-S&P-exits figure, every one of the 1,575 tickers in the panel
+still exists today, and the companies missing are disproportionately the cheap-looking ones that
+went to zero — exactly the population that would otherwise sit in the high-upside bucket and drag
+its return down. The large-cap rejection is the more trustworthy of the two findings, because
+failure cannot be manufactured by a bias running in the factor's favour.
+
+**The 2.5x bound still stands:** it improves both bands (large cap 0.0157 -> 0.0441, small cap
+0.0615 -> 0.0672), so the guard change is not a large-cap-only artifact.
+
+---
+
+### What this does and does not license
+
+- **No live trading change.** `dcf_upside` is not in `_VALUE_COLS`/`_QUALITY_COLS`/`_MOMENTUM_COL`
+  and `score_live.py` never reads it. No position or backtest baseline depends on it.
+- **It is used in exactly two places**: the Screener's filter (`api/screener_router.py`) and its UI
+  column (`web/components/ScreenerViewer.tsx`).
+- **This does not test the AI Researcher's per-company anchor.** Cross-sectional ranking ability
+  and per-company calibration are different questions; that one needs its own test.
 
 ---
 

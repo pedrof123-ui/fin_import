@@ -23,6 +23,13 @@ from historic_fundamentals.pe import LAG_ANNUAL, LAG_QUARTERLY
 
 _AS_OF_DATES = [date(2012, 6, 30), date(2015, 6, 30), date(2019, 6, 30), date(2023, 6, 30)]
 _TICKERS = ["AAPL", "MSFT", "JPM", "WMT", "XOM"]
+# Wider list for the tests that need *some* ticker to clear the plausibility bound on a given
+# date. Five large caps were not enough: none of them produced a DCF on 2012-06-30, which
+# silently skipped that date rather than testing it.
+_VALUABLE_CANDIDATES = _TICKERS + [
+    "JNJ", "PG", "KO", "PEP", "MRK", "PFE", "CVX", "T", "VZ", "IBM",
+    "MCD", "HD", "CAT", "MMM", "UNH", "ORCL", "CSCO", "INTC", "TXN", "ADP",
+]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -79,25 +86,48 @@ def test_price_and_beta_not_from_the_future(ticker: str, as_of: date):
     assert beta_5yr is not None, f"{ticker}: no beta on/before {as_of}"
 
 
+def _first_valuable(as_of: date):
+    """First ticker that produces a DCF on `as_of`.
+
+    Not pinned to one name on purpose: the plausibility bound legitimately rejects individual
+    ticker-dates (AAPL reconstructs to 3.2x price in 2015), and a test of the as-of plumbing
+    should not fail because one company tripped an unrelated guard.
+    """
+    for ticker in _VALUABLE_CANDIDATES:
+        try:
+            return run_dcf_av(ticker, as_of=as_of)
+        except ValueError:
+            continue
+    pytest.skip(f"no ticker in {_VALUABLE_CANDIDATES} produced a DCF on {as_of}")
+
+
 @pytest.mark.parametrize("as_of", _AS_OF_DATES)
 def test_as_of_run_uses_no_analyst_estimates(as_of: date):
     """earnings_estimates only begins 2026-05-10, so any analyst input in a historical run is
     by definition from the future. run_dcf_av must drop it rather than leave it to the caller."""
-    result = run_dcf_av("AAPL", as_of=as_of)
+    result = _first_valuable(as_of)
     assert result.analyst_years_applied == 0
     assert result.analyst_estimates == []
 
 
 def test_as_of_moves_every_dated_input():
     """A guard against as_of being silently ignored — the failure mode that produces a
-    look-ahead-clean-looking result. Each input must differ between two distant dates."""
-    old = run_dcf_av("AAPL", as_of=date(2015, 6, 30))
-    new = run_dcf_av("AAPL", as_of=date(2023, 6, 30))
+    look-ahead-clean-looking result. Each input must differ between two distant dates.
 
-    assert old.current_price != new.current_price
-    assert old.wacc_detail.risk_free_rate != new.wacc_detail.risk_free_rate
-    assert old.wacc_detail.beta_raw != new.wacc_detail.beta_raw
-    assert old.intrinsic_value_per_share != new.intrinsic_value_per_share
+    Asserted on the loaders rather than on run_dcf_av, so that a ticker tripping the
+    plausibility bound on one of the two dates cannot mask a genuine as_of regression.
+    """
+    old_d, new_d = date(2015, 6, 30), date(2023, 6, 30)
+
+    assert load_current_price("AAPL", as_of=old_d) != load_current_price("AAPL", as_of=new_d)
+    assert get_betas("AAPL", as_of=old_d)[0] != get_betas("AAPL", as_of=new_d)[0]
+
+    old_stmt = load_av_annual_financials("AAPL", as_of=old_d)["income"]
+    new_stmt = load_av_annual_financials("AAPL", as_of=new_d)["income"]
+    assert pd.to_datetime(old_stmt["period_end_date"]).max() < pd.to_datetime(new_stmt["period_end_date"]).max()
+
+    from dcf.data import load_risk_free_rate_30y
+    assert load_risk_free_rate_30y(as_of=old_d) != load_risk_free_rate_30y(as_of=new_d)
 
 
 def test_live_path_unchanged_by_as_of_plumbing():

@@ -20,12 +20,30 @@ DEFAULT_TERMINAL_GROWTH = 0.03  # 3%
 # 0.75x of price while p99 was 35x and the maximum 46,418x — GNTX at $1,099,172 per share against
 # a $23.68 price, Dominion at $904,809. All were reported as valid.
 #
-# Set to 10x, which reclassifies 75 tickers (3.4% of ok) as explicit failures. Deliberately loose:
-# a genuinely mispriced company can be worth several times its price, and ~17% of the universe
-# already has no mechanical DCF, so a tighter bar pushes the AI Researcher onto its degradation
-# path more often for less certain gain. Tighten once the degradation rate has been observed in
-# production; 5x would take 141 tickers (6.4%) and 3x would take 215 (9.7%).
-MAX_INTRINSIC_TO_PRICE = 10.0
+# Was 10.0 until 2026-08-21, set "deliberately loose" pending evidence, with the note "tighten
+# once the degradation rate has been observed in production". That evidence now exists and it is
+# stronger than a degradation count: the reconstructed 2010-2024 panel
+# (features/dcf/PLAN_DCF_ACCURACY.md Phase 3) shows the factor carries essentially no
+# cross-sectional signal at 10x and real signal once the extremes are trimmed.
+#
+#   bound   mean IC   ICIR(NW)   t     rows kept
+#    10.0    0.0157     0.56    1.51     99.6%     <- indistinguishable from zero
+#     3.0    0.0368     1.47    4.07     82.8%
+#     2.5    0.0441     1.81    4.97     78.3%     <- earnings_yield is 0.0498 / 2.20
+#     2.0    0.0451     1.92    5.20     71.8%
+#
+# Walk-forward validated rather than picked from that sweep (scripts/test_dcf_guard_walkforward.py):
+# choosing the threshold on 5 train years and scoring it on the unseen next year beats 10x in 8/10
+# folds, and the selection is stable -- it converges on 1.5 in 7 of 10. A fixed 2.0x beats 10x in
+# 12/15 years and is STRONGER in the recent half (7/8, vs 5/7 early), so this is not the
+# single-regime artifact that killed the CANSLIM regime factors.
+#
+# 2.5 is the LOOSEST bound the evidence supports -- the walk-forward's own choice was tighter --
+# so it maximises coverage without leaving the validated range. Cost: 232 of 2,145 ok tickers
+# reclassified as failures, taking the universe with no mechanical DCF from 19.4% to ~28.1%.
+# Those fall onto the AI Researcher's degradation path, which is the intended behaviour: no
+# number beats a number with no signal in it.
+MAX_INTRINSIC_TO_PRICE = 2.5
 
 # WACC sensitivity grid offsets (±)
 _WACC_OFFSETS = [-0.02, -0.01, 0.0, 0.01, 0.02]
@@ -914,7 +932,7 @@ def _run_dcf_core(
         raise ValueError(
             f"Intrinsic value per share ({intrinsic:,.2f}) is "
             f"{intrinsic / effective_price:,.1f}x the market price ({effective_price:,.2f}), above "
-            f"the {MAX_INTRINSIC_TO_PRICE:.0f}x plausibility bound. This is a computation failure "
+            f"the {MAX_INTRINSIC_TO_PRICE:g}x plausibility bound. This is a computation failure "
             "rather than a valuation — check the revenue and margin forecast."
         )
 

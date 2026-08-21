@@ -151,18 +151,34 @@ Forecasting:
 rather than returning a wrong one. Both write `status='error'` with the reason into `dcf_results`:
 - **Non-positive intrinsic value** rejected. A negative value per share is not a valuation; it means
   the assumptions do not describe a going concern.
-- **`MAX_INTRINSIC_TO_PRICE = 10.0`** — an intrinsic value above 10x the market price is a
+- **`MAX_INTRINSIC_TO_PRICE = 2.5`** — an intrinsic value above 2.5x the market price is a
   computation failure, not a bargain. Before this guard the universe contained GNTX at $1,099,172
-  per share against a $23.64 price. Deliberately loose: a genuinely mispriced company can be worth
-  several times its price.
+  per share against a $23.64 price. Was 10.0 until 2026-08-21, when the measurement below showed
+  the DCF carries no cross-sectional signal at that bound.
 
-As of 2026-08-20 this leaves ~19% of the universe with no mechanical DCF (2,149 ok / 512 error of
-2,661). That is intended — the AI Researcher takes its DCF degradation path for those tickers
-instead of anchoring on a number nobody can defend. **There is no accuracy measurement for the DCF**;
-these guards establish plausibility only. See `features/dcf/PLAN_DCF_ACCURACY.md`.
+**Accuracy measurement (2026-08-21).** `dcf_upside` was reconstructed point-in-time over 2010-2024
+(60 quarterly as-of dates, 61,289 valuations) and put through the same gauntlet that rejected
+CANSLIM, Greenblatt, Fibonacci and MD&A. Results, and what they do and do not license:
+
+- **As a ranking factor it is rejected at the old 10x bound**: mean rank IC 0.0157, ICIR-NW 0.56,
+  t = 1.51 — indistinguishable from zero, against `fcf_yield` at 0.0871 / 4.06. Residualised on
+  the existing value factors its incremental IC is **negative** (-0.0164, t = -1.95): the part of
+  the DCF the value factors do not already know was actively wrong.
+- **Trimming implausible extremes fixes most of that.** At 2.5x, mean IC 0.0441 / ICIR-NW 1.81 —
+  comparable to `earnings_yield` (0.0498 / 2.20). Walk-forward validated, not picked from a sweep:
+  beats 10x in 8/10 out-of-sample folds, and is stronger in the recent half than the early one.
+- **It is not in the live trading composite** (`_VALUE_COLS`/`_QUALITY_COLS`/`_MOMENTUM_COL`) and
+  never was, so no position or backtest baseline depends on it.
+- **Ceilings on the claim**: the panel is 100% survivors by construction (51% of real S&P 500
+  exits since 2016 are absent from `monthly_pe`), and it covers only the >=$1B universe, where the
+  DCF succeeds 80-93% of the time versus 54% below $300M.
+
+At 2.5x roughly 28% of the universe has no mechanical DCF, up from 19% at 10x. That is intended —
+the AI Researcher takes its DCF degradation path for those tickers rather than anchoring on a
+number with no signal in it. See `features/dcf/PLAN_DCF_ACCURACY.md`.
 
 **WACC** (`dcf/wacc.py`):
-- Cost of equity: CAPM — `ke = rf + β × MRP`. Beta from yfinance; rf from FRED DGS10; MRP defaults to 5.5% (Damodaran).
+- Cost of equity: CAPM — `ke = rf + β × MRP`. Beta from stored rolling OLS betas vs VTI (`features/beta/beta.py`, `ticker_betas` in prices.duckdb, refreshed by a Saturday cron); rf from FRED DGS30 falling back to DGS10; MRP defaults to 5.5% (Damodaran).
 - Cost of debt: `kd = annual_interest_expense / avg_quarterly_debt`, clamped [2%, 15%]. Uses the **annual** income statement for interest expense so the full-year amount is divided by debt (not a quarterly fraction).
 - Capital structure weights: market-value based (`total_debt` from latest quarterly balance sheet; `market_cap = price × diluted_shares`).
 - Diluted shares: three-level fallback — quarterly income statement → annual income statement → derived from `net_income / diluted_eps`.
