@@ -160,9 +160,26 @@ residual folds       9/15     8/15     9/15     9/15
 
 **The verdict softens but stands.** The DCF does carry more information at longer horizons — but
 so does every value factor, so a DCF rising with horizon is not evidence about DCFs. What matters
-is the incremental contribution over the factors already in use, and at 5y that is **0.0201
-against `fcf_yield`'s 0.1569 standalone**, roughly an eighth, with **no improvement in fold
-consistency at any horizon** (flat 9/15).
+is the incremental contribution over the factors already in use:
+
+| | 3y | 5y |
+|---|---|---|
+| incremental IC | 0.0077 | 0.0201 |
+| as a share of `fcf_yield` standalone | **~1/19th** | ~1/8th |
+| incremental ICIR-NW | 0.64 | 1.29 |
+| incremental t | **1.81 — not significant** | 3.75 |
+| residual fold win rate | 9/15 | 9/15 |
+
+**3y is the weaker result, and 3y is the horizon that matters most.** The convergence argument
+rests on 3-5 years, and if a DCF had an edge it should be clearest at 3y — long enough for price
+to converge, short enough that the forecast still resembles the company. Instead the incremental
+contribution there is about a nineteenth of `fcf_yield`, with a t-stat that does not clear
+conventional significance before any discount for overlap.
+
+The 5y figure is the DCF's best horizon and the one quoted in early summaries of this work; it is
+also the *less* reliable of the two, resting on ~3 independent observations. Both tell the same
+story — a small, inconsistent incremental contribution — and 5y simply has more noise available to
+look impressive with. Fold consistency is flat at 9/15 across all four horizons regardless.
 
 **Long-horizon t-stats here are not usable and were pre-declared so.** `fcf_yield` at 5y posts a
 hit rate of **1.0000** with t = 27.7 — a 100% hit rate across 141 overlapping months means about

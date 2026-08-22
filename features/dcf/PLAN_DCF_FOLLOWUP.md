@@ -120,9 +120,15 @@ The DCF does carry more information at longer horizons — but so does every val
 evidence of anything specific to DCFs, which is exactly why constraint 1.3 required measuring
 INCREMENTAL IC rather than standalone.
 
-At 5y the incremental contribution is **0.0201 against fcf_yield's 0.1569 standalone** — about an
-eighth — with no gain in fold consistency. So *"not a useful ranking factor on its own merits"*
-**stands**. What no longer stands is *"actively wrong beyond the existing value factors"*.
+Incremental contribution against `fcf_yield` standalone: **~1/19th at 3y** (0.0077 vs 0.1444,
+t 1.81 — not significant) and **~1/8th at 5y** (0.0201 vs 0.1569). Fold consistency flat at 9/15
+throughout.
+
+**3y is the weaker result and it is the horizon that matters most** — the convergence argument
+rests on 3-5 years, and a real DCF edge should be clearest at 3y. The 5y figure is the DCF's best
+horizon and the least reliable one (~3 independent observations); quoting it alone overstates the
+case. So *"not a useful ranking factor on its own merits"* **stands**, and 3y strengthens it.
+What no longer stands is *"actively wrong beyond the existing value factors"*.
 
 ### Reconciliation worth keeping
 
