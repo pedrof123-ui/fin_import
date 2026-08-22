@@ -488,7 +488,117 @@ bias that runs in the factor's favour. If it passes, the bias is the first thing
 
 ---
 
-## Open question inherited from `archive/DCF_VISION.md`  [ ]
+## Open question inherited from `archive/DCF_VISION.md`  [x] **RESOLVED 2026-08-21**
+
+**The spec is unimplementable, and the code was right to reject it.** Measured across 1,831
+tickers holding both a WACC and >=5 annual growth observations:
+
+| terminal growth = median historical revenue growth | share of universe |
+|---|---|
+| **g >= WACC — Gordon Growth breaks entirely** | **45.8%** |
+| g within 1pp below WACC — terminal value explodes | 6.7% |
+| **broken or absurd in total** | **52.5%** |
+
+The median company's median historical revenue growth is 9.1% against a median WACC of 9.66%, and
+80.8% of companies exceed nominal GDP. As perpetual growth that is impossible on its face; as a
+Gordon Growth input it is arithmetically undefined for half the universe.
+
+So `_default_terminal_growth` ignoring its argument is not an unfinished implementation, as this
+plan originally speculated ("the logic was removed or never landed"). It is the correct rejection
+of a bad spec. **Flat 3% stands.**
+
+### Live follow-up: a BOUNDED per-company rule  [x] **REJECTED 2026-08-21**
+
+`min(median historical revenue growth, 3%)`, floored at 0 — only ever lowers, never raises. A
+business that grew 1.4%/yr for a decade should not be assumed to grow at 3% in perpetuity.
+
+Scope is small but not trivial: **88.6% of companies land exactly at 3% (unchanged), 11.4% change
+to a median 1.36%.** For that 11.4%, terminal growth 3% -> 1.36% at a 9.66% WACC takes the TV
+multiple from 15.5x to 12.2x — a 21% cut in terminal value and ~12% off enterprise value.
+
+Implemented behind `DCF_TERMINAL_GROWTH_RULE` (env var, so it survives into the reconstruction's
+worker processes; defaults to `flat`, so production is untouched until this is decided).
+
+**PREDICTION COMMITTED BEFORE THE PANEL RUN:** the ranking test will be **INCONCLUSIVE**. Only
+11.4% of names move, so the cross-sectional IC change should sit inside noise — I expect
+|delta IC| < 0.005 and no clean fold-win-rate signal. Direction, if any, mildly positive: the
+affected names are mature slow-growers whose fair values were overstated, so lowering them should
+help slightly.
+
+**This is the case flagged at the top of this plan**: terminal growth is largely a LEVEL
+assumption, and a ranking test cannot see a level shift. If the result is inconclusive as
+predicted, the rule should be decided on economic grounds — not held hostage to a statistical
+answer this method cannot produce. Recording that in advance so an inconclusive result is not
+retrofitted into either a pass or a rejection.
+
+#### Methodology error caught during the first comparison (2026-08-21)
+
+The first capped-vs-flat comparison showed coverage collapsing 81.4% -> 62.6% and was nearly
+reported as "the capped rule destroys a fifth of the universe". **It was confounded.** The flat
+panel had been built earlier the same day while `MAX_INTRINSIC_TO_PRICE` was still 10.0; the
+capped panel ran after the guard was tightened to 2.5. The two panels differed in TWO variables,
+and the entire 18.8pp gap was the guard, not terminal growth.
+
+Caught by reading the failing rows rather than the aggregate: ABT/ADM/AEE at 2010-03-31 carried
+**identical** intrinsic values (70.36 / 49.44 / 99.05) in both panels while one said `ok` and the
+other `error`. An identical value on both sides of a status flip means the rule under test changed
+nothing and something else moved.
+
+**A reconstructed panel bakes in every `dcf/model.py` constant live at build time, not just the
+rule under test.** Any A/B needs its baseline rebuilt under the current constants. Warning added
+to `scripts/reconstruct_dcf_panel.py`.
+
+The one uncontaminated read from that comparison — restricted to the 47,065 ticker-dates `ok` in
+both panels — is that **88.5% of intrinsic values were unchanged and the median change was 0.0%**,
+which matches the 88.6% predicted from the rule's scope.
+
+#### Result — the prediction held, and the decision was made on economic grounds
+
+Both panels rebuilt under the SAME constants (2.5x bound), differing only in the terminal growth
+rule:
+
+| rule | coverage | mean IC | ICIR (NW) | hit | Q1-Q5 spread | folds |
+|---|---|---|---|---|---|---|
+| flat 3% | 121,850 | 0.0413 | 1.731 | 65.3% | 0.0055 | 9/15 |
+| capped | 122,935 | 0.0413 | 1.774 | 64.7% | 0.0054 | 9/15 |
+
+**delta mean IC = +0.00003** — three orders of magnitude below the 0.005 threshold committed
+before the run. Identical to four decimals, same fold win rate, same quintile spread. The rule
+behaved exactly as scoped mechanically (89.8% of intrinsic values unchanged, 10.0% lowered, no
+coverage cost); it is simply invisible to a ranking test, as predicted, because it is a level
+effect on a minority of names.
+
+**REJECTED**, on economic grounds as the pre-commitment required:
+
+1. No measurable benefit — the delta is noise.
+2. It adds a per-company parameter and a code path for something that cannot be shown to improve
+   anything (CLAUDE.md: keep it simple, never over-engineer).
+3. **It inherits the premise the spec was rejected for.** Capping fixes the ARITHMETIC that broke
+   Gordon Growth for 52.5% of the universe, but keeps the premise that a decade of revenue history
+   tells you a company's growth rate in perpetuity. Terminal growth is a claim about decades out;
+   a mature phase today is not evidence about the terminal state. Capping makes a bad premise
+   safe, not correct.
+
+The honest counterargument, recorded because it is not weak: assuming IBM grows at 3% forever when
+it has managed 1.75% IS generous, and the capped rule only ever lowers. That is more defensible in
+the plain sense. But this plan exists precisely because **defensibility is not accuracy** — and the
+measurement says this particular defensibility improvement buys nothing.
+
+The switch and `_median_historical_revenue_growth` were removed rather than left as off-by-default
+dead code. The reasoning lives in `dcf/model.py` above `_default_terminal_growth` so the next
+person to notice the unused `income_df` argument finds the answer there.
+
+#### Side finding: post-hoc filtering flatters a result
+
+The rebuilt flat panel at the 2.5x bound gives mean IC **0.0413**. The Phase 3 threshold sweep,
+which reached 2.5 by filtering rows out of the 10x panel, gave **0.0441**. The rebuild is the
+honest number: filtering removes rows without letting the growth fade change, since terminal
+growth feeds `extend_growth_years` as well as the terminal value. Worth remembering before
+reading any future in-sample sweep as if it were a rebuild.
+
+### Original text
+
+
 
 The original DCF spec called for terminal growth to default to **the median of historical annual
 revenue growth**. The code does not do this: `dcf/model.py::_default_terminal_growth(income_df)`

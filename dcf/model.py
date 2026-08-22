@@ -580,6 +580,25 @@ def _sum_debt(bs_row) -> float | None:
     return total if any(p is not None for p in parts) else None
 
 
+# Terminal growth is a flat DEFAULT_TERMINAL_GROWTH for every company, and the `income_df`
+# argument is deliberately unused. That is a decision, not an unfinished implementation.
+#
+# archive/DCF_VISION.md specified terminal growth as the median of historical annual revenue
+# growth. That spec is UNIMPLEMENTABLE, measured 2026-08-21 across 1,831 tickers holding both a
+# WACC and >=5 annual growth observations: the median company's median historical revenue growth
+# is 9.1% against a median WACC of 9.66%, so 45.8% would have g >= WACC -- Gordon Growth breaks
+# entirely -- and another 6.7% land within 1pp below it where the terminal value explodes. 52.5%
+# of the universe would produce a broken or absurd terminal value. 80.8% of companies exceed
+# nominal GDP, which as PERPETUAL growth is impossible on its face.
+#
+# A bounded variant, min(median historical revenue growth, 3%) floored at 0, was built and
+# A/B'd on the reconstructed 2010-2024 panel (features/dcf/PLAN_DCF_ACCURACY.md). It behaved
+# exactly as scoped -- 89.8% of intrinsic values unchanged, 10.0% lowered, no coverage cost --
+# and made NO measurable difference to the factor: mean IC 0.0413 both ways, delta +0.00003,
+# same 9/15 fold win rate. Rejected, because it buys nothing measurable while adding a
+# per-company parameter, and because capping fixes the ARITHMETIC of the DCF_VISION premise
+# without fixing the premise: a decade of revenue history is not evidence about a company's
+# growth rate in perpetuity.
 def _default_terminal_growth(income_df: pd.DataFrame) -> float:
     return DEFAULT_TERMINAL_GROWTH
 

@@ -109,11 +109,16 @@ def test_history_retains_prior_snapshots(hf_db_copy):
         df["snapshot_date"] = date.today()
         hf_db.upsert_dcf_results_history(df)
 
+        # Only this test's own two writes are asserted on. The fixture copies the REAL
+        # historic_fundamentals.duckdb, which carries production snapshots from earlier runs,
+        # so asserting the full set of dates makes the test depend on today's date matching
+        # production data — it passed only while date.today() happened to equal the newest
+        # production snapshot, and broke at the next midnight.
         dates = [
             r[0] for r in hf_db.conn.execute(
                 "SELECT DISTINCT snapshot_date FROM dcf_results_history "
-                "WHERE ticker = ANY(?) ORDER BY snapshot_date",
-                [_TICKERS],
+                "WHERE ticker = ANY(?) AND snapshot_date IN (?, ?) ORDER BY snapshot_date",
+                [_TICKERS, earlier, date.today()],
             ).fetchall()
         ]
 
@@ -125,7 +130,10 @@ def test_history_retains_prior_snapshots(hf_db_copy):
     finally:
         hf_db.close()
 
-    assert dates == [earlier, date.today()], f"expected both snapshots retained, got {dates}"
+    assert dates == [earlier, date.today()], (
+        f"expected both of this test's snapshots retained, got {dates} — the later write must "
+        f"not overwrite the earlier one"
+    )
 
     # The price is what makes a snapshot measurable at all: the screener computes upside
     # against the *current* price, so without it a stored intrinsic value has no reference.

@@ -18,6 +18,13 @@ MECHANICAL model, which diverges from the shipped one by ~29% median intrinsic v
 Output is one parquet per as-of date, so the job is resumable -- an interrupted run re-runs
 only the dates it has not finished.
 
+WARNING when comparing two panels: a panel bakes in whatever dcf/model.py constants were live
+when it was built, not just the rule under test. Comparing a panel built at
+MAX_INTRINSIC_TO_PRICE=10 against one built at 2.5 shows an 18.8pp "coverage collapse" that has
+nothing to do with the rule being tested. Rebuild the baseline under the current constants, and
+sanity-check by confirming that ticker-dates which errored in one panel do not carry an IDENTICAL
+intrinsic value in the other -- if they do, the difference is a guard, not the rule.
+
 Usage:
     uv run scripts/reconstruct_dcf_panel.py --benchmark      # time a sample, write nothing
     uv run scripts/reconstruct_dcf_panel.py                  # full panel, 6 workers
