@@ -134,6 +134,13 @@ completion is coverage, not accuracy.** A ticker-date "succeeds" when the engine
 instead of raising; it says nothing about whether the number was right. Small caps complete less
 often *and* rank better.
 
+**Quantifying this was scoped 2026-08-22 and closed unbuilt.** No local data supports it —
+`stock_prices` shows *zero* tickers stopping between 2020 and 2024, so it is a currently-listed
+snapshot rather than a historical universe, and `company_overview` history begins 2026-05-14.
+External data would be needed. And nothing decides differently on the answer: the live trading
+universe has a $1B floor, so the $300M-1B band is not tradeable, and `dcf_upside` is not in the
+live scoring path. See `features/dcf/PLAN_DCF_FOLLOWUP.md` Phase 3.
+
 **Trust the small-cap result less, not more.** The plan pre-committed to the rule that a pass on a
 survivorship-flattered panel should be blamed on the bias first, and small caps are where that
 bias is worst: all 1,575 tickers still exist today, and the missing ones are disproportionately

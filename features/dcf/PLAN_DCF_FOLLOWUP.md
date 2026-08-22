@@ -178,7 +178,7 @@ while a positive result mostly confirms current behaviour.
 
 ---
 
-## Phase 3 — Scope small-cap survivorship  [ ]
+## Phase 3 — Scope small-cap survivorship  [x] **SCOPED 2026-08-22 — CLOSED UNBUILT**
 
 **Scope before building. Leaving the caveat standing is a legitimate outcome.**
 
@@ -209,6 +209,46 @@ valid outcome, not a failure.
 `stock_prices` retains any tickers that stopped trading, and whether the AV universe has ever been
 snapshotted historically. A measured lower bound on the gap beats an unmeasured assertion, even if
 it is not the full number.
+
+### Scoping result — closed unbuilt, which this plan named as a valid outcome
+
+**3.3 — no cheap partial answer exists.** `stock_prices` retains essentially no delisted names:
+
+| last price date | tickers |
+|---|---|
+| still trading | 2,779 |
+| stopped 2025-26 | 30 |
+| **stopped 2020-24** | **0** |
+| stopped 2010-19 | 1 |
+| stopped pre-2010 | 17 |
+
+**Zero tickers stopped trading between 2020 and 2024**, which is impossible in reality — hundreds
+of US listings delisted in that window. The table is a snapshot of currently-listed names, not a
+historical universe. `company_overview` snapshots begin **2026-05-14**, three months, with two full
+sweeps (2026-07-01, 2026-08-01). Neither supports reconstructing a 2010-2024 universe, and no
+lower bound worth reporting can be extracted from three months.
+
+So the only route is external data (CRSP, Sharadar or similar): a purchase plus an ingestion
+pipeline, plausibly larger than the entire predecessor plan.
+
+**3.2 — nothing decides differently on the answer, and the reason is structural.** The live
+trading universe carries a **$1B market-cap floor** (`scripts/score_live.py` applies
+`UNIVERSE_DEFAULTS`, `min_market_cap = 1_000_000_000`). **The $300M-1B band is not tradeable at
+all**, and `dcf_upside` appears nowhere in the live scoring path — not in `score_live.py`, not in
+`_VALUE_COLS`/`_QUALITY_COLS`/`_MOMENTUM_COL`.
+
+For the small-cap survivorship number to change any decision, TWO prior decisions would have to
+land first: lower the universe floor to admit small caps, and promote `dcf_upside` into the
+composite. Both are far larger questions than this one, and neither is on the table. The only
+remaining consumer is the Screener — a research tool, whose "DCF Undervalued" preset already
+carries the size split and the survivorship caveat.
+
+**Decision: closed unbuilt.** Buying data to produce a number that changes nothing is not
+diligence. The small-cap finding in `docs/dcf_upside_factor_test.md` stays as it is — an edge
+flagged as survivorship-inflated and unquantified, which is an honest state rather than a gap.
+
+**Reopen this if** the universe floor is ever lowered below $1B, or if `dcf_upside` is proposed
+for the live composite. Either makes the number decision-relevant; until then it is not.
 
 ---
 
