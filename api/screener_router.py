@@ -29,7 +29,7 @@ _AV_DB = Path(os.environ.get("AV_FINANCIALS_DB_PATH", str(Path(__file__).parent.
 # dr  = hf.dcf_results (status='ok' rows only), refreshed monthly by
 #       scripts/compute_dcf_batch.py — see DCF_SCREENER_PLAN.md
 #
-# dcf_upside was measured as a factor over 2010-2024 (features/dcf/PLAN_DCF_ACCURACY.md
+# dcf_upside was measured as a factor over 2010-2024 (archive/PLAN_DCF_ACCURACY.md
 # Phase 3) and the answer splits sharply by size:
 #   >=$1B   mean rank IC 0.0157, ICIR-NW 0.56 at the old 10x bound -- no usable signal, and
 #           its incremental IC over earnings_yield/ebitda_ev_yield/fcf_yield was NEGATIVE.

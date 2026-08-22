@@ -2,7 +2,7 @@
 """
 Walk-forward validation of a tighter MAX_INTRINSIC_TO_PRICE guard.
 
-The in-sample sweep (features/dcf/PLAN_DCF_ACCURACY.md Phase 3) showed dcf_upside's mean IC
+The in-sample sweep (archive/PLAN_DCF_ACCURACY.md Phase 3) showed dcf_upside's mean IC
 rising from 0.016 at the current 10.0x bound to 0.045 at 2.0x -- earnings_yield territory.
 That sweep tried six thresholds on one dataset and kept the winner, which is exactly the
 in-sample selection that killed the MD&A contrarian composite. This script tests whether the

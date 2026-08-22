@@ -18,7 +18,7 @@ hf_update.py's rebuild style rather than an incremental merge.
 The same rows are also appended to dcf_results_history keyed by snapshot date, so the
 output of each rebuild survives the next one. dcf_results alone cannot be backtested:
 every rebuild overwrites it, and it does not record the price the valuation was made
-against. See features/dcf/PLAN_DCF_ACCURACY.md.
+against. See archive/PLAN_DCF_ACCURACY.md.
 """
 
 import argparse

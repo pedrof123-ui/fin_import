@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Phase 3 of features/dcf/PLAN_DCF_ACCURACY.md — put DCF-implied upside through the same
+Phase 3 of archive/PLAN_DCF_ACCURACY.md — put DCF-implied upside through the same
 gauntlet every other factor candidate faces.
 
 The panel comes from scripts/reconstruct_dcf_panel.py: intrinsic value recomputed quarterly

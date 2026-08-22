@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Reconstruct historical DCF valuations as-of past quarter-ends, for the DCF accuracy
-measurement (features/dcf/PLAN_DCF_ACCURACY.md Phase 2).
+measurement (archive/PLAN_DCF_ACCURACY.md Phase 2).
 
 Intrinsic value is recomputed QUARTERLY, because that is when the statement inputs change.
 `dcf_upside = intrinsic / price - 1` is then built MONTHLY at analysis time by carrying the

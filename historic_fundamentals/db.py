@@ -503,7 +503,7 @@ class HistoricFundamentalsDB:
         # dcf_results does not: the price the valuation was made against (the screener computes
         # upside against the *current* price, which is unrecoverable after the fact), the
         # terminal-value share, and how many forecast years came from analyst consensus.
-        # See features/dcf/PLAN_DCF_ACCURACY.md.
+        # See archive/PLAN_DCF_ACCURACY.md.
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS dcf_results_history (
                 ticker                    VARCHAR NOT NULL,

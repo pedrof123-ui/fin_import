@@ -1,0 +1,160 @@
+# DCF Follow-Up — Horizon, Single-Name Use, and Survivorship
+
+Created 2026-08-22. Successor to `archive/PLAN_DCF_ACCURACY.md`, which is closed. Findings from
+that work: `docs/dcf_upside_factor_test.md`.
+
+## Why this exists
+
+The predecessor answered one question well and left three standing. It measured whether
+**DCF-implied upside ranks stocks cross-sectionally over a 12-month horizon** — it does not, for
+>=$1B names, and its incremental information over `earnings_yield`/`ebitda_ev_yield`/`fcf_yield`
+is negative.
+
+That verdict rests on a choice nobody defended: **one year**. A DCF is a claim about decades of
+cash flows, and the standard premise is that price converges to intrinsic value over three to five
+years. Judging it on 1-year returns partly measures "does the market close this gap within twelve
+months", which is a different and harder question than "is the valuation right". **If the DCF is a
+slow-convergence signal, the predecessor tested it on the wrong clock and its verdict is too
+harsh.** That is Phase 1, it is cheap, and it should run before anything else here — it can
+invalidate the finding the rest of this plan builds on.
+
+---
+
+## Permanent limits — NOT work items
+
+Recorded so nobody opens a phase for them.
+
+**Dollar-terms calibration is unmeasurable.** "Is this fair value close to the company's true
+intrinsic value?" has no ground truth — nobody observes intrinsic value. Every test in this
+programme is a *proxy*: if the DCF is any good, stocks it calls cheap should outperform stocks it
+calls expensive. A DCF systematically 30% too low for every company scores perfectly on any
+cross-sectional rank test, because a constant bias cancels. **This will never be closed. Do not
+open it.**
+
+**The shipped model cannot be reconstructed.** Production applies an analyst-estimate layer worth
+a **median 29% of intrinsic value** (54% of tickers move >20%), and `earnings_estimates` only
+begins 2026-05-10. No historical panel can include it. The only route is the forward accumulation
+in `dcf_results_history`, already live and running monthly, readable ~2028-29. **Nothing can
+accelerate this.** The correct action is to leave it alone.
+
+---
+
+## Phase 1 — Is one year the wrong clock?  [ ]
+
+Re-run the factor at **1y, 2y, 3y and 5y**. Four horizons, not two: with three points you cannot
+tell slow convergence (monotonic rise) from a peak-and-fade. 1y is the existing baseline and 2y
+bridges it cheaply.
+
+The panel already exists (`data/dcf_reconstruction_flat_2p5/`, built under current constants), so
+this is minutes of compute, not hours. **Run it before Phase 2 or 3** — it can change the verdict
+those phases are premised on.
+
+**1.1 — Sample and lag structure, fixed in advance.** Overlapping returns are autocorrelated, so
+Newey-West lags must be H-1. Measured against `monthly_pe` (max month 2026-08):
+
+| horizon | scoreable panel months | NW lags |
+|---|---|---|
+| 1y | 180 (2010-01 → 2024-12) | 11 |
+| 2y | 176 (→ 2024-08) | 23 |
+| 3y | 164 (→ 2023-08) | 35 |
+| 5y | 140 (→ 2021-08) | 59 |
+
+`ic_summary` defaults to `nw_lags=11`. **Using the default at 3y or 5y would produce inflated
+t-stats that look like a strong result.**
+
+**1.2 — Do NOT lead on t-stats at long horizons.** At 5y the estimator uses 59 lags from 140
+months — 42% of the sample length. The overlap correction is right in principle but the estimator
+is noisy. **Lead on the trend shape across the four horizons and on fold win rate**, both of which
+survive overlap in a way t-stats do not. A 5y t-stat of 6 reported as a triumph is the artifact
+talking.
+
+**1.3 — Measure INCREMENTAL IC at every horizon, not just standalone.** This is the one that
+decides it. Value factors generally strengthen at longer horizons, so a rise in the DCF's
+standalone IC at 3y could simply mean "all value works better at 3y" — which says nothing about
+the DCF. The question is whether it beats `earnings_yield`/`ebitda_ev_yield`/`fcf_yield` **at that
+horizon**, exactly as in the predecessor's Phase 3.
+
+**PREDICTION COMMITTED BEFORE RUNNING:** standalone IC **rises** with horizon, and **incremental
+IC stays near zero or negative**, because the reference factors rise too. If that holds, the
+existing verdict stands and the horizon objection is answered. If incremental IC turns clearly
+positive at 3y or 5y, **the verdict was too harsh** and the DCF is a slow-convergence signal that
+was tested on the wrong clock — in which case the 2.5x guard should be re-derived at the horizon
+where the signal actually lives, since it was fitted at 1y.
+
+---
+
+## Phase 2 — Single-name usefulness  [ ]
+
+The predecessor measured cross-sectional ranking. **That is not how the AI Researcher uses the
+DCF** — it consumes a fair value for one company as a valuation anchor. A factor can be useless
+for ranking and still informative for a single name, and vice versa; the two questions are
+genuinely different and neither implies the other.
+
+This is testable, just not by rank IC. Candidate designs, to be chosen before running:
+
+- **Directional hit rate**: does `intrinsic > price` predict positive excess return for that name
+  over 3-5 years, per company rather than per cross-section?
+- **Convergence**: does `price / intrinsic` move toward 1 over the horizon, and how often?
+- **Calibration-in-the-large**: bucket by predicted upside and check realised return against it.
+  Not calibration of the *level* (unmeasurable, above), but whether bigger predicted gaps
+  correspond to bigger realised moves.
+
+**Depends on Phase 1** — pick the horizon from where the signal actually lives, if anywhere.
+
+**Note the asymmetry before starting:** the AI Researcher already degrades cleanly when the
+mechanical DCF is unavailable (~28% of the universe at the 2.5x bound), and that path is now
+warned and logged. So a negative result here has a clear action — widen the degradation path —
+while a positive result mostly confirms current behaviour.
+
+---
+
+## Phase 3 — Scope small-cap survivorship  [ ]
+
+**Scope before building. Leaving the caveat standing is a legitimate outcome.**
+
+`docs/dcf_upside_factor_test.md` reports that the factor works below $1B (ICIR-NW 3.13 even
+untightened, positive quintile spread, 12/15 folds) and immediately discounts it for survivorship
+— on **reasoning, not measurement**. That is the only conclusion in the whole programme resting on
+an argument rather than a number.
+
+The argument: all 1,575 tickers in the small-cap panel still exist today, and the missing ones are
+disproportionately cheap-looking companies that went to zero — exactly the population that would
+sit in the high-upside bucket dragging its returns down. `project_survivorship_bias_result`
+quantified the large-cap gap at 51% of real S&P 500 exits since 2016; small-cap delisting rates
+are structurally higher and have never been measured here.
+
+**3.1 — Scope it first, and be willing to stop.** The data needed is a historical small-cap
+universe including delisted names, which is **not in any database in this repo**. That likely
+means an external source (CRSP, Sharadar, or similar), which is a purchase and an ingestion
+pipeline. This is plausibly a bigger job than the entire predecessor plan. Estimate the cost
+before committing.
+
+**3.2 — Ask what the answer changes.** Before spending, state what decision moves on the result.
+Today the small-cap finding is documented with its caveat and drives nothing: `dcf_upside` is not
+in the live composite, and the screener preset carries the warning. **If nothing changes either
+way, the honest move is to leave the caveat standing and close this phase unbuilt** — that is a
+valid outcome, not a failure.
+
+**3.3 — A cheaper partial answer may exist.** Before the full reconstruction, check whether
+`stock_prices` retains any tickers that stopped trading, and whether the AV universe has ever been
+snapshotted historically. A measured lower bound on the gap beats an unmeasured assertion, even if
+it is not the full number.
+
+---
+
+## Method constraints inherited from the predecessor
+
+These cost real time to learn. Do not rediscover them.
+
+1. **A reconstructed panel bakes in every `dcf/model.py` constant live at build time**, not just
+   the variable under test. Any A/B needs its baseline rebuilt under current constants. **The tell
+   that you have a confound: identical intrinsic values on both sides of an ok/error flip.**
+2. **Post-hoc filtering flatters** relative to a real rebuild (0.0441 vs 0.0413) — filtering
+   removes rows without letting the model respond.
+3. **Report dispersion alongside every median.** A symmetric re-dispersion and a no-op are
+   indistinguishable at the median.
+4. **Completion rate is coverage, not accuracy.** Conflating them already produced one wrong
+   recommendation (excluding small caps).
+5. **State the expected direction before running.** Every result in the predecessor that was
+   readable as evidence rather than rationalised afterwards had a prediction committed first —
+   including the ones that turned out wrong.

@@ -1,7 +1,7 @@
 """
 Point-in-time correctness for the DCF as-of reconstruction.
 
-The whole risk of the backward reconstruction (features/dcf/PLAN_DCF_ACCURACY.md Phase 2) is
+The whole risk of the backward reconstruction (archive/PLAN_DCF_ACCURACY.md Phase 2) is
 look-ahead: a DCF that sees data published after its as-of date produces a result that looks
 excellent and means nothing. The plan is explicit that this must be validated by asserting no
 input carries a publication date after the as-of date, not by eyeballing whether the numbers

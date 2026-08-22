@@ -94,7 +94,7 @@ def test_history_retains_prior_snapshots(hf_db_copy):
 
     This is the whole point of the table — a rebuild on a later date has to leave the
     earlier snapshot readable, otherwise DCF accuracy stays unbacktestable no matter how
-    many months pass. See features/dcf/PLAN_DCF_ACCURACY.md Phase 0.
+    many months pass. See archive/PLAN_DCF_ACCURACY.md Phase 0.
     """
     from datetime import date, timedelta
 

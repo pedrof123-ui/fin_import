@@ -23,7 +23,7 @@ DEFAULT_TERMINAL_GROWTH = 0.03  # 3%
 # Was 10.0 until 2026-08-21, set "deliberately loose" pending evidence, with the note "tighten
 # once the degradation rate has been observed in production". That evidence now exists and it is
 # stronger than a degradation count: the reconstructed 2010-2024 panel
-# (features/dcf/PLAN_DCF_ACCURACY.md Phase 3) shows the factor carries essentially no
+# (archive/PLAN_DCF_ACCURACY.md Phase 3) shows the factor carries essentially no
 # cross-sectional signal at 10x and real signal once the extremes are trimmed.
 #
 #   bound   mean IC   ICIR(NW)   t     rows kept
@@ -592,7 +592,7 @@ def _sum_debt(bs_row) -> float | None:
 # nominal GDP, which as PERPETUAL growth is impossible on its face.
 #
 # A bounded variant, min(median historical revenue growth, 3%) floored at 0, was built and
-# A/B'd on the reconstructed 2010-2024 panel (features/dcf/PLAN_DCF_ACCURACY.md). It behaved
+# A/B'd on the reconstructed 2010-2024 panel (archive/PLAN_DCF_ACCURACY.md). It behaved
 # exactly as scoped -- 89.8% of intrinsic values unchanged, 10.0% lowered, no coverage cost --
 # and made NO measurable difference to the factor: mean IC 0.0413 both ways, delta +0.00003,
 # same 9/15 fold win rate. Rejected, because it buys nothing measurable while adding a
@@ -655,7 +655,7 @@ def run_dcf_av(
     reporting-lag convention, price and risk-free rate by date, beta by computed_date. Analyst
     estimates are unavailable point-in-time (earnings_estimates only begins 2026-05-10), so an
     as-of run is the *mechanical* model with no analyst layer — which diverges from the live
-    model by ~29% median intrinsic value. See features/dcf/PLAN_DCF_ACCURACY.md.
+    model by ~29% median intrinsic value. See archive/PLAN_DCF_ACCURACY.md.
     """
     import dataclasses
     from dcf.av_data import load_av_annual_financials, load_av_quarterly_financials

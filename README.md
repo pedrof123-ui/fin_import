@@ -182,7 +182,7 @@ CANSLIM, Greenblatt, Fibonacci and MD&A. Results, and what they do and do not li
 
 At 2.5x roughly 28% of the universe has no mechanical DCF, up from 19% at 10x. That is intended —
 the AI Researcher takes its DCF degradation path for those tickers rather than anchoring on a
-number with no signal in it. See `features/dcf/PLAN_DCF_ACCURACY.md`.
+number with no signal in it. Full result: `docs/dcf_upside_factor_test.md`; process record `archive/PLAN_DCF_ACCURACY.md`; open questions `features/dcf/PLAN_DCF_FOLLOWUP.md`.
 
 **WACC** (`dcf/wacc.py`):
 - Cost of equity: CAPM — `ke = rf + β × MRP`. Beta from stored rolling OLS betas vs VTI (`features/beta/beta.py`, `ticker_betas` in prices.duckdb, refreshed by a Saturday cron); rf from FRED DGS30 falling back to DGS10; MRP defaults to 5.5% (Damodaran).

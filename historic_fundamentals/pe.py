@@ -105,7 +105,7 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 # The repo's single reporting-lag convention. Public because the DCF as-of reconstruction
-# (features/dcf/PLAN_DCF_ACCURACY.md Phase 2) filters the same AV statement tables and must
+# (archive/PLAN_DCF_ACCURACY.md Phase 2) filters the same AV statement tables and must
 # not invent a second convention — there were already three independent copies of these two
 # numbers before this was consolidated.
 LAG_QUARTERLY = timedelta(days=60)
