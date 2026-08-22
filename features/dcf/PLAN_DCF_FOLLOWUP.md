@@ -39,7 +39,7 @@ accelerate this.** The correct action is to leave it alone.
 
 ---
 
-## Phase 1 — Is one year the wrong clock?  [ ]
+## Phase 1 — Is one year the wrong clock?  [x] **Complete 2026-08-22 — objection ANSWERED, verdict softens but stands**
 
 Re-run the factor at **1y, 2y, 3y and 5y**. Four horizons, not two: with three points you cannot
 tell slow convergence (monotonic rise) from a peak-and-fade. 1y is the existing baseline and 2y
@@ -81,6 +81,67 @@ positive at 3y or 5y, **the verdict was too harsh** and the DCF is a slow-conver
 was tested on the wrong clock — in which case the 2.5x guard should be re-derived at the horizon
 where the signal actually lives, since it was fitted at 1y.
 
+### Result (`scripts/test_dcf_horizon.py`), panel `data/dcf_reconstruction_flat_2p5`
+
+```
+mean IC            ret_1y   ret_2y   ret_3y   ret_5y
+dcf_upside         0.0368   0.0551   0.0707   0.0776
+dcf_upside RESID   0.0037   0.0053   0.0077   0.0201
+earnings_yield     0.0445   0.0700   0.0838   0.0874
+ebitda_ev_yield    0.0443   0.0652   0.0759   0.0669
+fcf_yield          0.0782   0.1121   0.1444   0.1569
+
+fold win rate      ret_1y   ret_2y   ret_3y   ret_5y
+dcf_upside           9/15    11/15    10/15    10/15
+dcf_upside RESID     9/15     8/15     9/15     9/15
+
+months used           178      175      163      139   (predicted 180/176/164/140)
+```
+
+**The prediction was half right.** Standalone IC rises monotonically as predicted. Incremental IC
+did NOT stay near zero — it rises to **+0.0201 at 5y** (ICIR-NW 1.29, t 3.75), which the plan's own
+threshold (>0.01) counts as clearly positive.
+
+**But the metric this plan pre-committed to leading on says otherwise.** Constraint 1.2 fixed in
+advance that fold win rate, not t-stats, is the read that survives overlapping returns. The
+residual fold win rate is **flat: 9/15, 8/15, 9/15, 9/15** — no improvement at any horizon.
+
+**And the artifact that constraint was written for showed up plainly:** `fcf_yield` at 5y posts a
+**hit rate of 1.0000** and t = 27.7. A 100% hit rate across 141 overlapping months means roughly
+THREE independent observations. Long-horizon t-stats here are decorative, and would have looked
+like a triumph if reported without this constraint.
+
+### Verdict
+
+**The horizon objection is answered. The finding softens rather than flips.**
+
+The DCF does carry more information at longer horizons — but so does every value factor
+(`earnings_yield` 0.0445 -> 0.0874, `fcf_yield` 0.0782 -> 0.1569). A DCF rising with horizon is not
+evidence of anything specific to DCFs, which is exactly why constraint 1.3 required measuring
+INCREMENTAL IC rather than standalone.
+
+At 5y the incremental contribution is **0.0201 against fcf_yield's 0.1569 standalone** — about an
+eighth — with no gain in fold consistency. So *"not a useful ranking factor on its own merits"*
+**stands**. What no longer stands is *"actively wrong beyond the existing value factors"*.
+
+### Reconciliation worth keeping
+
+The predecessor reported incremental IC of **-0.0164** at 1y; this run gives **+0.0037** at the
+same horizon. The difference is the panel — the predecessor used the 10x-bound one, this uses
+2.5x. **The guard change fixed the negative incremental IC**, confirmed independently by a test
+that was not designed to check it.
+
+### The contingency is DECLINED, deliberately
+
+This plan said that if incremental IC turned clearly positive at 3y/5y, the 2.5x guard should be
+re-derived at that horizon. It did, at 5y. **Do not re-derive it there.**
+
+A threshold fitted on 5-year overlapping returns is fitted on ~3 independent observations; the 1y
+fit had ~15 independent years behind it and survived an out-of-sample walk-forward. Re-deriving at
+5y would be textbook overfitting, and would be done to chase a result this plan predicted would
+not appear. The contingency was written before the sample-size consequence was understood; it is
+declined on that basis, not ignored.
+
 ---
 
 ## Phase 2 — Single-name usefulness  [ ]
@@ -99,7 +160,10 @@ This is testable, just not by rank IC. Candidate designs, to be chosen before ru
   Not calibration of the *level* (unmeasurable, above), but whether bigger predicted gaps
   correspond to bigger realised moves.
 
-**Depends on Phase 1** — pick the horizon from where the signal actually lives, if anywhere.
+**Depends on Phase 1**, now complete: the signal is strongest at 3-5 years, so use that horizon.
+Note that Phase 1 also caps expectations — the DCF's incremental information over existing value
+factors is real but small (~0.02 IC at 5y), so a single-name test should be powered for a modest
+effect, not a large one.
 
 **Note the asymmetry before starting:** the AI Researcher already degrades cleanly when the
 mechanical DCF is unavailable (~28% of the universe at the 2.5x bound), and that path is now

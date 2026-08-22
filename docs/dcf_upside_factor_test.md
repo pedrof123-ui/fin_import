@@ -141,13 +141,42 @@ cheap-looking companies that went to zero — exactly the population that would 
 high-upside bucket dragging its returns down. **The large-cap rejection is the more trustworthy
 finding, because a bias running in the factor's favour cannot manufacture a failure.**
 
-## Known weakness: the 12-month horizon may be the wrong clock
+## Horizon — tested 2026-08-22, objection answered
 
-A DCF is a claim about decades of cash flows. The standard premise is that price converges to
-intrinsic value over three to five years, not one. Judging it on 1-year returns partly measures
-"does the market close this gap within twelve months", which is a different and harder question
-than "is the valuation right". This cuts against the verdict above and is the first item in the
-successor plan, `features/dcf/PLAN_DCF_FOLLOWUP.md`.
+A DCF is a claim about decades, and the standard premise is that price converges to intrinsic
+value over three to five years, not one. Judging it on 1-year returns risked measuring "does the
+market close this gap within twelve months" rather than "is the valuation right". Re-run at four
+horizons (`scripts/test_dcf_horizon.py`, panel rebuilt under current constants):
+
+```
+mean IC            ret_1y   ret_2y   ret_3y   ret_5y
+dcf_upside         0.0368   0.0551   0.0707   0.0776
+dcf_upside RESID   0.0037   0.0053   0.0077   0.0201
+earnings_yield     0.0445   0.0700   0.0838   0.0874
+fcf_yield          0.0782   0.1121   0.1444   0.1569
+
+residual folds       9/15     8/15     9/15     9/15
+```
+
+**The verdict softens but stands.** The DCF does carry more information at longer horizons — but
+so does every value factor, so a DCF rising with horizon is not evidence about DCFs. What matters
+is the incremental contribution over the factors already in use, and at 5y that is **0.0201
+against `fcf_yield`'s 0.1569 standalone**, roughly an eighth, with **no improvement in fold
+consistency at any horizon** (flat 9/15).
+
+**Long-horizon t-stats here are not usable and were pre-declared so.** `fcf_yield` at 5y posts a
+hit rate of **1.0000** with t = 27.7 — a 100% hit rate across 141 overlapping months means about
+three independent observations. Fold win rate was fixed in advance as the metric to lead on for
+exactly this reason.
+
+**One result changed: the negative incremental IC was a 10x-bound artifact.** At 1y it was -0.0164
+on the 10x panel and is **+0.0037** on the 2.5x panel. The guard change fixed it — confirmed by a
+test not designed to check it. So "adds nothing beyond existing value factors" stands; "is
+actively wrong beyond them" does not.
+
+**A guard re-derived at 5y was considered and declined**: a threshold fitted on 5-year overlapping
+returns rests on ~3 independent observations, against ~15 independent years for the 1y fit that
+survived walk-forward. See `features/dcf/PLAN_DCF_FOLLOWUP.md` Phase 1.
 
 ## Terminal growth — resolved en route
 
