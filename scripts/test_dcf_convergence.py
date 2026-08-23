@@ -118,21 +118,25 @@ def main() -> None:
     print(f"panel: {len(panel):,} ok valuations, {panel.ticker.nunique():,} tickers, "
           f"{panel.as_of.nunique()} as-of dates\n")
 
-    rows, asym = [], []
+    rows, asym, frames = [], [], {}
     for label, months in HORIZONS.items():
         fut = future_prices(universe, months)
         d = panel.merge(fut, left_on=["ticker", "as_of"],
                         right_on=["ticker", "month_end_date"], how="inner").dropna(subset=["future_price"])
-        d = d.merge(universe[["ticker", "month_end_date", "sector"]].drop_duplicates(
-            subset=["ticker", "month_end_date"]), on=["ticker", "month_end_date"], how="left")
+        _cols = ["ticker", "month_end_date", "sector"]
+        if "earnings_yield" in universe.columns:
+            _cols.append("earnings_yield")
+        d = d.merge(universe[_cols].drop_duplicates(subset=["ticker", "month_end_date"]),
+                    on=["ticker", "month_end_date"], how="left")
         if d.empty:
             continue
         d = d.assign(r_t=d.px / d.iv, r_fut=d.future_price / d.iv)
 
         actual = _conv_rate(d.r_t.values, d.r_fut.values)
+        d = d.assign(ret=d.future_price / d.px - 1.0)
+        frames[label] = d
 
         # NULL A: shuffle the RETURN within each as-of cross-section; r_t is untouched.
-        d = d.assign(ret=d.future_price / d.px - 1.0)
         nulls = []
         for _ in range(N_SHUFFLES):
             ret_s = d.groupby("as_of")["ret"].transform(lambda x: RNG.permutation(x.values))
@@ -213,6 +217,99 @@ def main() -> None:
               f"-> diverge {1 - r['actual']:.1%}")
     print("\n  Those are different questions and can both be answered honestly at once:")
     print("  a real but weak tilt is not the same as a reliable valuation anchor.")
+
+    # ---- Phase 4: calibration-in-the-large -------------------------------------------------
+    # Does the edge concentrate where the DCF's claim is STRONG? Same null, bucketed by the size
+    # of the predicted gap. Deliberately still a ratio question: bucketing by upside and comparing
+    # realised RETURNS would reintroduce the survivorship exposure the Phase 2 design avoided.
+    print("\n" + "=" * 88)
+    print("4. CALIBRATION-IN-THE-LARGE — does the edge grow where the predicted gap is bigger?")
+    print("   Bucketed WITHIN direction. Pooled gap buckets are confounded: MAX_INTRINSIC_TO_PRICE")
+    print("   = 2.5 caps intrinsic/price, so px/iv >= 0.4 and the UNDERVALUED gap cannot exceed")
+    print("   60%. Every pooled bucket above 60% is therefore 100% overvalued -- the side with the")
+    print("   stronger edge -- so a pooled 'large gap' spike is a direction effect in disguise.")
+    print("=" * 88)
+
+    BUCKETS = {
+        "undervalued (px<iv)": ([0, 0.10, 0.25, 0.40, 0.60], ["<10%", "10-25%", "25-40%", "40-60%"]),
+        "overvalued  (px>iv)": ([0, 0.25, 0.60, 1.50, np.inf], ["<25%", "25-60%", "60-150%", ">150%"]),
+    }
+    cal = []
+    for label, months in HORIZONS.items():
+        d = frames.get(label)
+        if d is None or d.empty:
+            continue
+        for side, (edges, names) in BUCKETS.items():
+            sub_all = d[d.r_t < 1] if side.startswith("undervalued") else d[d.r_t > 1]
+            if sub_all.empty:
+                continue
+            gap = (sub_all.r_t - 1.0).abs()
+            sub_all = sub_all.assign(gb=pd.cut(gap, edges, labels=names))
+            for b, sub in sub_all.groupby("gb", observed=True):
+                if len(sub) < 200:
+                    continue
+                a = _conv_rate(sub.r_t.values, sub.r_fut.values)
+                sn = []
+                for _ in range(N_SHUFFLES):
+                    ret_s = d.groupby("as_of")["ret"].transform(lambda x: RNG.permutation(x.values))
+                    sn.append(_conv_rate(sub.r_t.values,
+                                         (sub.r_t * (1.0 + ret_s.loc[sub.index])).values))
+                cal.append({"horizon": label, "side": side, "gap": str(b), "n": len(sub),
+                            "actual": a, "null": float(np.mean(sn)),
+                            "edge_pp": 100 * (a - float(np.mean(sn)))})
+    # The crux. The >150% overvalued bucket is full of high-multiple names, and the VALUE EFFECT
+    # already punishes those -- Phase 1 found near-zero incremental IC over earnings_yield. So the
+    # edge there may be the DCF re-deriving the value premium rather than adding anything. Test it
+    # the same way sector was tested: draw the substitute return from companies in the same
+    # earnings_yield quintile at the same as-of date. If the edge survives, it is DCF-specific.
+    print("\n  --- CRUX: does the big-gap edge survive an EARNINGS-YIELD-matched null? ---")
+    print("  (if it vanishes, the DCF is re-deriving the value effect, not adding information)")
+    ey_rows = []
+    for label in HORIZONS:
+        d = frames.get(label)
+        if d is None or d.empty or "earnings_yield" not in d.columns:
+            continue
+        g = d.dropna(subset=["earnings_yield"]).copy()
+        if g.empty:
+            continue
+        g["ey_q"] = g.groupby("as_of")["earnings_yield"].transform(
+            lambda x: pd.qcut(x.rank(method="first"), 5, labels=False, duplicates="drop"))
+        g = g.dropna(subset=["ey_q"])
+        big = g[(g.r_t > 2.5)]          # the >150% overvalued bucket
+        if len(big) < 200:
+            continue
+        a = _conv_rate(big.r_t.values, big.r_fut.values)
+        plain, matched = [], []
+        for _ in range(N_SHUFFLES):
+            r_plain = g.groupby("as_of")["ret"].transform(lambda x: RNG.permutation(x.values))
+            r_match = g.groupby(["as_of", "ey_q"])["ret"].transform(lambda x: RNG.permutation(x.values))
+            plain.append(_conv_rate(big.r_t.values, (big.r_t * (1 + r_plain.loc[big.index])).values))
+            matched.append(_conv_rate(big.r_t.values, (big.r_t * (1 + r_match.loc[big.index])).values))
+        ey_rows.append({"horizon": label, "n": len(big), "actual": a,
+                        "null_plain": float(np.mean(plain)), "null_ey_matched": float(np.mean(matched)),
+                        "edge_plain_pp": 100 * (a - float(np.mean(plain))),
+                        "edge_ey_matched_pp": 100 * (a - float(np.mean(matched)))})
+    if ey_rows:
+        print(pd.DataFrame(ey_rows).to_string(index=False, float_format=lambda x: f"{x:8.4f}"))
+
+    c = pd.DataFrame(cal)
+    for side, (_, names) in BUCKETS.items():
+        cs = c[c.side == side]
+        if cs.empty:
+            continue
+        print(f"\n  --- {side} ---")
+        print("  edge over null (pp):")
+        print(cs.pivot(index="horizon", columns="gap", values="edge_pp")
+                .reindex(index=list(HORIZONS), columns=[n for n in names if n in set(cs.gap)])
+                .to_string(float_format=lambda x: f"{x:8.2f}"))
+        print("  absolute convergence rate:")
+        print(cs.pivot(index="horizon", columns="gap", values="actual")
+                .reindex(index=list(HORIZONS), columns=[n for n in names if n in set(cs.gap)])
+                .to_string(float_format=lambda x: f"{x:8.3f}"))
+        print("  n:")
+        print(cs.pivot(index="horizon", columns="gap", values="n")
+                .reindex(index=list(HORIZONS), columns=[n for n in names if n in set(cs.gap)])
+                .to_string())
 
 
 if __name__ == "__main__":

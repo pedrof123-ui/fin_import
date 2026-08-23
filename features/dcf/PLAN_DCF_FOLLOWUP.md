@@ -433,7 +433,7 @@ for the live composite. Either makes the number decision-relevant; until then it
 
 ---
 
-## Phase 4 — Calibration-in-the-large  [ ] **NEXT, prediction committed 2026-08-23**
+## Phase 4 — Calibration-in-the-large  [x] **Complete 2026-08-23 — the signal is CONCENTRATED, and it explains Phase 1**
 
 Phase 2 deferred this pending a signal. There is one, so it is now warranted.
 
@@ -467,6 +467,88 @@ trustworthy exactly where it is currently most distrusted, and would argue for *
 `MAX_INTRINSIC_TO_PRICE` — the opposite of what Phase 3 of the predecessor plan concluded. A flat
 profile (prediction 1 wrong) would mean the tilt is diffuse and not specifically about mispricing,
 which would weaken the Phase 2 result considerably.
+
+### RESULT
+
+**The DCF's per-name information is concentrated, not diffuse.** Bucketed within direction, the
+overvalued side shows ~zero edge until the DCF says a company is worth **less than 40% of its
+price**, then jumps:
+
+```
+overvalued, edge over null (pp)    <25%   25-60%  60-150%    >150%
+1y                                 1.26     0.95    -0.61     5.23
+3y                                 0.02    -0.59     0.89    11.07
+5y                                -0.21    -1.61     0.09    12.52
+
+undervalued, edge over null (pp)   <10%   10-25%   25-40%   40-60%
+1y                                 0.90     2.44     3.14     2.81
+3y                                 0.74     0.72     5.10     3.68
+5y                                -0.29    -0.49     0.89     3.64
+```
+
+**About half the big-gap edge is the value effect.** The obvious objection — those are high-multiple
+names and the value premium already punishes them — was tested by drawing the substitute return
+from the same `earnings_yield` quintile:
+
+| horizon | vs plain null | vs value-matched null | survives |
+|---|---|---|---|
+| 1y | 5.17pp | 2.59pp | 50% |
+| 3y | 10.96pp | 5.79pp | 53% |
+| 5y | 12.61pp | 7.04pp | 56% |
+
+So roughly half is the DCF re-deriving the value premium and **half is DCF-specific** — 2.6-7.0pp,
+growing with horizon.
+
+### This EXPLAINS Phase 1 rather than contradicting it
+
+Phase 1 measured near-zero incremental IC over `earnings_yield` across the whole cross-section.
+Phase 4 shows the signal lives in ~20% of observations. **A signal concentrated in a fifth of names
+is diluted to near-nothing in a full-universe rank IC.** The two results are consistent, and this
+is the mechanism behind the Phase 1 null.
+
+### Predictions: one right, two wrong
+
+1. **Edge grows with gap size — CORRECT**, though on the overvalued side it is a step function at
+   >150%, not a gradient.
+2. **Flattens or falls in the largest bucket — WRONG.** It is largest there, on both sides at 5y.
+3. **Absolute convergence stays under 50% — WRONG** for undervalued names with 40-60% gaps, which
+   converge 67-74% of the time. But their edge over null is only 2.8-3.7pp, so nearly all of that
+   is drift and mechanical mean reversion.
+
+**High absolute convergence is not information.** The bucket that converges most often (undervalued
+40-60%, up to 74%) beats its null least; the bucket that converges least (overvalued >150%, 37-44%)
+beats its null most. Reporting either number alone would mislead in opposite directions.
+
+### A pre-stated contingency that was WRONG and is withdrawn
+
+This plan said a monotonic rise "would mean the DCF is most trustworthy exactly where it is
+currently most distrusted, and would argue for LOOSENING `MAX_INTRINSIC_TO_PRICE`."
+
+**That does not follow.** The guard caps intrinsic/price at 2.5 — it constrains the **undervalued**
+extreme (model says the stock is worth far more than it trades for). The informative bucket is
+where intrinsic/price is very **low** (model says it is worth far less). **Opposite tails.** The
+guard never touches the names carrying the signal, so nothing here argues for changing it. The
+contingency was written without checking which tail the guard bounds; committing a prediction in
+advance does not make its reasoning correct.
+
+Second methodological catch, same shape as Phase 2's null error: the first Phase 4 run bucketed by
+gap size **pooled across direction**, which is confounded. Because the guard caps intrinsic/price
+at 2.5, `px/iv >= 0.4` and the undervalued gap cannot exceed 60% — so every pooled bucket above 60%
+is **100% overvalued**, the side with the stronger edge. The apparent "inverted-U then spike" was a
+direction-mix artifact. Bucketing within direction removed it.
+
+### Recommendation — narrowed, and now actionable
+
+The Phase 2 recommendation ("present as one directional input rather than a fair-value anchor")
+stands and is **narrowed by this result**: the mechanical DCF is most worth surfacing when it
+disagrees with the market **by a lot and to the downside** — price above ~2.5x intrinsic. In the
+middle of the distribution it carries essentially nothing beyond the value factors.
+
+Concretely for the AI Researcher: the DCF deserves narrative weight when `price / intrinsic > 2.5`,
+and deserves very little when the gap is moderate. That is a sharper instruction than "one input
+among several", and it is supported rather than assumed.
+
+**Not yet implemented** — this is a product change and should be decided explicitly.
 
 ---
 
