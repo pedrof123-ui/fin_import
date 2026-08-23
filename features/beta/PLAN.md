@@ -13,7 +13,7 @@ Compute and store rolling 2-year daily OLS betas for all tracked stocks against 
 | Returns | Log returns ln(P_t/P_{t-1}) | Handles compounding correctly for OLS |
 | History depth | Monthly snapshots, full history | Enables point-in-time beta for ML backtest, avoids look-ahead |
 | Storage | `ticker_betas` table in `prices.duckdb` | Co-located with price data; no new database |
-| Cron | Separate `update_betas.py` | Clean separation from price ingestion |
+| Cron | ~~Separate `update_betas.py`~~ **SUPERSEDED 2026-08-23** — that file was never installed as a cron and has been deleted; the single entry point is `beta.py refresh`, installed Sat 08:00. See README. | Clean separation from price ingestion |
 | Min observations | 126 (~6 months) | Return None → DCF falls back to 1.0 for newly-listed tickers |
 
 ---

@@ -29,10 +29,30 @@ worth real narrative weight only when it disagrees with the market **by a lot an
 (price above ~2.5x intrinsic), where roughly half its edge survives controlling for the value
 effect. In the middle of the distribution it carries essentially nothing beyond `earnings_yield`.
 
-**Still outstanding, small and unrelated:**
-- `ticker_betas` window 504 stale since 2026-06-01, nothing refreshes it, unclear what reads it.
-- 44 tickers have broken `stock_prices` history and sit permanently at beta 1.0 (trade_systems
-  ingestion, not this repo).
+**Housekeeping — both CLOSED 2026-08-23, and both were mis-stated when first recorded:**
+
+- **`ticker_betas` window 504.** Nothing reads it — only 260d (cost of equity) and 104d (reported)
+  are ever queried. Dead data from an earlier experiment, now annotated as such in
+  `features/beta/beta.py` so it is not mistaken for a maintained series. Left in place rather than
+  deleted (358,759 rows in a shared DB); deletion is a separate call.
+  Also found: a **second beta entry point**, `features/beta/update_betas.py`, documented in that
+  feature's README and PLAN with its own crontab line and **never installed** — the same
+  documented-but-not-running pattern that left betas stale from 2026-06-05. Deleted rather than
+  wired up: it only added logging `cron_wrap.sh` already provides, and two entry points for one
+  job is the problem.
+
+- **"44 tickers pinned at beta 1.0 by broken price history" was WRONG on two counts.** Of the 44
+  skipped by `refresh_betas`: **21 are legitimate new listings** that genuinely lack 26 weeks of
+  history and are correctly skipped, and of the rest **none are in the AV universe and none get a
+  DCF** (0 rows in `dcf_results`). They are de-tracked leftovers — BK, CMA, HES, K, WBA, X and
+  others with history ending 1999 — that no live path touches. **Not a defect, and not a
+  trade_systems ingestion bug either.** Closed.
+
+- Noted while there: `prices.duckdb` has a **`universe_snapshots`** table (`snapshot_date`,
+  `ticker`, `sub_index`) that is **empty, 0 rows**. It is an unpopulated scaffold for exactly the
+  historical universe membership Phase 3 needed. It does not reopen Phase 3 — there is no data in
+  it — but if it were ever wired up, Phase 3's blocker would begin to dissolve from that date
+  forward.
 
 ---
 
