@@ -181,7 +181,7 @@ declined on that basis, not ignored.
 
 ---
 
-## Phase 2 — Single-name usefulness  [ ] **NEXT — design decided 2026-08-22, not yet built**
+## Phase 2 — Single-name usefulness  [x] **Complete 2026-08-23 — prediction FAILED, the DCF does carry per-name information**
 
 The predecessor measured cross-sectional ranking. **That is not how the AI Researcher uses the
 DCF** — it consumes a fair value for one company as a valuation anchor. A factor can be useless
@@ -265,6 +265,76 @@ strong per-name signal alongside near-zero cross-sectional signal would be surpr
 the whole programme is too harsh: the DCF would be informative per-name while useless for ranking,
 which is exactly the case the ranking tests could not see. Run calibration-in-the-large as the
 secondary read at that point, not before.
+
+### RESULT (`scripts/test_dcf_convergence.py`), panel `data/dcf_reconstruction_flat_2p5`
+
+**Prediction 2 failed.** Overvalued names DO converge above null, consistently, and the edge
+*grows* with horizon — the opposite of what was predicted.
+
+```
+Q1: does the DCF carry per-name information?  (edge over null, BOTH sides required)
+  1y: undervalued +2.65pp, overvalued +2.20pp -> YES, both sides beat null
+  3y: undervalued +2.87pp, overvalued +4.12pp -> YES, both sides beat null
+  5y: undervalued +1.61pp, overvalued +4.07pp -> YES, both sides beat null
+
+overall edge over null: 1y +2.41pp (z 10.7), 3y +3.54pp (z 22.4), 5y +2.87pp (z 11.7)
+sector-matched null:    1y +2.08pp,          3y +3.13pp,          5y +2.57pp
+```
+
+**It is not sector information.** Drawing the substitute return from the same sector and as-of date
+leaves ~87% of the edge intact. That was the obvious objection to a positive result and it does not
+hold.
+
+**But the absolute performance is poor, and this is the other half of the answer:**
+
+```
+Q2: is it strong enough to anchor on?  (ABSOLUTE convergence rate)
+  1y: converges 45.0% of the time -> diverges 55.0%
+  3y: converges 38.8%             -> diverges 61.2%
+  5y: converges 32.2%             -> diverges 67.8%
+```
+
+Two true statements that sound contradictory and are not: **the DCF beats a random contemporaneous
+return by 2-4pp**, and **prices move away from its intrinsic values roughly twice as often as
+toward them at 5y**. It tilts the odds; it does not call the outcome. At 3y the overvalued edge
+moves convergence from 23.4% to 27.5% — a 17% relative improvement on an unreliable base.
+
+### Verdict: reframe, do not remove
+
+The predicted conclusion was right, for the wrong reason. Not "the number is meaningless" — it
+carries genuine, sector-independent, per-name information, which the cross-sectional tests could
+not see. But a 2-4pp tilt is **not a valuation anchor**, and presenting a precise mechanical fair
+value implies far more than the evidence supports.
+
+Recommendation for the AI Researcher: keep the mechanical DCF, present it as **one directional
+input among several** rather than as a fair-value anchor. It already triangulates against ML comps;
+this supports that framing and argues against restoring any single-number emphasis.
+
+**Calibration-in-the-large is now warranted** as the secondary read — the plan deferred it pending
+a signal, and there is one. It would answer whether *bigger* predicted gaps produce bigger realised
+moves, which is what would distinguish "weak tilt" from "useful when the gap is large".
+
+### METHOD ERROR worth more than the result
+
+**The first null was wrong, and it failed on exactly the confound this plan had predicted.**
+
+Version 1 shuffled *intrinsic values* across companies. That widened the `r_t` distribution badly
+— median `|r_t - 1|` 0.461 actual vs 0.779 shuffled, p90 4.31 vs 10.68 — and wide ratios converge
+**mechanically**, which is confound B, the very thing the null existed to control. The null was
+easier than reality, so the real pairing looked *anti*-informative: edge -0.70pp at 1y, -3.18pp at
+3y, **-6.03pp at 5y with z = -26.7**. Reported as-is that would have been a dramatic and completely
+false finding: "price converges toward the DCF's fair value LESS often than toward a random
+company's".
+
+The fix: shuffle the **return**, not the intrinsic value. `r_t` is then preserved exactly (killing
+confound B) while the substitute return still carries the same period's market drift (killing
+confound A). The question becomes precisely the intended one — does THIS company's own price
+movement carry it toward ITS OWN intrinsic value more often than a random contemporaneous return
+would.
+
+**Naming a confound in advance does not prevent building a null contaminated by it.** The tell was
+a large negative result: an effect that strong in the *anti*-informative direction is nearly always
+a broken control, not a discovery.
 
 ### Data — none needed, everything exists
 
