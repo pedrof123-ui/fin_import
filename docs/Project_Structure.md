@@ -256,6 +256,16 @@ scripts/ also contains:
                                          --ticker, --dry-run flags.
     rebuild_sector_stats.py              Full rebuild of sector_stats table in historic_fundamentals.duckdb (all months, ~43K rows)
                                          Run after schema changes to sector_stats or after adding new tickers in bulk.
+    reconstruct_dcf_panel.py             Rebuilds DCFs as-of past quarter-ends into data/dcf_reconstruction*/ parquet (60 dates
+                                         2010-2024, ~85 min on 6 workers, resumable). Point-in-time: statements by reporting lag,
+                                         price/rf/beta by date, analyst estimates dropped. WARNING: a panel bakes in whatever
+                                         dcf/model.py constants were live at build time -- rebuild the baseline before any A/B.
+    test_dcf_upside_factor.py            Runs dcf_upside through the standard factor gauntlet (rank IC, incremental IC vs the
+                                         existing value factors, quintiles, fold win rate). See docs/dcf_upside_factor_test.md.
+    test_dcf_guard_walkforward.py        Out-of-sample validation of the MAX_INTRINSIC_TO_PRICE threshold (5 train yrs / 1 test yr).
+    test_dcf_horizon.py                  The same factor at 1y/2y/3y/5y, with Newey-West lags = H-1 for overlapping returns.
+    test_dcf_convergence.py              Per-name test: does price converge toward intrinsic value, vs a return-shuffle null,
+                                         split by direction and bucketed by gap size.
     manage_tickers.py                    Add/delete tickers across four DBs: prices + AV financials + historic fundamentals + MD&A (recommended)
                                          add's --skip-mda skips the MD&A step (catch up later via mda_backfill.py --csv)
     av_import.py                         Import income/balance/cashflow from Alpha Vantage (75 calls/min limit enforced)

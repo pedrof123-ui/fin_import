@@ -1,5 +1,51 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## DCF Accuracy Measurement (complete, 2026-08-21/23)
+
+The DCF had never been measured. Every assumption in it was justified by *defensibility* — no
+absurd outputs — and none by accuracy. This closes that, and the answer is two-part.
+
+### What was found
+
+**As a cross-sectional ranking factor: rejected.** `dcf_upside` reconstructed point-in-time over
+2010-2024 (60 quarterly as-of dates, 75,280 ticker-dates, 61,289 valuations) and run through the
+same gauntlet that rejected CANSLIM, Greenblatt, Fibonacci and MD&A: mean rank IC 0.0157 at the
+bound then live, against `fcf_yield` at 0.0871. Incremental IC over the existing value factors was
+*negative*. Re-tested at 2y/3y/5y in case one year was the wrong clock for a DCF — the verdict
+softened but held.
+
+**As a per-name signal: it works, in one regime.** Price converges toward the DCF's intrinsic
+value more often than a matched null, concentrated where the DCF says a company is worth less than
+~40% of its price: +8pp (2.5-12x) to +19pp (>12x) at 3-5y, about half surviving an
+`earnings_yield`-matched null. **That explains the ranking result** — a signal living in ~20% of
+names dilutes to nothing in a full-universe rank IC. Absolute convergence stays under 50%, so it
+is a caution signal, not a price target.
+
+### What shipped
+
+- **`MAX_INTRINSIC_TO_PRICE` 10.0 -> 2.5**, walk-forward validated (8/10 out-of-sample folds,
+  stronger in the recent half). Plus `MAX_INTRINSIC_TO_PRICE_OVERRIDE = 10.0` for caller-supplied
+  forecasts — applying 2.5 globally regressed the AI DCF, whose bull scenarios legitimately exceed
+  it. Production: 2,145 -> 1,912 `status='ok'` (1,913 predicted).
+- **`dcf_results_history`** — an append-only dated snapshot per rebuild. `dcf_results` overwrote
+  itself, and stored no price, so nothing about a past DCF was recoverable. This is the only path
+  to measuring the *shipped* model (analyst layer included), readable ~2028-29.
+- **`as_of` reconstruction** through `run_dcf_av` — statements, price, risk-free rate and beta all
+  point-in-time, assertion-validated with a negative control.
+- **Chief Analyst regime note** (`_mechanical_dcf_regime_note`) telling it where the DCF has
+  earned weight and where it has not.
+- **Beta fix found en route**: 877 of 2,149 DCF tickers had *no stored beta* and silently used
+  1.0. Backfilled to 2,799 tickers, and the refresh cron that `refresh_betas` documented but
+  nobody had installed is now installed and verified running.
+
+### Where it lives
+
+`docs/dcf_upside_factor_test.md` is the findings artifact. Process records:
+`archive/PLAN_DCF_ACCURACY.md`, `features/dcf/PLAN_DCF_FOLLOWUP.md`. No live trading changed —
+`dcf_upside` was never in the composite.
+
+---
+
 ## ML Comps Valuation — Calibration Monitoring + Pipeline Fix (complete, 2026-08-13)
 
 Closes a real gap discovered while reviewing the roadmap: `validate_ml_comps_valuation.py`

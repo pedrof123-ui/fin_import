@@ -234,6 +234,9 @@ inconsistent. The 6-month streak exists to gate the *Phase 9 anchor promotion* (
 
 `MAX_INTRINSIC_TO_PRICE = 10.0` in `dcf/model.py`, symmetric with the non-positive guard and
 skipped when no usable price exists. Rebuild reclassified **74 tickers** (predicted ~75).
+*(Accurate as of 2026-08-19. The bound is now **2.5**, plus a separate
+`MAX_INTRINSIC_TO_PRICE_OVERRIDE = 10.0` for caller-supplied forecasts — see "Guard threshold
+decision" below.)*
 
 | | Before guard | After guard |
 |---|---|---|
@@ -460,12 +463,29 @@ the cycle *sustaining*, which for a company in a real AI-driven boom is the obvi
 have the degradation rule defer explicitly to the cycle position, and require the high case to
 reflect the elevated cycle persisting while the low reflects full mean reversion.
 
-## Guard threshold decision, 2026-08-20
+## Guard threshold decision, 2026-08-20 — **SUPERSEDED 2026-08-21**
 
-`MAX_INTRINSIC_TO_PRICE` **stays at 10.0**. Reviewed and deliberately not tightened: the
+~~`MAX_INTRINSIC_TO_PRICE` **stays at 10.0**. Reviewed and deliberately not tightened: the
 production degradation rate has not been observed yet, the first monthly pipeline under the new
 guard runs 2026-09-01, and 5x/3x are costed (64 and 138 further tickers) whenever that evidence
-arrives. Revisit after the September run, not before.
+arrives. Revisit after the September run, not before.~~
+
+**It is now 2.5, and the evidence that arrived was better than a degradation count.** This
+decision deferred to "the September run" for production degradation data. Instead the DCF was
+reconstructed point-in-time over 2010-2024 and `dcf_upside` measured as a factor: at 10x it
+carried essentially no cross-sectional signal (mean rank IC 0.0157, ICIR-NW 0.56) and its
+incremental IC over the existing value factors was *negative*. At 2.5 it reaches 0.0413 / 1.81,
+comparable to `earnings_yield`. Walk-forward validated rather than picked from the sweep: beats
+10x in 8/10 out-of-sample folds and is stronger in the recent half.
+
+A second constant was needed. Applying 2.5 globally regressed the AI DCF, whose bull scenarios
+legitimately exceed it — bull-scenario loss tripled, truncating the presented range downward.
+`MAX_INTRINSIC_TO_PRICE_OVERRIDE = 10.0` now applies when the **caller** supplied the per-year
+forecast. Two constants because there are two questions: *is this number useful for ranking?* and
+*is this number absurd?*
+
+Full result: `docs/dcf_upside_factor_test.md`. Process records: `archive/PLAN_DCF_ACCURACY.md`,
+`features/dcf/PLAN_DCF_FOLLOWUP.md`.
 
 ## Regression gate now exempts PEAK tickers
 
