@@ -13,7 +13,12 @@ that work: `docs/dcf_upside_factor_test.md`.
 | 2 — single-name usefulness | **done** — prediction FAILED; the DCF *does* carry per-name information, weakly |
 | 3 — small-cap survivorship | **closed unbuilt** — nothing decides differently on the answer |
 | 4 — calibration-in-the-large | **done** — the signal is CONCENTRATED, and it explains Phase 1 |
-| 5 — act on it in the AI Researcher | **NEXT** — surface the DCF where it is measurably informative |
+| 5 — act on it in the AI Researcher | **done, shipped** (17acd79) — Chief Analyst regime note |
+
+**ALL PHASES CLOSED. Findings live in `docs/dcf_upside_factor_test.md`, not here.** This plan is a
+process record; the factor-test doc is the durable artifact, sitting beside the
+canslim/fibonacci/greenblatt verdicts where someone asking "what do we know about the DCF" will
+look. If a result exists only in this file, it is not logged — see the note at the bottom.
 
 **Headline after three phases.** The mechanical DCF is not a useful cross-sectional ranking factor
 (Phase 1), but it *does* carry genuine, sector-independent, per-name directional information
@@ -619,6 +624,23 @@ Rebuild command (~85 min, resumable, 6 workers):
 ```bash
 uv run scripts/reconstruct_dcf_panel.py --workers 6 --out-dir data/<name>
 ```
+
+---
+
+## Logging: the plan is not the artifact
+
+**Caught 2026-08-23, after the fact.** Phases 2, 4 and 5 were written up in this plan and
+summarised in memory, and neither reached `docs/dcf_upside_factor_test.md` — the file anyone
+actually reads to learn what this repo knows about the DCF. It still said **REJECTED** with no
+mention of the per-name result, and its "what was not tested" list still named single-name
+usefulness as untested, two days after it had been tested and found positive.
+
+So it was not merely incomplete, it was **wrong in a way that would have propagated**: a reader
+would have concluded the DCF carries no per-name information and that nobody had checked.
+
+**Plans get archived; findings docs are read.** "Recorded in the plan" is not "logged". When a
+phase produces a result, it goes in the findings doc in the same commit — the plan tracks *how the
+work went*, the doc states *what is true*. Fixed in 5906c0c.
 
 ---
 
