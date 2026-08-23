@@ -48,11 +48,26 @@ effect. In the middle of the distribution it carries essentially nothing beyond 
   others with history ending 1999 — that no live path touches. **Not a defect, and not a
   trade_systems ingestion bug either.** Closed.
 
-- Noted while there: `prices.duckdb` has a **`universe_snapshots`** table (`snapshot_date`,
-  `ticker`, `sub_index`) that is **empty, 0 rows**. It is an unpopulated scaffold for exactly the
-  historical universe membership Phase 3 needed. It does not reopen Phase 3 — there is no data in
-  it — but if it were ever wired up, Phase 3's blocker would begin to dissolve from that date
-  forward.
+- **`universe_snapshots` — investigated and DROPPED 2026-08-23. My first note on it was too
+  optimistic and is corrected here.** `prices.duckdb` held an empty `universe_snapshots` table
+  (`snapshot_date`, `ticker`, `sub_index`) — exactly the shape of the historical index membership
+  Phase 3 needed. I first recorded it as "a scaffold that would dissolve Phase 3's blocker if
+  wired up". **It would not.** Traced: the table was created by
+  `strategies/strantum/data/database.py` via `CREATE TABLE IF NOT EXISTS` at schema init, and
+  strantum's own plan filed it under *"for future survivorship bias mitigation"*. It was never
+  populated, and the strategy was later deleted — leaving an empty table in a database it did not
+  own. Verified across every file type in both repos: **zero rows, zero readers, zero writers.**
+  Dropped, with the origin recorded in `trade_systems/README.md`.
+
+  **What survives is the design, not a head start.** Point-in-time index membership is the right
+  answer to survivorship bias, and someone here reached that conclusion before. But the code that
+  would have populated it is gone, so building it is a from-scratch job. Phase 3 stays closed on
+  the same reasoning: nothing currently decides differently on the answer.
+
+  Shared-database lesson: **a project's schema-init code creating a table in a DB it does not own
+  leaves an artifact that deleting the project does not clean up.** Nothing in this session's work
+  would have found it — it surfaced only because `show tables` happened to list it while I was
+  chasing the beta windows.
 
 ---
 
