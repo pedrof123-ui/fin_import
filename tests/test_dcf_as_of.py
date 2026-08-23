@@ -72,8 +72,13 @@ def test_price_and_beta_not_from_the_future(ticker: str, as_of: date):
             "SELECT max(date) FROM stock_prices WHERE ticker = ? AND date <= ?",
             [ticker, as_of],
         ).fetchone()[0]
+        # Filter on the window the DCF actually uses. Without it this asserted only that SOME
+        # beta existed, across any window -- a looser claim than intended, and it silently
+        # coupled the test to an unmaintained 504d series that used a different snapshot-date
+        # convention (calendar month-end vs last trading day).
         beta_date = conn.execute(
-            "SELECT max(computed_date) FROM ticker_betas WHERE ticker = ? AND computed_date <= ?",
+            "SELECT max(computed_date) FROM ticker_betas "
+            "WHERE ticker = ? AND window_days = 260 AND computed_date <= ?",
             [ticker, as_of],
         ).fetchone()[0]
     finally:

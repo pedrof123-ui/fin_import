@@ -25,10 +25,14 @@ import pandas as pd
 PRICES_DB = Path("/home/pedro/projects/trade_systems/data/prices.duckdb")
 WINDOW_2YR = 104       # 2 years of weekly returns
 WINDOW_5YR = 260       # 5 years of weekly returns
-# NOTE: `ticker_betas` also holds a window_days=504 series, 1,454 tickers, stale since 2026-06-01.
-# NOTHING READS IT — only WINDOW_5YR (drives cost of equity in dcf/wacc.py) and WINDOW_2YR
-# (reported in WaccDetail) are ever queried. It is dead data left from an earlier experiment, not
-# a maintained series; `refresh` deliberately does not update it. Verified 2026-08-23.
+# These are the ONLY two windows. `ticker_betas` also carried a window_days=504 series until
+# 2026-08-23 (1,454 tickers, 358,759 rows, stale since 2026-06-01) — deleted, because it was not
+# merely unread but silently INCONSISTENT with these two: it stamped calendar month-ends while
+# _compute_snapshots stamps the last trading day, so a JPM snapshot sat at 2015-06-30 against
+# 2015-06-26 for the same month. Any query unioning or joining across windows got subtly wrong
+# dates with no warning. Deleting the series was cheaper than documenting the inconsistency, and
+# the data was a derived cache — `backfill_betas(window_days=504)` regenerates it from
+# stock_prices if it is ever wanted again.
 DEFAULT_WINDOW = WINDOW_5YR
 MIN_OBS = 26           # ~6 months of weekly data; return None below this threshold
 
