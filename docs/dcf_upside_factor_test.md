@@ -1,10 +1,23 @@
 # DCF-Implied Upside — Factor Test
 
-Tested 2026-08-21/22. **Verdict: REJECTED at the bound that was live at the time.** Sits alongside
-`canslim_factors_test.md`, `fibonacci_factors_test.md` and `greenblatt_factors_test.md` — the
-other candidates this repo measured and turned down.
+Tested 2026-08-21/23. Sits alongside `canslim_factors_test.md`, `fibonacci_factors_test.md` and
+`greenblatt_factors_test.md` — the other candidates this repo measured.
 
-Full process record: `archive/PLAN_DCF_ACCURACY.md`.
+**Two-part verdict, and the second part is not a rejection:**
+
+1. **As a cross-sectional RANKING factor: REJECTED.** Mean rank IC 0.0157 at the bound live at the
+   time, incremental IC over the existing value factors ~0. Sections 1-6 below.
+2. **As a PER-NAME signal: it works, but only in one regime.** Price converges toward the DCF's
+   intrinsic value more often than a matched null, and the effect is concentrated where the DCF
+   says a company is worth less than ~40% of its price (+8pp at 2.5-12x, +19pp above 12x, 3-5y).
+   Section 7 below. **This explains part 1** rather than contradicting it: a signal living in ~20%
+   of names dilutes to nothing in a full-universe rank IC.
+
+Shipped as a result: `api/research_router.py::_mechanical_dcf_regime_note` tells the Chief Analyst
+which regime a ticker is in.
+
+Process records: `archive/PLAN_DCF_ACCURACY.md` (ranking), `features/dcf/PLAN_DCF_FOLLOWUP.md`
+(horizon, per-name, calibration).
 
 ## What was tested — and what was not
 
@@ -20,11 +33,13 @@ is, does that ranking match their ranking by return over the next year?*
 - **Whether any fair value is numerically right.** There is no ground truth for intrinsic value.
   A DCF systematically 30% too low for every company scores perfectly here, because a constant
   bias cancels in a cross-sectional rank. This is unmeasurable, not merely unmeasured.
-- **Single-name usefulness** — how the AI Researcher actually consumes the DCF.
+- ~~**Single-name usefulness**~~ — was untested when sections 1-6 were written; **tested
+  afterwards and it is positive**, see section 7. Left visible rather than deleted because the
+  original conclusion was drawn without it.
 - **The shipped model.** This is the *mechanical* DCF. Production adds an analyst-estimate layer
   worth a median 29% of intrinsic value, and no historical reconstruction can reach it
   (`earnings_estimates` only begins 2026-05-10).
-- **Horizons beyond one year.** See "Known weakness" below.
+- ~~**Horizons beyond one year.**~~ Tested afterwards — see "Horizon" below.
 
 ## Panel
 
@@ -202,6 +217,75 @@ actively wrong beyond them" does not.
 returns rests on ~3 independent observations, against ~15 independent years for the 1y fit that
 survived walk-forward. See `features/dcf/PLAN_DCF_FOLLOWUP.md` Phase 1.
 
+## 7. Per-name convergence — the DCF DOES carry information, in one regime
+
+Tested 2026-08-23 (`scripts/test_dcf_convergence.py`). Sections 1-6 measured *cross-sectional
+ranking*. That is not how the AI Researcher uses the DCF — it presents a fair value for ONE
+company. A factor can be useless for ranking and still informative per name.
+
+**Design: convergence, chosen over directional hit rate for a survivorship reason.** Does
+`price / intrinsic` move toward 1? Convergence is a ratio a delisted company cannot answer, so its
+absence is a missing observation. A directional test ("did stocks the DCF called cheap go up?")
+silently counts that absence as evidence **in the DCF's favour**, and the companies missing here
+are disproportionately the ones that went to zero.
+
+**Both directions beat a matched null at every horizon** — the condition set in advance for
+"genuine information", since market drift alone converges only the undervalued side:
+
+```
+edge over null (pp)   undervalued   overvalued
+1y                       +2.65        +2.20
+3y                       +2.87        +4.12
+5y                       +1.61        +4.07
+```
+
+Survives sector matching (~87% of the edge remains), so it is not sector tilt.
+
+### The signal is CONCENTRATED, not diffuse
+
+Bucketed within direction, the overvalued side is ~0 until the DCF says a company is worth less
+than 40% of its price:
+
+```
+overvalued, edge over null (pp)   <25%   25-60%  60-150%   >150%
+3y                                0.02    -0.59     0.89   11.07
+5y                               -0.21    -1.61     0.09   12.52
+```
+
+Graded further, and not a tail artifact — it holds where most such names sit and strengthens
+beyond:
+
+| price / intrinsic | n (3y) | edge 3y | edge 5y |
+|---|---|---|---|
+| 2.5-12x (bucket median 5.2x) | 4,689 | +8.31pp | +10.47pp |
+| >12x | 1,535 | +19.39pp | +19.29pp |
+
+**About half is the value effect.** Drawing the substitute return from the same `earnings_yield`
+quintile leaves 50% / 53% / 56% of the edge at 1y / 3y / 5y — so roughly half is the DCF
+re-deriving the value premium and half is DCF-specific.
+
+### It is a tilt, not a verdict
+
+Absolute convergence stays poor: 45.0% (1y), 38.8% (3y), 32.2% (5y). Prices move *away* from the
+DCF's intrinsic values about twice as often as toward them at 5y. Even in the best bucket only
+~37-48% converge.
+
+**High absolute convergence is not information.** Undervalued names with 40-60% gaps converge
+67-74% of the time but beat their null by only ~3pp — nearly all drift. Overvalued names beyond
+150% converge just 37-44% of the time but beat their null by 11-12pp. Quoting either number alone
+misleads in opposite directions.
+
+### Shipped
+
+`api/research_router.py::_mechanical_dcf_regime_note` appends a calibrated line to the Chief
+Analyst's context stating which regime a ticker is in and how much weight the DCF has earned there.
+It went to the **Chief**, not the Valuation Analyst — `api/prompts/research_valuation.md` line 7
+forbids that agent from using the word "price" at all, deliberately, so its fair value is not
+anchored backwards from the market. It uses the **mechanical** intrinsic value, not
+`fair_value_base`, which is the Valuation Analyst's judgment and may have anchored on the AI DCF.
+
+---
+
 ## Terminal growth — resolved en route
 
 `archive/DCF_VISION.md` specified terminal growth as the median of historical annual revenue
@@ -234,6 +318,17 @@ premise — a decade of revenue history is not evidence about growth in perpetui
    no-op are indistinguishable at the median.
 4. **Completion rate is not accuracy.** Stated twice here because it produced a wrong
    recommendation once already.
+5. **A broken control looks like a discovery.** The first per-name null shuffled *intrinsic values*
+   and widened the starting-ratio distribution (median |r-1| 0.461 actual vs 0.779 shuffled) —
+   wide ratios converge mechanically, the exact confound the null existed to remove. It produced
+   -6.03pp at z = -26.7, i.e. "price converges toward the DCF's fair value LESS often than toward
+   a random company's". Naming a confound in advance did not prevent building a null contaminated
+   by it. **The tell was the size of the result in a direction that made no sense.**
+6. **Check which tail a guard actually bounds.** `MAX_INTRINSIC_TO_PRICE` caps intrinsic/price, so
+   it constrains the *undervalued* extreme. Two separate errors came from forgetting that: a
+   pre-committed contingency to "loosen the guard" that did not apply to the informative names at
+   all, and gap buckets confounded by direction (the undervalued gap cannot exceed 60%, so every
+   pooled bucket above that was 100% overvalued).
 
 ## Reproduce
 
