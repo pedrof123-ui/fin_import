@@ -3,6 +3,37 @@
 Created 2026-08-22. Successor to `archive/PLAN_DCF_ACCURACY.md`, which is closed. Findings from
 that work: `docs/dcf_upside_factor_test.md`.
 
+## RESUME HERE (session paused 2026-08-22)
+
+**State:** everything committed, working tree clean, full suite 638 passed / 3 skipped.
+Phase 1 complete, Phase 3 closed unbuilt, **Phase 2 is next and its design is decided but not
+built.**
+
+**To pick this up:**
+
+1. Read the Phase 2 design decision below — **convergence**, chosen over directional hit rate and
+   calibration-in-the-large, for a survivorship reason that matters. Do not re-open that choice
+   after seeing results.
+2. Use `data/dcf_reconstruction_flat_2p5/` (see **Panel inventory** — the panels were NOT all
+   built under the same constants and mixing them has already produced one fake finding).
+3. No new data is needed. This is hours of work, not days.
+4. **Commit a prediction before running**, per the constraint list at the bottom. Half the
+   predictions committed during this programme turned out wrong; that is what made them useful.
+
+**What Phase 2 decides:** the AI Researcher shows users a mechanical DCF fair value as a valuation
+anchor for the ~72% of tickers where it computes. If the per-name signal is absent, it should stop
+doing that or reframe it heavily. That is a live, user-facing change — the strongest decision case
+of anything remaining in this plan.
+
+**Also outstanding, small and unrelated to Phase 2:**
+- `ticker_betas` window 504 is stale since 2026-06-01 and nothing refreshes it; unclear what reads
+  it. Either wire it into the Saturday `beta_refresh` cron or delete the series.
+- 44 tickers have broken `stock_prices` history (BK has 6 rows; CMA and BMS have all-NULL
+  `adj_close` ending 1999) and therefore sit permanently at beta 1.0. That is trade_systems
+  ingestion, not this repo.
+
+---
+
 ## Why this exists
 
 The predecessor answered one question well and left three standing. It measured whether
@@ -150,7 +181,7 @@ declined on that basis, not ignored.
 
 ---
 
-## Phase 2 — Single-name usefulness  [ ]
+## Phase 2 — Single-name usefulness  [ ] **NEXT — design decided 2026-08-22, not yet built**
 
 The predecessor measured cross-sectional ranking. **That is not how the AI Researcher uses the
 DCF** — it consumes a fair value for one company as a valuation anchor. A factor can be useless
@@ -159,12 +190,53 @@ genuinely different and neither implies the other.
 
 This is testable, just not by rank IC. Candidate designs, to be chosen before running:
 
-- **Directional hit rate**: does `intrinsic > price` predict positive excess return for that name
-  over 3-5 years, per company rather than per cross-section?
-- **Convergence**: does `price / intrinsic` move toward 1 over the horizon, and how often?
-- **Calibration-in-the-large**: bucket by predicted upside and check realised return against it.
-  Not calibration of the *level* (unmeasurable, above), but whether bigger predicted gaps
-  correspond to bigger realised moves.
+### DESIGN DECIDED 2026-08-22: **convergence**
+
+**Chosen — Convergence.** Does `price / intrinsic_value` move toward 1 over the horizon, and how
+often? Measured per company: compare `price_{t+H} / intrinsic_t` against `price_t / intrinsic_t`
+and test whether the ratio moves toward 1.
+
+**Why this one, over the two alternatives — the reason is survivorship.** It bites Phase 2 harder
+than it bit the ranking test. A rank IC only asks about *relative* ordering within a month, so a
+missing company distorts the ordering slightly. A directional or absolute test asks *did the
+stocks the DCF called cheap actually go up?* — and the companies absent from this database are
+disproportionately the ones that went to zero, which is exactly the population the DCF would have
+called cheap.
+
+Convergence is a **ratio** question that a delisted company simply cannot answer, so its absence
+shows up as a missing observation. Directional accuracy silently counts that same absence as
+evidence **in the DCF's favour**. Given Phase 3 established that the survivorship gap cannot be
+quantified from local data, preferring the design that fails loudly over the one that fails
+flatteringly is the whole point.
+
+**Rejected — Directional hit rate.** Does `intrinsic > price` predict positive excess return for
+that name over 3-5 years? Rejected on the survivorship asymmetry above: the missing companies
+would have been counted as "called cheap" and their -100% outcomes are simply absent, biasing the
+hit rate upward by an unknown amount. Would also need a benchmark decision (SPY vs sector vs
+universe) that convergence avoids entirely.
+
+**Rejected — Calibration-in-the-large.** Bucket by predicted upside and check whether bigger
+predicted gaps produce bigger realised moves. Not rejected on merit — it is a good test and worth
+running as a SECONDARY read if convergence produces a signal. Deferred because it shares the
+directional test's survivorship exposure (it is an absolute-return question per bucket), and
+because running two designs and reporting the better one is exactly the retrofitting this plan
+keeps warning against. **Pick one, commit, report it.**
+
+### Data — none needed, everything exists
+
+Verified 2026-08-22. Phase 2 is hours, not days.
+
+| need | source | status |
+|---|---|---|
+| Point-in-time intrinsic value | `data/dcf_reconstruction_flat_2p5/` | built |
+| Price at valuation date | `price_at_computation`, same panel | built |
+| Forward prices to 5y | `monthly_pe` (through 2026-08) | exists |
+| Benchmark (only if design changes) | `SPY` from 1983, `VTI` from 2001 in `prices.duckdb::etf_prices` | exists |
+| Sector | `company_overview` via `_join_sector` | exists |
+
+The panel storing intrinsic value **and** the price it was struck against is what makes this
+cheap; `dcf_results` never stored a price, so without the Phase 0.1 change this would have needed
+an 85-minute rebuild first.
 
 **Depends on Phase 1**, now complete: the signal is strongest at 3-5 years, so use that horizon.
 Note that Phase 1 also caps expectations — the DCF's incremental information over existing value
@@ -249,6 +321,31 @@ flagged as survivorship-inflated and unquantified, which is an honest state rath
 
 **Reopen this if** the universe floor is ever lowered below $1B, or if `dcf_upside` is proposed
 for the live composite. Either makes the number decision-relevant; until then it is not.
+
+---
+
+## Panel inventory — CHECK THIS BEFORE ANY A/B
+
+Four reconstructed panels are on disk and **they were not all built under the same
+`dcf/model.py` constants.** Mixing them produces confounded results; this already happened once
+and produced a fake 18.8pp "coverage collapse". Verified 2026-08-22 by `max(intrinsic/price)`:
+
+| panel | rows (ok) | built under | use |
+|---|---|---|---|
+| `data/dcf_reconstruction_flat_2p5/` | 46,652 | **2.5x** | **CURRENT baseline — use this** |
+| `data/dcf_reconstruction_tgcapped/` | 47,146 | 2.5x | terminal-growth experiment, rejected |
+| `data/dcf_reconstruction/` | 61,289 | 10x | **STALE** — predates the guard change |
+| `data/dcf_reconstruction_smallcap/` | 15,918 | 10x | $300M-1B band |
+
+**Note on the small-cap panel:** it was built under 10x, so the 2.5x and 2.0x rows in its results
+table were produced by **post-hoc filtering, not a rebuild**. Post-hoc filtering flatters (see
+constraint 2 below), so treat those two rows as optimistic. The headline small-cap claim uses the
+10x row, which is the honest one for that panel.
+
+Rebuild command (~85 min, resumable, 6 workers):
+```bash
+uv run scripts/reconstruct_dcf_panel.py --workers 6 --out-dir data/<name>
+```
 
 ---
 
