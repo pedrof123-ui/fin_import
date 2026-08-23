@@ -3,34 +3,29 @@
 Created 2026-08-22. Successor to `archive/PLAN_DCF_ACCURACY.md`, which is closed. Findings from
 that work: `docs/dcf_upside_factor_test.md`.
 
-## RESUME HERE (session paused 2026-08-22)
+## STATE (updated 2026-08-23)
 
-**State:** everything committed, working tree clean, full suite 638 passed / 3 skipped.
-Phase 1 complete, Phase 3 closed unbuilt, **Phase 2 is next and its design is decided but not
-built.**
+**Phases 1, 2 and 3 are closed. Phase 4 is next and its prediction is committed.**
 
-**To pick this up:**
+| phase | status |
+|---|---|
+| 1 — is 1y the wrong clock? | **done** — objection answered, verdict softens but stands |
+| 2 — single-name usefulness | **done** — prediction FAILED; the DCF *does* carry per-name information, weakly |
+| 3 — small-cap survivorship | **closed unbuilt** — nothing decides differently on the answer |
+| 4 — calibration-in-the-large | **NEXT** — warranted now that Phase 2 found a signal |
 
-1. Read the Phase 2 design decision below — **convergence**, chosen over directional hit rate and
-   calibration-in-the-large, for a survivorship reason that matters. Do not re-open that choice
-   after seeing results.
-2. Use `data/dcf_reconstruction_flat_2p5/` (see **Panel inventory** — the panels were NOT all
-   built under the same constants and mixing them has already produced one fake finding).
-3. No new data is needed. This is hours of work, not days.
-4. **Commit a prediction before running**, per the constraint list at the bottom. Half the
-   predictions committed during this programme turned out wrong; that is what made them useful.
+**Headline after three phases.** The mechanical DCF is not a useful cross-sectional ranking factor
+(Phase 1), but it *does* carry genuine, sector-independent, per-name directional information
+(Phase 2) — a 2-4pp tilt over a matched null, which the ranking tests could not see. It is a tilt,
+not an anchor: prices move away from its intrinsic values about twice as often as toward them at
+5y. **Recommendation: the AI Researcher should keep the mechanical DCF but present it as one
+directional input among several rather than as a fair-value anchor.** Not yet implemented — Phase
+4 should land first, since it may narrow the framing further ("useful when the gap is large").
 
-**What Phase 2 decides:** the AI Researcher shows users a mechanical DCF fair value as a valuation
-anchor for the ~72% of tickers where it computes. If the per-name signal is absent, it should stop
-doing that or reframe it heavily. That is a live, user-facing change — the strongest decision case
-of anything remaining in this plan.
-
-**Also outstanding, small and unrelated to Phase 2:**
-- `ticker_betas` window 504 is stale since 2026-06-01 and nothing refreshes it; unclear what reads
-  it. Either wire it into the Saturday `beta_refresh` cron or delete the series.
-- 44 tickers have broken `stock_prices` history (BK has 6 rows; CMA and BMS have all-NULL
-  `adj_close` ending 1999) and therefore sit permanently at beta 1.0. That is trade_systems
-  ingestion, not this repo.
+**Still outstanding, small and unrelated:**
+- `ticker_betas` window 504 stale since 2026-06-01, nothing refreshes it, unclear what reads it.
+- 44 tickers have broken `stock_prices` history and sit permanently at beta 1.0 (trade_systems
+  ingestion, not this repo).
 
 ---
 
@@ -435,6 +430,43 @@ flagged as survivorship-inflated and unquantified, which is an honest state rath
 
 **Reopen this if** the universe floor is ever lowered below $1B, or if `dcf_upside` is proposed
 for the live composite. Either makes the number decision-relevant; until then it is not.
+
+---
+
+## Phase 4 — Calibration-in-the-large  [ ] **NEXT, prediction committed 2026-08-23**
+
+Phase 2 deferred this pending a signal. There is one, so it is now warranted.
+
+**Question:** does the DCF's per-name edge concentrate where its claim is strong? A DCF saying a
+stock is 5% mispriced is inside its own noise; one saying 80% mispriced is a strong assertion. If
+the 2-4pp tilt is real information rather than a diffuse artifact, it should be larger where the
+predicted gap is larger.
+
+**Design — reuse the validated null, do not invent a new one.** Bucket observations by the size of
+the predicted gap `|r_t - 1|`, and within each bucket measure the same convergence edge over the
+same return-shuffle null Phase 2 used. Split by direction as well, since the overvalued side
+carried the stronger edge there.
+
+Deliberately NOT "bucket by predicted upside and compare realised returns" — that is an
+absolute-return question and carries the survivorship exposure Phase 2's design was chosen to
+avoid. Staying in the ratio framing keeps delisted companies as missing observations rather than
+as silent evidence for the DCF.
+
+**PREDICTION COMMITTED BEFORE RUNNING:**
+
+1. **The edge grows with gap size** across the low and middle buckets — if the tilt is real, it
+   should concentrate where the model makes a strong claim.
+2. **It flattens or falls in the largest bucket.** Extremes are where the model is least reliable;
+   that is why `MAX_INTRINSIC_TO_PRICE` exists at all. Expect an inverted-U, not a monotonic rise.
+3. Even in the best bucket the **absolute** convergence rate stays under 50% at 3-5y, so the
+   "tilt, not anchor" conclusion survives and the recommendation does not change to "anchor on it
+   when the gap is large".
+
+**What each outcome changes.** A monotonic rise (prediction 2 wrong) would mean the DCF is most
+trustworthy exactly where it is currently most distrusted, and would argue for *loosening*
+`MAX_INTRINSIC_TO_PRICE` — the opposite of what Phase 3 of the predecessor plan concluded. A flat
+profile (prediction 1 wrong) would mean the tilt is diffuse and not specifically about mispricing,
+which would weaken the Phase 2 result considerably.
 
 ---
 
