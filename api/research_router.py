@@ -1743,6 +1743,88 @@ def _latest_diluted_shares(ticker: str) -> Optional[float]:
         conn.close()
 
 
+# Measured 2026-08-21/23 (features/dcf/PLAN_DCF_FOLLOWUP.md Phases 1-4). The mechanical DCF is
+# NOT a useful cross-sectional ranking factor, and in the middle of its distribution it carries
+# essentially nothing beyond earnings_yield. Its per-name information is CONCENTRATED in one
+# regime: when it says a company is worth less than ~40% of its price. There, price converges
+# toward intrinsic value +11.1pp (3y) and +12.5pp (5y) more often than a matched-null return, and
+# roughly half of that survives controlling for the value effect.
+#
+# So the Chief is told where the number has earned weight and where it has not, rather than
+# receiving a bare fair value that implies uniform confidence. Computed here rather than asked of
+# the LLM: an LLM applying a numeric threshold is the less reliable half of this.
+_DCF_EXTREME_OVERVALUATION = 2.5   # price / intrinsic above which the signal is measurable
+
+
+def _mechanical_dcf_regime_note(ticker: str) -> str:
+    """One calibrated line on how much weight the mechanical DCF has earned for this ticker.
+
+    Reads the cached monthly batch (dcf_results) rather than re-running compute_dcf_scenarios --
+    same engine, no second DCF run. Returns "" when there is no usable cached value, so a missing
+    cache degrades to today's behaviour rather than to a wrong claim.
+    """
+    try:
+        conn = duckdb.connect(str(_HIST_FUND_DB), read_only=True)
+        try:
+            row = conn.execute(
+                "SELECT d.intrinsic_value_per_share, h.price_at_computation "
+                "FROM dcf_results d "
+                "LEFT JOIN dcf_results_history h ON h.ticker = d.ticker "
+                "  AND h.snapshot_date = (SELECT max(snapshot_date) FROM dcf_results_history) "
+                "WHERE d.ticker = ? AND d.status = 'ok' AND d.intrinsic_value_per_share > 0",
+                [ticker.upper()],
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return ""
+        intrinsic = float(row[0])
+        # Live quote first; fall back to the price the intrinsic value was actually struck
+        # against. Same fallback shape as dcf/data.py::load_current_price. The stored price is
+        # at most a month old and is MATCHED to this intrinsic value, which for a ratio is
+        # arguably better than pairing a fresh quote with a month-old valuation.
+        price = fetch_live_price(ticker)
+        if not price or price <= 0:
+            price = float(row[1]) if row[1] else None
+        if not price or price <= 0:
+            return ""
+    except Exception:
+        return ""
+
+    ratio = price / intrinsic
+    header = (
+        "=== MECHANICAL DCF — HOW MUCH WEIGHT IT HAS EARNED (measured, not asserted) ===\n"
+        f"Mechanical DCF intrinsic value ${intrinsic:,.2f} vs price ${price:,.2f} "
+        f"= price is {ratio:.2f}x intrinsic.\n"
+    )
+    if ratio > _DCF_EXTREME_OVERVALUATION:
+        # Graded, not binary — the edge strengthens with the ratio and is not an artifact of the
+        # extreme tail: measured +8.3pp (3y) / +10.5pp (5y) in the 2.5-12x range where most such
+        # names sit, and +19.4pp / +19.3pp above 12x.
+        strength = (
+            "+19pp at both 3y and 5y" if ratio > 12
+            else "+8pp at 3y and +10pp at 5y"
+        )
+        body = (
+            "This is the ONE regime where the mechanical DCF has measurable predictive value. "
+            f"Backtested 2010-2024, at this ratio price subsequently moves toward intrinsic "
+            f"value {strength} more often than a matched-null return, and about half that edge "
+            "survives controlling for the value effect that earnings_yield already captures. "
+            "Treat it as a genuine caution signal and say so explicitly in the narrative. "
+            "It remains a tilt, not a verdict: even here only ~37-48% of such names actually "
+            "converge, so it argues for caution, not for a price target."
+        )
+    else:
+        body = (
+            "This is the regime where the mechanical DCF has NO measured edge. Backtested "
+            "2010-2024, at gaps below this threshold its per-name convergence edge is ~0 and what "
+            "little exists is the value effect that earnings_yield already captures. Do not lean "
+            "on the mechanical DCF's level here — use it as one input among several and give "
+            "weight to the AI DCF's assumptions, the ML comps cross-check, and the specialists."
+        )
+    return header + body
+
+
 def _dcf_assumptions_table(scenarios: Optional[dict]) -> str:
     # No mechanical DCF (compute_dcf_scenarios raised — e.g. the non-positive or plausibility
     # guard in dcf/model.py). This table is entirely DCF-derived, so it is the one block that
@@ -2646,6 +2728,9 @@ async def _run_research_agent(
         f"=== SPECIALIST OUTPUTS ===\n"
         f"{_format_specialist_outputs(competitive_out, earnings_out, technical_out, valuation_out)}"
     )
+    _dcf_regime = _mechanical_dcf_regime_note(ticker)
+    if _dcf_regime:
+        chief_context += f"\n\n{_dcf_regime}"
 
     core_model = resolve_agent_model("chief_analyst_core", model)
     core_agent = Agent(

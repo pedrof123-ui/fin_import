@@ -12,15 +12,17 @@ that work: `docs/dcf_upside_factor_test.md`.
 | 1 — is 1y the wrong clock? | **done** — objection answered, verdict softens but stands |
 | 2 — single-name usefulness | **done** — prediction FAILED; the DCF *does* carry per-name information, weakly |
 | 3 — small-cap survivorship | **closed unbuilt** — nothing decides differently on the answer |
-| 4 — calibration-in-the-large | **NEXT** — warranted now that Phase 2 found a signal |
+| 4 — calibration-in-the-large | **done** — the signal is CONCENTRATED, and it explains Phase 1 |
+| 5 — act on it in the AI Researcher | **NEXT** — surface the DCF where it is measurably informative |
 
 **Headline after three phases.** The mechanical DCF is not a useful cross-sectional ranking factor
 (Phase 1), but it *does* carry genuine, sector-independent, per-name directional information
 (Phase 2) — a 2-4pp tilt over a matched null, which the ranking tests could not see. It is a tilt,
 not an anchor: prices move away from its intrinsic values about twice as often as toward them at
-5y. **Recommendation: the AI Researcher should keep the mechanical DCF but present it as one
-directional input among several rather than as a fair-value anchor.** Not yet implemented — Phase
-4 should land first, since it may narrow the framing further ("useful when the gap is large").
+5y. **Recommendation, narrowed by Phase 4 and now being implemented (Phase 5):** the mechanical DCF is
+worth real narrative weight only when it disagrees with the market **by a lot and to the downside**
+(price above ~2.5x intrinsic), where roughly half its edge survives controlling for the value
+effect. In the middle of the distribution it carries essentially nothing beyond `earnings_yield`.
 
 **Still outstanding, small and unrelated:**
 - `ticker_betas` window 504 stale since 2026-06-01, nothing refreshes it, unclear what reads it.
@@ -549,6 +551,49 @@ and deserves very little when the gap is moderate. That is a sharper instruction
 among several", and it is supported rather than assumed.
 
 **Not yet implemented** — this is a product change and should be decided explicitly.
+
+## Phase 5 — Act on it in the AI Researcher  [ ] **NEXT**
+
+Phases 1-4 measured. This is the only phase that changes the product.
+
+**The finding to implement:** the mechanical DCF carries measurable per-name information *only*
+in the extreme-overvalued regime — price above ~2.5x intrinsic — where the edge is +11 to +12.5pp
+over a matched null and roughly half survives controlling for `earnings_yield`. Below that it is
+~0 and the DCF is re-deriving the value effect at best.
+
+**ARCHITECTURAL CONSTRAINT discovered while scoping (2026-08-23).** The obvious home for this rule
+is the Valuation Analyst, and that is **wrong**: `api/prompts/research_valuation.md` line 7 forbids
+that agent from using the words "price", "target price" or "upside" at all — it is deliberately
+price-blind so its fair value is not anchored backwards from the market. A `price / intrinsic > 2.5`
+rule cannot live there.
+
+The rule belongs with the **Chief Analyst** (`research_chief_core.md`), which is price-aware and
+makes the rating call comparing `current price` to `fair_value_base`.
+
+**SECOND PRECISION POINT.** The measurement is about the **mechanical** DCF's intrinsic value
+(`run_dcf_av` under engine defaults), NOT `fair_value_base` — which is the Valuation Analyst's
+judgment and may have anchored on the AI DCF instead. Applying the threshold to `fair_value_base`
+would apply a finding about one number to a different one. The flag must be computed from the
+mechanical intrinsic value specifically.
+
+**The signal is GRADED, not binary** (checked 2026-08-23 before writing the note, because the
+first live example came out at 125x intrinsic — far beyond anything the calibration covered, and
+plausibly a near-zero-intrinsic computation artifact rather than a valuation). It is not an
+artifact of the extreme tail:
+
+| | n (3y) | edge 3y | edge 5y |
+|---|---|---|---|
+| 2.5-12x (median of the bucket is 5.2x) | 4,689 | +8.31pp | +10.47pp |
+| >12x | 1,535 | +19.39pp | +19.29pp |
+
+The edge holds where most such names sit AND strengthens further out, so the note grades its
+language by ratio rather than quoting one number.
+
+**Implementation:** a deterministic helper reads the cached mechanical DCF (`dcf_results`, refreshed
+monthly by `compute_dcf_batch.py`) plus current price, computes the ratio, and appends a calibrated
+note to `chief_context`. Deterministic rather than asking the LLM to do the arithmetic and apply a
+threshold — an LLM applying a numeric rule is the less reliable half of this. No extra DCF run: it
+reads the existing cache, not `compute_dcf_scenarios` a second time.
 
 ---
 

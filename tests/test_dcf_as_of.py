@@ -173,3 +173,50 @@ def test_non_forecast_overrides_still_get_the_default_bound():
 
     with pytest.raises(ValueError, match=r"2\.5x plausibility bound"):
         run_dcf_av("AAPL", overrides=UserOverrides(beta=1.1), as_of=date(2015, 6, 30))
+
+
+# ── Mechanical DCF regime note (PLAN_DCF_FOLLOWUP Phase 5) ───────────────────
+
+def test_mechanical_dcf_regime_note_grades_by_ratio():
+    """The Chief is told where the mechanical DCF has earned weight and where it has not.
+
+    Measured Phases 1-4: the DCF's per-name edge is ~0 in the middle of its distribution and
+    concentrated above ~2.5x price/intrinsic. The note must distinguish the two regimes, because
+    a bare fair value implies uniform confidence the measurement does not support.
+    """
+    from unittest.mock import patch
+    import api.research_router as rr
+
+    # (intrinsic, price_at_computation) -> regime
+    cases = [
+        ((10.0, 150.0), "measurable predictive value", "+19pp"),   # 15x -> above the 12x grade
+        ((10.0, 40.0), "measurable predictive value", "+8pp"),     # 4x  -> extreme but below 12x
+        ((10.0, 100.0), "measurable predictive value", "+8pp"),    # 10x -> boundary, still <12x
+        ((10.0, 11.0), "NO measured edge", None),                  # 1.1x -> middle
+    ]
+    for (iv, px), must_contain, strength in cases:
+        with patch.object(rr, "duckdb") as mock_db, \
+             patch.object(rr, "fetch_live_price", return_value=None):
+            mock_db.connect.return_value.execute.return_value.fetchone.return_value = (iv, px)
+            note = rr._mechanical_dcf_regime_note("TEST")
+        assert must_contain in note, f"iv={iv} px={px}: expected {must_contain!r} in note"
+        if strength:
+            assert strength in note, f"iv={iv} px={px}: expected strength {strength!r}"
+
+
+def test_mechanical_dcf_regime_note_degrades_silently():
+    """No cached DCF, or no usable price, must return "" rather than a wrong claim — the report
+    then behaves exactly as it did before this note existed."""
+    from unittest.mock import patch
+    import api.research_router as rr
+
+    with patch.object(rr, "duckdb") as mock_db, \
+         patch.object(rr, "fetch_live_price", return_value=None):
+        mock_db.connect.return_value.execute.return_value.fetchone.return_value = None
+        assert rr._mechanical_dcf_regime_note("TEST") == ""
+
+    # cached value present but no price available from either source
+    with patch.object(rr, "duckdb") as mock_db, \
+         patch.object(rr, "fetch_live_price", return_value=None):
+        mock_db.connect.return_value.execute.return_value.fetchone.return_value = (10.0, None)
+        assert rr._mechanical_dcf_regime_note("TEST") == ""
