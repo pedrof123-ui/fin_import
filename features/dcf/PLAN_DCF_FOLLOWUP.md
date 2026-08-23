@@ -222,6 +222,50 @@ directional test's survivorship exposure (it is an absolute-return question per 
 because running two designs and reporting the better one is exactly the retrofitting this plan
 keeps warning against. **Pick one, commit, report it.**
 
+### Test construction — two confounds that would fake a positive result
+
+**Confound 1: market drift.** Equities drift up. Any name with `price < intrinsic` will appear to
+"converge" from drift alone, with no information in the intrinsic value at all. A raw convergence
+rate is therefore meaningless on its own.
+
+**Confound 2: mechanical mean reversion.** When `|r_t - 1|` is large, almost any change is more
+likely to shrink it than grow it. Extreme ratios "converge" for arithmetic reasons.
+
+Both are handled by testing against nulls rather than against zero:
+
+- **Primary**: for each (ticker, as_of), `r_t = price_t / intrinsic_t` and
+  `r_{t+H} = price_{t+H} / intrinsic_t` — the SAME intrinsic value, so this asks whether price
+  moved toward the valuation. Convergence when `|r_{t+H} - 1| < |r_t - 1|`.
+- **Null A — shuffled intrinsic.** Shuffle intrinsic values within each as-of cross-section,
+  breaking only the ticker linkage while preserving both distributions. Repeat for a null band.
+  **The result is the actual rate MINUS this null**, never the raw rate.
+- **Null B — directional asymmetry.** Split by `r_t < 1` (undervalued) vs `r_t > 1` (overvalued).
+  **Genuine information requires BOTH to converge.** Drift alone converges only the undervalued
+  side. This is the discriminating test and the one to lead on: an overvalued name must fall
+  toward its intrinsic value, which market drift actively works against.
+
+Horizons 1y / 3y / 5y (Phase 1 established the signal, if any, lives at 3-5y).
+
+**PREDICTION COMMITTED BEFORE RUNNING (2026-08-23):**
+
+1. **Raw convergence will look positive and mean nothing** — roughly 55-65% for undervalued names,
+   driven by drift and mechanical mean reversion.
+2. **Overvalued names will NOT converge** at a meaningfully better-than-null rate. This is the
+   prediction that matters; if it is wrong, the DCF carries real per-name information.
+3. **Actual minus shuffled null will be small — under 5 percentage points** at every horizon.
+4. Therefore: **no per-name signal strong enough to justify the AI Researcher anchoring on a
+   mechanical fair value**, and the recommendation will be to reframe rather than remove (the
+   number is still a defensible reference point, just not a prediction).
+
+Reasoning: Phase 1 measured the DCF's incremental cross-sectional information at ~0.02 IC even at
+5y. Per-name convergence is a genuinely different question — that is why this phase exists — but a
+strong per-name signal alongside near-zero cross-sectional signal would be surprising.
+
+**If prediction 2 fails** (overvalued names converge at a real rate above null), the verdict from
+the whole programme is too harsh: the DCF would be informative per-name while useless for ranking,
+which is exactly the case the ranking tests could not see. Run calibration-in-the-large as the
+secondary read at that point, not before.
+
 ### Data — none needed, everything exists
 
 Verified 2026-08-22. Phase 2 is hours, not days.
