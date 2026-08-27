@@ -21,14 +21,16 @@ fin_import2/
 │   ├── ai_dcf_router.py                 Agentic AI DCF Valuator: GET /research/ai-dcf{,/status}, POST /research/ai-dcf/cancel.
 │   │                                    Evidence team (Fundamentals Historian / Industry & Competitors / Guidance & MD&A, parallel)
 │   │                                    -> DCF Architect (senior valuation persona authors per-year bear/base/bull revenue growth,
-│   │                                    cogs_pct, EBIT margin, capex%, TG) -> guardrails -> dcf.run_dcf_av x3 (LLM never computes the
+│   │                                    cogs_pct, EBIT margin, capex%, TG) -> guardrails (capex ceiling is ticker-anchored on its own
+│   │                                    historical max + 15pp, not one flat % for every sector) -> dcf.run_dcf_av x3 (LLM never computes the
 │   │                                    valuation itself). get_or_run_ai_dcf is the in-process, cache-aware entry point shared with
 │   │                                    research_router (joins an in-flight task instead of double-starting). Cache: ai_dcf_cache.duckdb.
 │   │                                    See features/ai_dcf/SPEC.md and PLAN.md.
 │   ├── ai_dcf_data.py                   Agentic AI DCF Valuator data layer: get_fundamentals_history, get_mda_history (mda_filings.duckdb,
 │   │                                    currently unused elsewhere), get_industry_report (14-day read window into
 │   │                                    industry_research_cache.duckdb, bypasses that router's 24h TTL), get_competitor_transcripts
-│   │                                    (cached-only, zero new Alpha Vantage calls), get_engine_context, get_historical_margin_bounds.
+│   │                                    (cached-only, zero new Alpha Vantage calls), get_engine_context, get_historical_margin_bounds
+│   │                                    (incl. capex_pct_max — the ticker's own historical capex ceiling, added 2026-08-27).
 │   ├── industry_research_router.py      Industry AI research: GET /industry-research/{industries,models,report,status}, POST /industry-research/cancel
 │   │                                    Map-reduce multi-agent pipeline (per-company digest -> Trends/Risks specialists -> Chief) at strict AV
 │   │                                    `industry` grain (never sector — see features/industry_research/SPEC.md 2.1). Cache: industry_research_cache.duckdb
@@ -424,6 +426,9 @@ R&D: if a company never reports R&D, `rd_pct` stays `None` throughout (shown as 
 - Market cap is zero after all share fallbacks
 - Debt weight exceeds 80%
 - WACC falls below 5%
+- Cost of debt is below the risk-free rate (advisory — plausible for pre-rate-hike-cycle fixed
+  debt, but the same rate discounts the terminal value; added 2026-08-27, see
+  `features/ai_dcf/PLAN_GUARDRAILS.md`)
 - Terminal growth is clamped because WACC ≤ default terminal growth rate
 
 Warnings are displayed as amber banners in `DcfViewer.tsx`.

@@ -1,5 +1,81 @@
 # Project Status — Fundamentals Alpha + FinView
 
+## AI DCF Guardrail Fixes (complete, 2026-08-27)
+
+Prompted by reviewing two real AI Researcher reports (IBM, PEG): the Chief Analyst flagged a 2.0%
+cost of debt as implausible against a 5.17% risk-free rate on IBM, and PEG's AI DCF authored
+35-42% capex intensity that breached the guardrail's flat `[0%, 35%]` sanity bound, causing the
+Chief to discount the AI DCF base case ($150.40 -> $135.00) and land on HOLD. Investigated both
+before writing any code — neither was what it first looked like.
+
+### What was found
+
+**Cost of debt below the risk-free rate is not necessarily a bug.** `dcf/wacc.py::compute_cost_of_debt`
+estimates an *embedded* rate (`avg_interest_expense / avg_total_debt`, clamped [2%, 15%]) — a
+company that termed out debt at 2020-2021 zero-rate-era coupons can legitimately show an embedded
+cost below today's risk-free rate. The real problem is narrower: `dcf/model.py` applies one flat
+WACC to both the 5-year forecast and the terminal value, and an embedded rate that low is not a
+defensible discount rate for the terminal value (existing debt will mature and refinance at
+prevailing rates long before "forever" arrives). A time-varying WACC would need debt-maturity/
+vintage data this pipeline doesn't have (Alpha Vantage fundamentals give only aggregate
+`interest_expense` and aggregate debt balances) — out of scope; shipped a deterministic advisory
+flag instead of a value change.
+
+**The capex guardrail's flat 35% ceiling had no empirical basis and was miscalibrated by sector.**
+Traced to `features/ai_dcf/SPEC.md` §6.5, introduced whole-cloth with no derivation shown. Pulled
+actual capex/revenue from `av_financials.duckdb` across 2,581 tickers: the median *utility* alone
+runs 37.98% (p90 62.4%) — already above the flat cap PEG was flagged against — while tech/
+healthcare/consumer/financials medians run 1.2-2.7% (p90 4-23%), nowhere near it. The flat bound
+was flagging normal capital-intensive-sector capex as anomalous while doing almost no work for
+asset-light sectors. capex was also the only one of the four guardrail metrics with no
+ticker-specific historical anchor — `ebit_margin_pct` and `cogs_pct` already compare against each
+ticker's own history.
+
+### What shipped
+
+- **Cost-of-debt sanity warning** (`dcf/model.py::run_dcf_av`, next to the existing WACC<5% check):
+  fires whenever `cost_of_debt < risk_free_rate`. Advisory only — `compute_cost_of_debt`'s
+  embedded-rate estimate and its [2%, 15%] clamp are untouched. Reaches the mechanical DCF's
+  context automatically via existing "DATA-QUALITY WARNINGS" plumbing; `format_ai_dcf_summary`
+  (`api/ai_dcf_router.py`) extended to surface it on the AI DCF side too, since the AI DCF
+  Architect can set `cost_of_debt_override` independently of the mechanical DCF.
+- **Ticker-anchored capex guardrail** (`api/ai_dcf_data.py::get_historical_margin_bounds` gains
+  `capex_pct_max`; `api/ai_dcf_router.py::_check_scenario_ranges`): the capex ceiling is now each
+  ticker's own historical max + 15pp, falling back to the flat 35% only when a ticker has fewer
+  than 2 years of usable capex history (e.g. a recent IPO). Stays advisory, never a clip — a hard
+  clip would override genuine, evidence-cited capital upcycles the DCF Architect is designed to
+  capture (e.g. PEG's stated $24-28B 2026-2030 plan).
+- Both fixes are generic across every ticker (CLAUDE.md rule 6), not IBM/PEG-specific — confirmed
+  live when PEG's regenerated report independently triggered the *same* cost-of-debt warning IBM
+  did, unprompted.
+- 10 new/updated tests (`tests/test_wacc.py` new; `tests/test_ai_dcf.py`,
+  `tests/test_research_ai_dcf_integration.py` updated). Full project suite green: 648 passed, 3
+  pre-existing unrelated skips.
+
+### Live verification
+
+Regenerated both IBM and PEG reports end-to-end post-fix (cache cleared, real LLM run, ~$0.79
+combined). Cost-of-debt warning fired correctly and generically on both. PEG's capex false
+positive is gone — the AI DCF authored essentially the same capex intensity (35.8%/39.2%
+base/bull) as the original flagged run, with no quality-control-bound breach anywhere in the new
+report; the Chief now discusses the capex ramp on its economic merits instead. Consequential
+result, not isolated by a controlled A/B test (LLM run-to-run variance, different day's price):
+PEG's rating moved HOLD -> BUY, base fair value $135 -> $114, target range $57-$278 -> $68-$170
+(narrower, no longer inflated by one scenario tripping the stale bound). The rating flip traces to
+the mechanical BUY-trigger rule (`price >15% below fair_value_base` + positive momentum) losing
+its override reason — that threshold was already satisfied in the original HOLD report too; the
+capex QC breach was the Chief's stated reason to override it, and that reason is what the fix
+removed, not the valuation becoming more bullish. IBM stayed HOLD, target $175-$320 -> $172-$285.
+
+### Where it lives
+
+`features/ai_dcf/PLAN_GUARDRAILS.md` is the full investigation record, before/after data, and
+test coverage (all phases complete). Companion to the original `features/ai_dcf/SPEC.md` /
+`PLAN.md` (Agentic AI DCF Valuator, shipped 2026-07-31) — SPEC.md §6.5 updated in place to
+describe the ticker-anchored capex rule.
+
+---
+
 ## DCF Accuracy Measurement (complete, 2026-08-21/23)
 
 The DCF had never been measured. Every assumption in it was justified by *defensibility* — no
