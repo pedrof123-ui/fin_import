@@ -387,7 +387,9 @@ def _assumptions(bear=None, base=None, bull=None, **kw):
     )
 
 
-_NEUTRAL_BOUNDS = {"reports_cogs": True, "cogs_pct_median": 0.40, "ebit_margin_max": 0.30}
+_NEUTRAL_BOUNDS = {
+    "reports_cogs": True, "cogs_pct_median": 0.40, "ebit_margin_max": 0.30, "capex_pct_max": 0.10,
+}
 
 
 def test_scenario_assumptions_rejects_wrong_length_list():
@@ -436,8 +438,43 @@ def test_validate_assumptions_flags_margin_above_historical_max():
 def test_validate_assumptions_flags_capex_out_of_range():
     a = _assumptions(bull=_scenario(capex_pct_revenue=[0.50, 0.05, 0.05, 0.05, 0.05],
                                      revenue_growth=[0.15] * 5, ebit_margin_pct=[0.25] * 5))
-    _, warnings = adr.validate_assumptions(a, _NEUTRAL_BOUNDS)
+    _, warnings = adr.validate_assumptions(a, _NEUTRAL_BOUNDS)  # ceiling = 0.10 + 0.15 = 0.25
     assert any("capex_pct_revenue" in w and "bull y1" in w for w in warnings)
+
+
+def test_validate_assumptions_capex_within_utility_like_history_not_flagged():
+    """PLAN_GUARDRAILS.md Phase 2 regression proof: the PEG false positive. A utility whose own
+    historical capex_pct_max is 0.38 authoring 42% capex must NOT fire — it's within its own
+    historical range + buffer (0.38 + 0.15 = 0.53), even though 42% would have breached the old
+    flat 35% cap."""
+    utility_bounds = {"reports_cogs": True, "cogs_pct_median": 0.60, "ebit_margin_max": 0.30,
+                       "capex_pct_max": 0.38}
+    a = _assumptions(base=_scenario(capex_pct_revenue=[0.42, 0.40, 0.38, 0.36, 0.35],
+                                     revenue_growth=[0.06] * 5, ebit_margin_pct=[0.24] * 5))
+    _, warnings = adr.validate_assumptions(a, utility_bounds)
+    assert not any("capex_pct_revenue" in w for w in warnings)
+
+
+def test_validate_assumptions_flags_capex_above_own_historical_max_plus_buffer():
+    """Same utility-like ticker, but capex genuinely exceeds even ITS OWN historical range +
+    buffer — this must still fire."""
+    utility_bounds = {"reports_cogs": True, "cogs_pct_median": 0.60, "ebit_margin_max": 0.30,
+                       "capex_pct_max": 0.38}
+    a = _assumptions(bull=_scenario(capex_pct_revenue=[0.60, 0.40, 0.38, 0.36, 0.35],
+                                     revenue_growth=[0.06] * 5, ebit_margin_pct=[0.24] * 5))
+    _, warnings = adr.validate_assumptions(a, utility_bounds)  # ceiling = 0.38 + 0.15 = 0.53
+    assert any("capex_pct_revenue" in w and "bull y1" in w and "historical max" in w for w in warnings)
+
+
+def test_validate_assumptions_capex_falls_back_to_flat_cap_when_no_history():
+    """A ticker with insufficient capex history (capex_pct_max=None, e.g. a recent IPO) falls
+    back to the flat 35% ceiling rather than going unbounded."""
+    no_history_bounds = {"reports_cogs": True, "cogs_pct_median": 0.40, "ebit_margin_max": 0.30,
+                          "capex_pct_max": None}
+    a = _assumptions(base=_scenario(capex_pct_revenue=[0.40, 0.10, 0.10, 0.10, 0.10],
+                                     revenue_growth=[0.15] * 5, ebit_margin_pct=[0.20] * 5))
+    _, warnings = adr.validate_assumptions(a, no_history_bounds)
+    assert any("capex_pct_revenue" in w and "flat fallback" in w for w in warnings)
 
 
 def test_validate_assumptions_flags_cogs_drop_without_room(monkeypatch):

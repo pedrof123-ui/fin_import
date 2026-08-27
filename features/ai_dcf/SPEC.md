@@ -256,7 +256,13 @@ same finding as industry_research PLAN Phase 1). Well under 75/min; no bursts.
 - Soft warn (keep the value, record a QC warning surfaced in the report):
   - any year revenue growth outside [-50%, +100%];
   - any year EBIT margin outside [-30%, +60%], or > historical max + 10pp;
-  - any year capex outside [0%, 35%] of revenue;
+  - any year capex outside [0%, ticker's own historical max capex % of revenue + 15pp] — anchored
+    per-ticker (`get_historical_margin_bounds`'s `capex_pct_max`, same 7yr window as the EBIT-margin
+    historical max), not a flat percentage: a 2,581-ticker check (PLAN_GUARDRAILS.md Phase 2) found
+    a flat 35% ceiling sits below the median utility's own capex intensity (~38%), so it flagged
+    normal capital-intensive-sector capex as anomalous while being nearly inert for asset-light
+    sectors. Falls back to a flat 35% only when the ticker has fewer than 2 usable years of capex
+    history to anchor on (e.g. a recent IPO);
   - any year `cogs_pct` outside [0%, 100%], or, for `reports_cogs=True` targets, more than 15pp
     below the historical trailing COGS% without corroborating evidence cited in the scenario
     rationale (a large unexplained gross-margin jump is the most likely hallucination vector);

@@ -331,10 +331,14 @@ def _reports_cogs_and_cogs_median(inc: pd.DataFrame) -> tuple[bool, Optional[flo
 def get_historical_margin_bounds(ticker: str) -> dict:
     """Numeric companion to get_engine_context (that one is LLM-facing text; this one is for
     api.ai_dcf_router.validate_assumptions's guardrail checks). Returns
-    {"reports_cogs": bool, "cogs_pct_median": float|None, "ebit_margin_max": float|None} —
-    the historical bounds the Architect's authored assumptions are checked against (SPEC 6.5)."""
+    {"reports_cogs": bool, "cogs_pct_median": float|None, "ebit_margin_max": float|None,
+    "capex_pct_max": float|None} — the historical bounds the Architect's authored assumptions
+    are checked against (SPEC 6.5). capex_pct_max is the ticker's own trailing max capex % of
+    revenue (PLAN_GUARDRAILS.md Phase 2) — replaces a flat global cap that a 2,581-ticker check
+    showed is miscalibrated by sector (median utility capex/revenue alone is ~38%, above the old
+    flat 35% ceiling)."""
     ticker = ticker.upper()
-    empty = {"reports_cogs": False, "cogs_pct_median": None, "ebit_margin_max": None}
+    empty = {"reports_cogs": False, "cogs_pct_median": None, "ebit_margin_max": None, "capex_pct_max": None}
     if not _AV_FIN_DB.exists():
         return empty
     try:
@@ -351,7 +355,34 @@ def get_historical_margin_bounds(ticker: str) -> dict:
     margins = [(o / r) for o, r in zip(op.head(7), rev.head(7))
                if r and o is not None and not (isinstance(o, float) and math.isnan(o))]
     ebit_margin_max = float(max(margins)) if margins else None
-    return {"reports_cogs": reports_cogs, "cogs_pct_median": cogs_pct_median, "ebit_margin_max": ebit_margin_max}
+
+    # capex_pct_max: same 7yr window as ebit_margin_max, joined to cash_flow_statements by
+    # fiscal year (same cf_by_year pattern as get_fundamentals_history). Requires >=2 usable
+    # years — a single data point isn't a "range", and thin-history tickers (recent IPOs) should
+    # fall back to the flat cap in api.ai_dcf_router rather than an unstable one-year anchor.
+    cf = annual["cashflow"]
+    capex_pct_max = None
+    if not cf.empty:
+        years7 = inc["period_end_date"].astype(str).str[:4].head(7).tolist()
+        rev_by_year = dict(zip(years7, rev.head(7)))
+        cf_by_year = {
+            str(r["period_end_date"])[:4]: r.get("capital_expenditures")
+            for _, r in cf.iterrows()
+        }
+        ratios = []
+        for y in years7:
+            capex = cf_by_year.get(y)
+            r = rev_by_year.get(y)
+            if capex is None or r in (None, 0) or (isinstance(capex, float) and math.isnan(capex)):
+                continue
+            ratios.append(abs(float(capex)) / float(r))
+        if len(ratios) >= 2:
+            capex_pct_max = float(max(ratios))
+
+    return {
+        "reports_cogs": reports_cogs, "cogs_pct_median": cogs_pct_median,
+        "ebit_margin_max": ebit_margin_max, "capex_pct_max": capex_pct_max,
+    }
 
 
 def get_engine_context(ticker: str) -> str:

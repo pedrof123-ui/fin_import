@@ -758,6 +758,14 @@ def _run_dcf_core(
         warnings.append(
             f"WACC of {wacc_detail.wacc * 100:.1f}% is below 5% — check capital structure inputs."
         )
+    if wacc_detail.cost_of_debt < wacc_detail.risk_free_rate:
+        warnings.append(
+            f"Cost of debt ({wacc_detail.cost_of_debt * 100:.1f}%) is below the risk-free rate "
+            f"({wacc_detail.risk_free_rate * 100:.1f}%) — plausible if a material share of debt "
+            "was issued before the current rate-hike cycle at fixed coupons, but this same rate "
+            "discounts the terminal value, where it likely understates the sustainable long-run "
+            "financing cost once existing debt rolls over and refinances at prevailing rates."
+        )
 
     year_forecasts = forecast_assumptions(quarterly, annual)
 

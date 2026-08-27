@@ -55,7 +55,11 @@ TG_MIN, TG_MAX = 0.0, 0.04
 REV_GROWTH_MIN, REV_GROWTH_MAX = -0.50, 1.00
 EBIT_MARGIN_MIN, EBIT_MARGIN_MAX = -0.30, 0.60
 EBIT_MARGIN_HIST_MAX_BUFFER = 0.10   # 10pp above historical max triggers a warning
-CAPEX_MIN, CAPEX_MAX = 0.0, 0.35
+CAPEX_MIN = 0.0                      # capex can't be negative — the one real hard floor
+CAPEX_MAX_FALLBACK = 0.35            # used only when the ticker has <2yrs of usable capex history
+CAPEX_HIST_MAX_BUFFER = 0.15         # above ticker's own historical max triggers a warning —
+                                      # wider than EBIT_MARGIN's 10pp since capex intensity swings
+                                      # more across an investment cycle than operating margin does
 COGS_MIN, COGS_MAX = 0.0, 1.0
 COGS_DROP_WARN_PP = 0.15             # cogs_pct >15pp below historical median -> warn
 
@@ -232,10 +236,23 @@ def _check_scenario_ranges(label: str, s: ScenarioAssumptions, bounds: dict) -> 
                 f"by more than {EBIT_MARGIN_HIST_MAX_BUFFER:.0%}"
             )
 
+    # capex ceiling is anchored on the ticker's OWN historical capex_pct_revenue + a buffer
+    # (PLAN_GUARDRAILS.md Phase 2) rather than one flat percentage for every sector — a
+    # 2,581-ticker check found the old flat 35% cap sits BELOW the median utility's own capex
+    # intensity (~38%), so it flagged normal capital-intensive-sector capex as anomalous while
+    # being nearly inert for asset-light sectors. Falls back to the flat cap only when the
+    # ticker has too little cash-flow history to anchor on (e.g. a recent IPO).
+    capex_pct_max = bounds.get("capex_pct_max")
+    if capex_pct_max is not None:
+        capex_ceiling = capex_pct_max + CAPEX_HIST_MAX_BUFFER
+        ceiling_desc = f"{capex_ceiling:.0%} (ticker's own historical max {capex_pct_max:.1%} + {CAPEX_HIST_MAX_BUFFER:.0%})"
+    else:
+        capex_ceiling = CAPEX_MAX_FALLBACK
+        ceiling_desc = f"{capex_ceiling:.0%} (flat fallback — insufficient capex history to anchor on this ticker)"
     for i, c in enumerate(s.capex_pct_revenue, start=1):
-        if not (CAPEX_MIN <= c <= CAPEX_MAX):
+        if not (CAPEX_MIN <= c <= capex_ceiling):
             warnings.append(
-                f"{label} y{i}: capex_pct_revenue {c:.1%} outside [{CAPEX_MIN:.0%}, {CAPEX_MAX:.0%}]"
+                f"{label} y{i}: capex_pct_revenue {c:.1%} outside [{CAPEX_MIN:.0%}, {ceiling_desc}]"
             )
 
     if bounds.get("reports_cogs"):
@@ -1135,6 +1152,8 @@ def format_ai_dcf_summary(result: Optional[AiDcfResult]) -> str:
             f"| TG = {e['terminal_growth_rate'] * 100:.2f}%  | WACC = {e['wacc'] * 100:.2f}%"
         )
         lines.append(f"  Rationale: {s.rationale}")
+        if e.get("warnings"):
+            lines.append(f"  Engine warnings: {'; '.join(e['warnings'])}")
     lines += ["", f"WACC rationale: {result.assumptions.wacc_rationale}", ""]
     lines.append("KEY DEBATES (the assumption calls that most drive this valuation):")
     for d in result.assumptions.key_debates:

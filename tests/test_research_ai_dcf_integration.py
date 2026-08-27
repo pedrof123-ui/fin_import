@@ -105,6 +105,22 @@ def test_format_ai_dcf_summary_present():
     assert "debate one" in text
 
 
+def test_format_ai_dcf_summary_surfaces_per_scenario_engine_warnings():
+    """PLAN_GUARDRAILS.md Phase 1.3: DcfResult.warnings captured per-scenario in
+    AiDcfResult.engine (_extract_engine_result) must actually render, not just be captured and
+    dropped -- needed because the AI DCF Architect can set cost_of_debt_override independently
+    of the mechanical DCF, so the shared mechanical-DCF "DATA-QUALITY WARNINGS" block wouldn't
+    catch it."""
+    result = _fixture_ai_dcf_result()
+    result.engine["base"]["warnings"] = [
+        "Cost of debt (2.0%) is below the risk-free rate (5.2%) — plausible pre-hike-cycle debt, "
+        "but understates the terminal-value discount rate."
+    ]
+    text = adr.format_ai_dcf_summary(result)
+    assert "Engine warnings" in text
+    assert "Cost of debt (2.0%)" in text
+
+
 # ---------------------------------------------------------------------------
 # 6.4 — _model_summary_table / render_valuation_model_tables with ai_dcf_engine
 # ---------------------------------------------------------------------------
