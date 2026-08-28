@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import date
 from pathlib import Path
@@ -6,7 +7,10 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from historic_fundamentals.db import DEFAULT_DB_PATH as HF_DB
 from historic_fundamentals.pe import LAG_ANNUAL, LAG_QUARTERLY
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 AV_DB = Path(os.environ.get("AV_FINANCIALS_DB_PATH", str(ROOT / "data" / "av_financials.duckdb")))
@@ -192,3 +196,73 @@ def load_av_quarterly_financials(ticker: str, as_of: date | None = None) -> dict
         )
 
     return {"income": inc, "balance": bs, "cashflow": cf}
+
+
+def get_sector_dcf_fallback_ratios(
+    ticker: str, as_of: date | None = None
+) -> tuple[float | None, float | None, float | None]:
+    """
+    Sector-median capex_intensity, rd_intensity, capex_to_da from historic_fundamentals's
+    sector_stats, for use only when `ticker`'s own trailing history for that ratio is empty
+    (see dcf/forecaster.py::forecast_assumptions). Falls back sector -> industry when the
+    sector-level figure is unavailable; a value is None when neither classification nor
+    sector_stats data exists (PLAN_CAPEX_RD_RATIOS.md Phase 4).
+
+    as_of restricts to the latest sector_stats month at or before as_of, matching the
+    point-in-time discipline the rest of this module applies (_as_of_clause) — a historical
+    DCF reconstruction must not see sector medians computed from months after as_of.
+
+    Degrades to (None, None, None) — same as "no sector data" — on any lookup failure
+    (missing table, closed DB, etc.) rather than raising, so a problem in this fallback path
+    cannot break an otherwise-working DCF run; the caller's last-resort hardcoded constants
+    already cover the None case.
+    """
+    try:
+        conn = _open()
+        try:
+            row = conn.execute(
+                """
+                SELECT sector, industry FROM company_overview
+                WHERE ticker = ?
+                QUALIFY fetch_date = MAX(fetch_date) OVER (PARTITION BY ticker)
+                LIMIT 1
+                """,
+                [ticker],
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None, None, None
+        sector, industry = row
+
+        hf_conn = duckdb.connect(str(HF_DB), read_only=True)
+        try:
+            def _latest_median(group_type: str, group_name: str | None, col: str) -> float | None:
+                if not group_name:
+                    return None
+                date_filter = "AND month_end_date <= ?" if as_of is not None else ""
+                params = [group_type, group_name] + ([as_of] if as_of is not None else [])
+                r = hf_conn.execute(
+                    f"""
+                    SELECT {col} FROM sector_stats
+                    WHERE group_type = ? AND group_name = ? {date_filter}
+                    ORDER BY month_end_date DESC LIMIT 1
+                    """,
+                    params,
+                ).fetchone()
+                return float(r[0]) if r and r[0] is not None else None
+
+            def _sector_then_industry(col: str) -> float | None:
+                val = _latest_median("sector", sector, col)
+                return val if val is not None else _latest_median("industry", industry, col)
+
+            return (
+                _sector_then_industry("capex_intensity_median"),
+                _sector_then_industry("rd_intensity_median"),
+                _sector_then_industry("capex_to_da_median"),
+            )
+        finally:
+            hf_conn.close()
+    except Exception:
+        log.warning("Sector capex/R&D fallback lookup failed for %s", ticker, exc_info=True)
+        return None, None, None

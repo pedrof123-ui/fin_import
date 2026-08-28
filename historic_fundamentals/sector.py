@@ -28,6 +28,7 @@ base AS (
            m.earnings_yield, m.fcf_yield, m.ebitda_ev_yield, m.dividend_yield,
            m.roa, m.roe, m.roic,
            m.ttm_gross_margin, m.ttm_operating_margin, m.ttm_fcf_margin,
+           m.ttm_capex_intensity, m.ttm_rd_intensity, m.ttm_capex_to_da,
            m.debt_to_ebitda, m.interest_coverage,
            CASE WHEN p.ttm_revenue > 0 AND m.ttm_revenue > 0
                 THEN m.ttm_revenue / p.ttm_revenue - 1 END AS rev_growth_1yr,
@@ -73,6 +74,9 @@ SELECT '{group_type}' AS group_type, group_name, month_end_date,
        QUANTILE_CONT(ttm_gross_margin, 0.50) FILTER (WHERE ttm_gross_margin IS NOT NULL) AS gross_margin_median,
        QUANTILE_CONT(ttm_operating_margin, 0.50) FILTER (WHERE ttm_operating_margin IS NOT NULL) AS operating_margin_median,
        QUANTILE_CONT(ttm_fcf_margin, 0.50) FILTER (WHERE ttm_fcf_margin IS NOT NULL) AS fcf_margin_median,
+       QUANTILE_CONT(ttm_capex_intensity, 0.50) FILTER (WHERE ttm_capex_intensity IS NOT NULL) AS capex_intensity_median,
+       QUANTILE_CONT(ttm_rd_intensity, 0.50) FILTER (WHERE ttm_rd_intensity IS NOT NULL) AS rd_intensity_median,
+       QUANTILE_CONT(ttm_capex_to_da, 0.50) FILTER (WHERE ttm_capex_to_da IS NOT NULL) AS capex_to_da_median,
        QUANTILE_CONT(debt_to_ebitda, 0.50) FILTER (WHERE debt_to_ebitda IS NOT NULL AND debt_to_ebitda >= 0) AS debt_to_ebitda_median,
        QUANTILE_CONT(interest_coverage, 0.50) FILTER (WHERE interest_coverage IS NOT NULL) AS interest_coverage_median
 FROM base

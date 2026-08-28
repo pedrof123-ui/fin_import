@@ -29,6 +29,9 @@ monthly_pe columns:
     roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median,
     roic, roic_rolling_5yr_median,
     pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median,
+    ttm_capex_intensity, capex_intensity_5y_median, capex_intensity_slope_5y,
+    ttm_rd_intensity, rd_intensity_5y_median,
+    ttm_capex_to_da, capex_to_da_5y_median,
     goal_pe, goal_pcf, goal_peg, goal_bv, goal_2x, goal_low, goal_high
 
 stats keys (PE):
@@ -78,6 +81,13 @@ EV/EBITDA:
     total_debt = long_term_debt_noncurrent + short_term_debt + current_long_term_debt
     cash = cash_and_short_term_investments
     ev_ebitda is NULL when TTM EBITDA <= 0 or balance sheet data is unavailable.
+
+Capex / R&D intensity:
+    ttm_capex_intensity = TTM capital_expenditures / TTM revenue
+    ttm_rd_intensity     = TTM research_and_development / TTM revenue
+    ttm_capex_to_da      = TTM capital_expenditures / TTM depreciation_and_amortization
+    ttm_rd_intensity is NULL (not 0) for tickers/periods where R&D is unreported —
+    distinguishes "doesn't disclose R&D" from "discloses zero R&D".
 
 Rolling 5yr medians:
     Require 60 consecutive monthly rows (min_periods=60). NULL for first 59 months.
@@ -168,7 +178,8 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
     Columns: fiscal_date_ending, net_income, total_revenue, ebitda, shares,
              short_long_term_debt_total, long_term_debt_noncurrent, short_term_debt,
              current_long_term_debt, cash,
-             total_current_assets, total_current_liabilities, property_plant_equipment
+             total_current_assets, total_current_liabilities, property_plant_equipment,
+             research_and_development
     shares is from balance_sheets (fallback when shares_outstanding is unavailable).
     """
     sql = """
@@ -183,6 +194,7 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
             i.ebit,
             i.income_tax_expense,
             i.income_before_tax,
+            i.research_and_development,
             b.common_stock_shares_outstanding AS shares,
             b.total_assets,
             b.total_shareholder_equity,
@@ -213,12 +225,17 @@ def _load_av_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.D
 def _load_cashflow_data(av_conn: duckdb.DuckDBPyConnection, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns (cashflow_quarterly_df, cashflow_annual_df).
-    Columns: fiscal_date_ending, operating_cashflow, capital_expenditures
+    Columns: fiscal_date_ending, operating_cashflow, capital_expenditures,
+             depreciation_amortization
     AV reports capital_expenditures as a positive number.
     FCF = operating_cashflow - capital_expenditures
+    depreciation_amortization is renamed from the raw AV column
+    depreciation_depletion_and_amortization (matches the naming dcf/av_data.py already
+    uses for the same figure).
     """
     sql = """
-        SELECT fiscal_date_ending, operating_cashflow, capital_expenditures
+        SELECT fiscal_date_ending, operating_cashflow, capital_expenditures,
+               depreciation_depletion_and_amortization AS depreciation_amortization
         FROM cash_flow_statements
         WHERE ticker = ? AND period_type = ?
         ORDER BY fiscal_date_ending
@@ -435,15 +452,17 @@ def _get_ttm_sum(
 ) -> float | None:
     """
     TTM sum of `col` using last 4 quarters; fallback to most recent annual.
-    Returns None when data is unavailable. Does not filter by sign.
+    Returns None when data is unavailable (including when `col` isn't a column in the
+    frame at all, e.g. an unreported line item never selected upstream). Does not filter
+    by sign.
     """
-    if not quarterly.empty:
+    if not quarterly.empty and col in quarterly.columns:
         avail = quarterly[quarterly["fiscal_date_ending"] <= month_end]
         if len(avail) >= 4:
             vals = avail.tail(4)[col].dropna()
             if len(vals) == 4:
                 return float(vals.sum())
-    if not annual.empty:
+    if not annual.empty and col in annual.columns:
         avail = annual[annual["fiscal_date_ending"] <= month_end]
         if not avail.empty:
             v = avail.iloc[-1].get(col)
@@ -536,6 +555,14 @@ def _get_ev_debt_cash(
 #   roa_stability_5y: this is std(roa) — LOWER = more stable = better.
 #     The name implies stability but the encoding is inverted: higher value means
 #     less stable. Use accordingly in model interpretation.
+#
+# Not unambiguously directional (do not assume a sign without testing):
+#   capex_intensity, capex_intensity_5y_median, capex_intensity_slope_5y,
+#   rd_intensity, rd_intensity_5y_median, capex_to_da, capex_to_da_5y_median.
+#   High capex/R&D intensity can mean wasteful overinvestment or a genuine growth
+#   reinvestment advantage depending on the company/sector — unlike the margins
+#   above, neither direction is a safe prior. Determine sign empirically (Phase 3
+#   of PLAN_CAPEX_RD_RATIOS.md) before using in any composite score.
 
 
 def build_monthly_pe(
@@ -566,7 +593,10 @@ def build_monthly_pe(
     ps_ratio, ps_rolling_5yr_median,
     roa, roa_rolling_5yr_median, roe, roe_rolling_5yr_median,
     roic, roic_rolling_5yr_median,
-    pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median
+    pbv, pbv_rolling_5yr_median, ptbv, ptbv_rolling_5yr_median,
+    ttm_capex_intensity, capex_intensity_5y_median, capex_intensity_slope_5y,
+    ttm_rd_intensity, rd_intensity_5y_median,
+    ttm_capex_to_da, capex_to_da_5y_median
     """
     if prices.empty:
         return pd.DataFrame()
@@ -739,6 +769,31 @@ def build_monthly_pe(
             else None
         )
 
+        # ── Capex / R&D intensity ───────────────────────────────────────────────
+        # ttm_rd_intensity is left NULL (not 0) when R&D is unreported: _get_ttm_sum
+        # returns None for an all-NULL trailing window, distinct from an explicit
+        # reported 0. Coercing non-reporters to 0 would bias sector/industry medians
+        # low for sectors where most constituents legitimately don't do R&D.
+        ttm_capex_val = _get_ttm_sum(month_end, "capital_expenditures",     cfq_pit, cfa_pit)
+        ttm_rd_val    = _get_ttm_sum(month_end, "research_and_development", q_pit,   a_pit)
+        ttm_da_val    = _get_ttm_sum(month_end, "depreciation_amortization", cfq_pit, cfa_pit)
+
+        ttm_capex_intensity = (
+            ttm_capex_val / ttm_revenue
+            if ttm_capex_val is not None and ttm_revenue and ttm_revenue > 0
+            else None
+        )
+        ttm_rd_intensity = (
+            ttm_rd_val / ttm_revenue
+            if ttm_rd_val is not None and ttm_revenue and ttm_revenue > 0
+            else None
+        )
+        ttm_capex_to_da = (
+            ttm_capex_val / ttm_da_val
+            if ttm_capex_val is not None and ttm_da_val and ttm_da_val > 0
+            else None
+        )
+
         # ── Debt/EBITDA ───────────────────────────────────────────────────────
         debt_to_ebitda = None
         if ttm_ebitda is not None and ttm_ebitda > 0:
@@ -893,6 +948,9 @@ def build_monthly_pe(
             "ttm_gross_margin":       ttm_gross_margin,
             "ttm_operating_margin":   ttm_operating_margin,
             "ttm_fcf_margin":         ttm_fcf_margin,
+            "ttm_capex_intensity":    ttm_capex_intensity,
+            "ttm_rd_intensity":       ttm_rd_intensity,
+            "ttm_capex_to_da":        ttm_capex_to_da,
             "debt_to_ebitda":         debt_to_ebitda,
             "interest_coverage":      interest_coverage,
             "earnings_quality":       earnings_quality,
@@ -961,6 +1019,10 @@ def build_monthly_pe(
     df["fcf_margin_5y_median"]       = df["ttm_fcf_margin"].rolling(60, min_periods=36).median()
     df["fcf_margin_change_3y"]       = df["ttm_fcf_margin"] - df["ttm_fcf_margin"].shift(36)
     df["roa_stability_5y"]           = df["roa"].rolling(60, min_periods=36).std()
+    df["capex_intensity_5y_median"]  = df["ttm_capex_intensity"].rolling(60, min_periods=36).median()
+    df["capex_intensity_slope_5y"]   = _rolling_slope(df["ttm_capex_intensity"])
+    df["rd_intensity_5y_median"]     = df["ttm_rd_intensity"].rolling(60, min_periods=36).median()
+    df["capex_to_da_5y_median"]      = df["ttm_capex_to_da"].rolling(60, min_periods=36).median()
 
     # TTM-based YoY growth rates (point-in-time: shift(12) uses only past observations per ticker)
     # NaN when base is zero or negative — sign-change makes the direction ambiguous.
@@ -1164,6 +1226,11 @@ def compute_pe_stats(
         "roa_stability_5y":          _f(last.get("roa_stability_5y")),
         "debt_to_ebitda":            _f(last.get("debt_to_ebitda")),
         "interest_coverage":         _f(last.get("interest_coverage")),
+        "current_capex_intensity":   _f(last.get("ttm_capex_intensity")),
+        "capex_intensity_5y_median": _f(last.get("capex_intensity_5y_median")),
+        "current_rd_intensity":      _f(last.get("ttm_rd_intensity")),
+        "rd_intensity_5y_median":    _f(last.get("rd_intensity_5y_median")),
+        "current_capex_to_da":       _f(last.get("ttm_capex_to_da")),
     })
 
     # TTM-based growth rates — computed directly from the TTM series so that refresh-stats

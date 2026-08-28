@@ -767,7 +767,14 @@ def _run_dcf_core(
             "financing cost once existing debt rolls over and refinances at prevailing rates."
         )
 
-    year_forecasts = forecast_assumptions(quarterly, annual)
+    from dcf.av_data import get_sector_dcf_fallback_ratios
+    _sector_capex, _sector_rd, _sector_capex_to_da = get_sector_dcf_fallback_ratios(ticker, as_of=as_of)
+    year_forecasts = forecast_assumptions(
+        quarterly, annual,
+        sector_capex_intensity=_sector_capex,
+        sector_rd_intensity=_sector_rd,
+        sector_capex_to_da=_sector_capex_to_da,
+    )
 
     # Apply analyst estimates before user overrides (user overrides win)
     from dcf.estimates import fetch_and_cache, apply_to_forecasts, to_dataclass as _to_dc

@@ -29,6 +29,7 @@ def _quarterly(n=4, **overrides):
         "ebit":                 [250.0] * n,   # TTM = 1000
         "income_tax_expense":   [25.0] * n,
         "income_before_tax":    [240.0] * n,
+        "research_and_development": [50.0] * n,   # rd_intensity = 0.05
         "shares":               [1000.0] * n,
         "total_assets":         [5000.0] * n,
         "total_shareholder_equity": [2000.0] * n,
@@ -43,11 +44,12 @@ def _quarterly(n=4, **overrides):
     return pd.DataFrame(base)
 
 
-def _cashflow(n=4, ocf=200.0, capex=50.0):
+def _cashflow(n=4, ocf=200.0, capex=50.0, da=80.0):
     return pd.DataFrame({
         "fiscal_date_ending": pd.date_range("2023-01-01", periods=n, freq="QE"),
         "operating_cashflow":    [ocf] * n,
         "capital_expenditures":  [capex] * n,  # AV reports as positive
+        "depreciation_amortization": [da] * n,
     })
 
 
@@ -92,6 +94,40 @@ def test_gross_margin_zero_revenue():
     q = _quarterly(total_revenue=[0.0] * 4)
     row = _run(quarterly=q)
     assert row["ttm_gross_margin"] is None or np.isnan(row["ttm_gross_margin"])
+
+
+# ── Capex / R&D intensity ──────────────────────────────────────────────────────
+
+def test_capex_intensity():
+    # TTM capex = 50*4 = 200; revenue = 4000; capex_intensity = 0.05
+    row = _run()
+    assert row["ttm_capex_intensity"] == pytest.approx(0.05, rel=1e-6)
+
+
+def test_rd_intensity():
+    # TTM R&D = 50*4 = 200; revenue = 4000; rd_intensity = 0.05
+    row = _run()
+    assert row["ttm_rd_intensity"] == pytest.approx(0.05, rel=1e-6)
+
+
+def test_rd_intensity_null_when_unreported():
+    # research_and_development entirely NaN (not zero) → NULL, not 0.
+    # Distinguishes "doesn't disclose R&D" from "discloses zero R&D".
+    q = _quarterly(research_and_development=[np.nan] * 4)
+    row = _run(quarterly=q)
+    assert row["ttm_rd_intensity"] is None or np.isnan(row["ttm_rd_intensity"])
+
+
+def test_capex_to_da():
+    # TTM capex = 200; TTM D&A = 80*4 = 320; capex_to_da = 0.625
+    row = _run()
+    assert row["ttm_capex_to_da"] == pytest.approx(0.625, rel=1e-6)
+
+
+def test_capex_intensity_zero_revenue():
+    q = _quarterly(total_revenue=[0.0] * 4)
+    row = _run(quarterly=q)
+    assert row["ttm_capex_intensity"] is None or np.isnan(row["ttm_capex_intensity"])
 
 
 # ── Leverage features ─────────────────────────────────────────────────────────

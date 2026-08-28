@@ -186,6 +186,13 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS earn_cagr_5yr           DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_cagr_3yr            DOUBLE")
         self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS fcf_cagr_5yr            DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_capex_intensity      DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS capex_intensity_5y_median DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS capex_intensity_slope_5y DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_rd_intensity         DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS rd_intensity_5y_median   DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS ttm_capex_to_da          DOUBLE")
+        self.conn.execute("ALTER TABLE monthly_pe ADD COLUMN IF NOT EXISTS capex_to_da_5y_median    DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pe_stats (
@@ -384,6 +391,11 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS roa_stability_5y           DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS debt_to_ebitda             DOUBLE")
         self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS interest_coverage          DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_capex_intensity    DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS capex_intensity_5y_median  DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_rd_intensity       DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS rd_intensity_5y_median     DOUBLE")
+        self.conn.execute("ALTER TABLE pe_stats ADD COLUMN IF NOT EXISTS current_capex_to_da        DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS earnings_estimates (
@@ -470,6 +482,9 @@ class HistoricFundamentalsDB:
                 gross_margin_median     DOUBLE,
                 operating_margin_median DOUBLE,
                 fcf_margin_median       DOUBLE,
+                capex_intensity_median  DOUBLE,
+                rd_intensity_median     DOUBLE,
+                capex_to_da_median      DOUBLE,
                 debt_to_ebitda_median   DOUBLE,
                 interest_coverage_median DOUBLE,
                 PRIMARY KEY (group_type, group_name, month_end_date)
@@ -480,6 +495,9 @@ class HistoricFundamentalsDB:
         self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS fcf_margin_median DOUBLE")
         self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS debt_to_ebitda_median DOUBLE")
         self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS interest_coverage_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS capex_intensity_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS rd_intensity_median DOUBLE")
+        self.conn.execute("ALTER TABLE sector_stats ADD COLUMN IF NOT EXISTS capex_to_da_median DOUBLE")
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS dcf_results (
@@ -618,6 +636,9 @@ class HistoricFundamentalsDB:
             "rev_cagr_3yr", "rev_cagr_5yr",
             "earn_cagr_3yr", "earn_cagr_5yr",
             "fcf_cagr_3yr", "fcf_cagr_5yr",
+            "ttm_capex_intensity", "capex_intensity_5y_median", "capex_intensity_slope_5y",
+            "ttm_rd_intensity", "rd_intensity_5y_median",
+            "ttm_capex_to_da", "capex_to_da_5y_median",
             "updated_at",
         ]
         for col in cols:
@@ -655,6 +676,9 @@ class HistoricFundamentalsDB:
                  rev_cagr_3yr, rev_cagr_5yr,
                  earn_cagr_3yr, earn_cagr_5yr,
                  fcf_cagr_3yr, fcf_cagr_5yr,
+                 ttm_capex_intensity, capex_intensity_5y_median, capex_intensity_slope_5y,
+                 ttm_rd_intensity, rd_intensity_5y_median,
+                 ttm_capex_to_da, capex_to_da_5y_median,
                  updated_at)
                 SELECT ticker, month_end_date, price, ttm_eps, pe_ratio,
                        pe_rolling_5yr_median, ttm_source, shares, ttm_dividend,
@@ -684,6 +708,9 @@ class HistoricFundamentalsDB:
                        rev_cagr_3yr, rev_cagr_5yr,
                        earn_cagr_3yr, earn_cagr_5yr,
                        fcf_cagr_3yr, fcf_cagr_5yr,
+                       ttm_capex_intensity, capex_intensity_5y_median, capex_intensity_slope_5y,
+                       ttm_rd_intensity, rd_intensity_5y_median,
+                       ttm_capex_to_da, capex_to_da_5y_median,
                        updated_at
                 FROM _tmp_pe
             """)
@@ -725,6 +752,9 @@ class HistoricFundamentalsDB:
              operating_margin_change_3y, operating_margin_slope_5y,
              current_fcf_margin, fcf_margin_5y_median, fcf_margin_change_3y,
              roa_stability_5y, debt_to_ebitda, interest_coverage,
+             current_capex_intensity, capex_intensity_5y_median,
+             current_rd_intensity, rd_intensity_5y_median,
+             current_capex_to_da,
              pe_p25_5yr, pe_p75_5yr,
              pfcf_p25_5yr, pfcf_p75_5yr,
              evebitda_p25_5yr, evebitda_p75_5yr,
@@ -745,6 +775,7 @@ class HistoricFundamentalsDB:
                     ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?,
+                    ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -855,6 +886,11 @@ class HistoricFundamentalsDB:
                 roa_stability_5y           = excluded.roa_stability_5y,
                 debt_to_ebitda             = excluded.debt_to_ebitda,
                 interest_coverage          = excluded.interest_coverage,
+                current_capex_intensity    = excluded.current_capex_intensity,
+                capex_intensity_5y_median  = excluded.capex_intensity_5y_median,
+                current_rd_intensity       = excluded.current_rd_intensity,
+                rd_intensity_5y_median     = excluded.rd_intensity_5y_median,
+                current_capex_to_da        = excluded.current_capex_to_da,
                 pe_p25_5yr                 = excluded.pe_p25_5yr,
                 pe_p75_5yr                 = excluded.pe_p75_5yr,
                 pfcf_p25_5yr               = excluded.pfcf_p25_5yr,
@@ -981,6 +1017,11 @@ class HistoricFundamentalsDB:
             stats.get("roa_stability_5y"),
             stats.get("debt_to_ebitda"),
             stats.get("interest_coverage"),
+            stats.get("current_capex_intensity"),
+            stats.get("capex_intensity_5y_median"),
+            stats.get("current_rd_intensity"),
+            stats.get("rd_intensity_5y_median"),
+            stats.get("current_capex_to_da"),
             stats.get("pe_p25_5yr"),
             stats.get("pe_p75_5yr"),
             stats.get("pfcf_p25_5yr"),
@@ -1057,6 +1098,7 @@ class HistoricFundamentalsDB:
             "roic_median", "roic_p25", "roic_p75",
             "rev_growth_1yr_median", "earn_growth_1yr_median",
             "gross_margin_median", "operating_margin_median", "fcf_margin_median",
+            "capex_intensity_median", "rd_intensity_median", "capex_to_da_median",
             "debt_to_ebitda_median", "interest_coverage_median",
         ]
         data = df.copy()

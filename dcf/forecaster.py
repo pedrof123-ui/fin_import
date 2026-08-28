@@ -35,6 +35,12 @@ Forecast methodology:
 import numpy as np
 import pandas as pd
 
+# Below this sector R&D intensity, the sector's own median is itself indistinguishable from
+# "this sector doesn't do R&D" (e.g. Real Estate, Utilities) — do not treat it as evidence
+# that a ticker's own null R&D history is a data gap rather than a genuine non-R&D company.
+# See PLAN_CAPEX_RD_RATIOS.md Phase 4.2.
+_RD_SECTOR_SIGNAL_THRESHOLD = 0.005
+
 
 def _safe_ratio(num: pd.Series, den: pd.Series) -> pd.Series:
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -230,10 +236,19 @@ def compute_nwc_days(
 def forecast_assumptions(
     quarterly: dict[str, pd.DataFrame],
     annual: dict[str, pd.DataFrame],
+    sector_capex_intensity: float | None = None,
+    sector_rd_intensity: float | None = None,
+    sector_capex_to_da: float | None = None,
 ) -> list:
     """
     Returns model-computed YearForecast for the first years using annual income data;
     extend_growth_years() in this module then caps Y1/Y2 and fades Y3-Y10 to terminal.
+
+    sector_capex_intensity / sector_rd_intensity / sector_capex_to_da (from
+    dcf.av_data.get_sector_dcf_fallback_ratios, sector medians falling back to industry)
+    are used only when the ticker's own trailing history for that ratio is empty — the
+    ticker's own normalized mean always wins when it has one. See PLAN_CAPEX_RD_RATIOS.md
+    Phase 4.
     """
     from dcf.assumptions import YearForecast
 
@@ -305,6 +320,18 @@ def forecast_assumptions(
     hist_rd = _safe_ratio(rd_ser.reindex(inc_a.index), inc_a["revenue"]).dropna().values
     has_rd = len(hist_rd) > 0 and not np.all(hist_rd == 0)
 
+    # When this ticker reports no R&D history at all, a meaningfully non-zero sector median
+    # is evidence the ticker's own null is a data gap (e.g. thin history), not a genuine
+    # non-R&D company — sectors that truly don't do R&D (Real Estate, Utilities, Financial
+    # Services) have their own median near zero, so this only fires where it should.
+    rd_is_sector_fallback = (
+        not has_rd
+        and sector_rd_intensity is not None
+        and sector_rd_intensity > _RD_SECTOR_SIGNAL_THRESHOLD
+    )
+    if rd_is_sector_fallback:
+        has_rd = True
+
     # Net interest cost = gross interest expense − interest income, floored at 0.
     # For cash-rich companies (e.g. AAPL, MSFT) interest income substantially offsets
     # borrowing costs; using net avoids overstating the below-the-line financing drag.
@@ -366,22 +393,42 @@ def forecast_assumptions(
         hist_nci = np.array([])
     nci_flat = _mean_ratio(hist_nci, 0.0, 0.0, 0.3) if len(hist_nci) >= 2 else 0.0
 
-    # CapEx % of revenue — normalized 5-year mean from CF statement.
+    # CapEx % of revenue — normalized 5-year mean from CF statement. Falls back to the
+    # sector (then industry) median when the ticker has no positive capex history at all;
+    # only when neither exists does it fall back to the flat 5% constant.
     cx_denom = inc_a["revenue"].reindex(cf_a.index).values
     hist_cx = _safe_ratio(cf_a["capital_expenditures"].abs(), pd.Series(cx_denom)).dropna().values
     cx_norm = hist_cx[hist_cx > 0]
-    cx_pct_norm = float(cx_norm.mean()) if len(cx_norm) > 0 else 0.05
+    if len(cx_norm) > 0:
+        cx_pct_norm = float(cx_norm.mean())
+    elif sector_capex_intensity is not None:
+        cx_pct_norm = sector_capex_intensity
+    else:
+        cx_pct_norm = 0.05
 
-    # D&A % of revenue — normalized 5-year mean from CF statement.
+    # D&A % of revenue — normalized 5-year mean from CF statement. Same fallback order as
+    # capex, but derived via the sector's typical capex/D&A ratio (capex_to_da_median) rather
+    # than a separate D&A-intensity figure, which this repo doesn't compute: if the sector
+    # typically spends X% of revenue on capex at a Y capex/D&A ratio, its typical D&A is
+    # X/Y. Falls back to the flat 3% constant only when neither input is available.
     da_ser = cf_a["depreciation_amortization"].abs() if "depreciation_amortization" in cf_a.columns else pd.Series(dtype=float)
     hist_da = _safe_ratio(da_ser.reindex(cf_a.index), pd.Series(cx_denom)).dropna()
     hist_da = hist_da[hist_da > 0]
-    da_pct_norm = float(hist_da.mean()) if not hist_da.empty else 0.03
+    if not hist_da.empty:
+        da_pct_norm = float(hist_da.mean())
+    elif sector_capex_intensity is not None and sector_capex_to_da:
+        da_pct_norm = sector_capex_intensity / sector_capex_to_da
+    else:
+        da_pct_norm = 0.03
 
     # P&L ratios: historical mean applied flat across all 5 forecast years.
     cogs_flat = _mean_ratio(hist_cogs, 0.5, 0.0, 1.0) if reports_cogs else 0.0
     sga_flat  = _mean_ratio(hist_sga,  0.1, 0.0, 0.8)
-    rd_flat   = _mean_ratio(hist_rd,   0.0, 0.0, 0.5) if has_rd else None
+    rd_flat = (
+        sector_rd_intensity if rd_is_sector_fallback
+        else _mean_ratio(hist_rd, 0.0, 0.0, 0.5) if has_rd
+        else None
+    )
     int_flat  = _mean_ratio(hist_int,  0.02, 0.0, 0.3)
     other_opex_flat = _mean_ratio(hist_other_opex, 0.0, 0.0, 0.8) if has_other_opex else 0.0
     other_flat = _mean_ratio(hist_other_pct, 0.0, -0.05, 0.05) if len(hist_other_pct) >= 2 else 0.0
