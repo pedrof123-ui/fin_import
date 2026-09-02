@@ -65,6 +65,7 @@ def compute_wacc(
     market_risk_premium: float = DEFAULT_MRP,
     beta_override: float | None = None,
     cost_of_debt_override: float | None = None,
+    cost_of_debt_terminal_override: float | None = None,
     tax_rate_override: float | None = None,
     annual_income_df: pd.DataFrame | None = None,
     as_of: date | None = None,
@@ -79,6 +80,17 @@ def compute_wacc(
     # Fall back to quarterly income only when annual data is unavailable.
     kd_income = annual_income_df if (annual_income_df is not None and not annual_income_df.empty) else income_df
     kd = cost_of_debt_override if cost_of_debt_override is not None else compute_cost_of_debt(kd_income, balance_df)
+
+    # Terminal-value-only cost of debt: a real disclosed coupon on this company's
+    # long-dated bonds, when available, instead of the embedded whole-book rate that
+    # blends in cheap pre-rate-hike debt (see PLAN_DEBT_MATURITY.md). Not clamped like
+    # `kd` above -- that clamp guards a noisy *estimate*; this is a reported rate.
+    kd_terminal = cost_of_debt_terminal_override
+    if kd_terminal is None:
+        from debt_maturity.db import get_summary
+        maturity_summary = get_summary(ticker)
+        if maturity_summary is not None:
+            kd_terminal = maturity_summary.get("weighted_avg_coupon_long_dated")
 
     latest = balance_df.iloc[-1] if not balance_df.empty else pd.Series(dtype=float)
     total_debt = (
@@ -119,6 +131,7 @@ def compute_wacc(
     D_w = total_debt / V if V > 0 else 0
     E_w = market_cap / V if V > 0 else 1.0
     wacc = ke * E_w + kd * (1 - tax_rate) * D_w
+    wacc_terminal = ke * E_w + kd_terminal * (1 - tax_rate) * D_w if kd_terminal is not None else None
 
     return WaccDetail(
         beta_raw=beta_raw,
@@ -134,4 +147,6 @@ def compute_wacc(
         total_debt=total_debt,
         market_cap=market_cap,
         beta_2yr=beta_2yr_stored,
+        cost_of_debt_terminal=kd_terminal,
+        wacc_terminal=wacc_terminal,
     )

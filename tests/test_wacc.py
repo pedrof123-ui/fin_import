@@ -95,3 +95,82 @@ def test_run_dcf_av_does_not_warn_when_cost_of_debt_above_risk_free_rate(_requir
         as_of=date(2024, 6, 30),
     )
     assert not any("Cost of debt" in w and "risk-free rate" in w for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Terminal-value WACC split (PLAN_DEBT_MATURITY.md Phase 3)
+# ---------------------------------------------------------------------------
+
+def test_no_debt_maturity_coverage_leaves_terminal_fields_none(monkeypatch):
+    """The common case today (no backfill run yet, or a ticker with no SEC coverage):
+    cost_of_debt_terminal/wacc_terminal must be None, not some accidental fallback."""
+    import debt_maturity.db as db_mod
+    monkeypatch.setattr(db_mod, "get_summary", lambda ticker: None)
+
+    detail = wacc_mod.compute_wacc(
+        ticker="TESTCO", income_df=_income_df(), balance_df=_balance_df(),
+        current_price=100.0, risk_free_rate=0.0517,
+        cost_of_debt_override=0.02, tax_rate_override=0.21,
+    )
+    assert detail.cost_of_debt_terminal is None
+    assert detail.wacc_terminal is None
+
+
+def test_debt_maturity_summary_sourced_automatically(monkeypatch):
+    """When no explicit override is passed, compute_wacc looks up
+    debt_maturity_summary itself and uses weighted_avg_coupon_long_dated."""
+    import debt_maturity.db as db_mod
+    monkeypatch.setattr(
+        db_mod, "get_summary",
+        lambda ticker: {"weighted_avg_coupon_long_dated": 0.055, "weighted_avg_coupon_near_term": 0.03},
+    )
+
+    detail = wacc_mod.compute_wacc(
+        ticker="TESTCO", income_df=_income_df(), balance_df=_balance_df(),
+        current_price=100.0, risk_free_rate=0.0517,
+        cost_of_debt_override=0.02, tax_rate_override=0.21,
+    )
+    assert detail.cost_of_debt_terminal == pytest.approx(0.055)
+    assert detail.wacc_terminal is not None
+    assert detail.wacc_terminal != detail.wacc  # kd_terminal (5.5%) differs from kd (2%)
+
+
+def test_cost_of_debt_terminal_override_wins_over_lookup(monkeypatch):
+    import debt_maturity.db as db_mod
+    monkeypatch.setattr(db_mod, "get_summary", lambda ticker: pytest.fail("should not be called"))
+
+    detail = wacc_mod.compute_wacc(
+        ticker="TESTCO", income_df=_income_df(), balance_df=_balance_df(),
+        current_price=100.0, risk_free_rate=0.0517,
+        cost_of_debt_override=0.02, cost_of_debt_terminal_override=0.06, tax_rate_override=0.21,
+    )
+    assert detail.cost_of_debt_terminal == pytest.approx(0.06)
+
+
+def test_run_dcf_av_uses_terminal_wacc_for_terminal_value_only(_require_dbs, monkeypatch):
+    """A higher terminal-only cost of debt raises wacc_terminal above the embedded wacc,
+    which must lower pv_terminal_value relative to the flat-WACC baseline, while the
+    warning text switches to the "does not inherit" wording."""
+    import debt_maturity.db as db_mod
+    monkeypatch.setattr(db_mod, "get_summary", lambda ticker: None)
+
+    baseline = run_dcf_av(
+        "AAPL",
+        overrides=UserOverrides(risk_free_rate=0.06, cost_of_debt_override=0.02),
+        as_of=date(2024, 6, 30),
+    )
+    split = run_dcf_av(
+        "AAPL",
+        overrides=UserOverrides(
+            risk_free_rate=0.06, cost_of_debt_override=0.02, cost_of_debt_terminal_override=0.07,
+        ),
+        as_of=date(2024, 6, 30),
+    )
+
+    assert split.wacc_detail.wacc == pytest.approx(baseline.wacc_detail.wacc)  # years 1-5 unchanged
+    assert split.wacc_detail.wacc_terminal > split.wacc_detail.wacc
+    assert split.pv_terminal_value < baseline.pv_terminal_value
+    assert any(
+        "does not inherit this understatement" in w for w in split.warnings
+    ), f"expected the split-aware warning wording, got: {split.warnings}"
+    assert not any("does not inherit this understatement" in w for w in baseline.warnings)

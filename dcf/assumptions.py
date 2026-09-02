@@ -42,6 +42,7 @@ class UserOverrides:
     dpo: float | None = None
     dio: float | None = None
     cost_of_debt_override: float | None = None
+    cost_of_debt_terminal_override: float | None = None
     tax_rate_override: float | None = None
     y1_quarter_revenues: dict[int, float] | None = None  # keys 1-4
     default_ebit_margin_pct: float | None = None  # AV DCF: median historical margin, applied as flat default
@@ -86,6 +87,11 @@ class WaccDetail:
     total_debt: float
     market_cap: float
     beta_2yr: float | None = None
+    # Terminal-value-only WACC, using a coupon rate on long-dated debt instead of the
+    # embedded (whole-book) cost of debt -- see PLAN_DEBT_MATURITY.md Phase 3. None when
+    # the ticker has no debt_maturity_summary coverage; callers fall back to `wacc`.
+    cost_of_debt_terminal: float | None = None
+    wacc_terminal: float | None = None
 
 
 @dataclass

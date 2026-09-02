@@ -723,6 +723,7 @@ def _run_dcf_core(
         market_risk_premium=mrp,
         beta_override=beta_override,
         cost_of_debt_override=overrides.cost_of_debt_override if overrides else None,
+        cost_of_debt_terminal_override=overrides.cost_of_debt_terminal_override if overrides else None,
         tax_rate_override=overrides.tax_rate_override if (overrides and overrides.tax_rate_override is not None) else annual_tax_rate,
         annual_income_df=annual["income"],
         as_of=as_of,
@@ -759,13 +760,23 @@ def _run_dcf_core(
             f"WACC of {wacc_detail.wacc * 100:.1f}% is below 5% — check capital structure inputs."
         )
     if wacc_detail.cost_of_debt < wacc_detail.risk_free_rate:
-        warnings.append(
-            f"Cost of debt ({wacc_detail.cost_of_debt * 100:.1f}%) is below the risk-free rate "
-            f"({wacc_detail.risk_free_rate * 100:.1f}%) — plausible if a material share of debt "
-            "was issued before the current rate-hike cycle at fixed coupons, but this same rate "
-            "discounts the terminal value, where it likely understates the sustainable long-run "
-            "financing cost once existing debt rolls over and refinances at prevailing rates."
-        )
+        if wacc_detail.cost_of_debt_terminal is not None:
+            warnings.append(
+                f"Cost of debt ({wacc_detail.cost_of_debt * 100:.1f}%) is below the risk-free "
+                f"rate ({wacc_detail.risk_free_rate * 100:.1f}%) — plausible for debt issued "
+                "before the current rate-hike cycle at fixed coupons. The terminal value uses a "
+                f"separate, higher rate ({wacc_detail.cost_of_debt_terminal * 100:.1f}%) sourced "
+                "from this company's disclosed long-dated bond coupons, so it does not inherit "
+                "this understatement."
+            )
+        else:
+            warnings.append(
+                f"Cost of debt ({wacc_detail.cost_of_debt * 100:.1f}%) is below the risk-free rate "
+                f"({wacc_detail.risk_free_rate * 100:.1f}%) — plausible if a material share of debt "
+                "was issued before the current rate-hike cycle at fixed coupons, but this same rate "
+                "discounts the terminal value, where it likely understates the sustainable long-run "
+                "financing cost once existing debt rolls over and refinances at prevailing rates."
+            )
 
     from dcf.av_data import get_sector_dcf_fallback_ratios
     _sector_capex, _sector_rd, _sector_capex_to_da = get_sector_dcf_fallback_ratios(ticker, as_of=as_of)
@@ -911,11 +922,15 @@ def _run_dcf_core(
 
     last_fcff = fcff_series[-1].fcff
     wacc = wacc_detail.wacc
-    if wacc <= terminal_growth:
-        clamped_tg = wacc - 0.01
+    # Terminal value uses a separate WACC built on long-dated-bond coupons instead of the
+    # embedded whole-book rate, when available (PLAN_DEBT_MATURITY.md Phase 3) -- years
+    # 1-5 above were already discounted on the embedded `wacc`, unchanged.
+    wacc_tv = wacc_detail.wacc_terminal if wacc_detail.wacc_terminal is not None else wacc
+    if wacc_tv <= terminal_growth:
+        clamped_tg = wacc_tv - 0.01
         warnings.append(
             f"Terminal growth clamped from {terminal_growth * 100:.1f}% to {clamped_tg * 100:.1f}% "
-            f"because WACC ({wacc * 100:.1f}%) must exceed terminal growth."
+            f"because the terminal-value WACC ({wacc_tv * 100:.1f}%) must exceed terminal growth."
         )
         terminal_growth = clamped_tg
 
@@ -934,8 +949,8 @@ def _run_dcf_core(
             "forecast."
         )
 
-    terminal_value = last_fcff * (1 + terminal_growth) / (wacc - terminal_growth)
-    pv_tv = terminal_value / (1 + wacc) ** len(fcff_series)
+    terminal_value = last_fcff * (1 + terminal_growth) / (wacc_tv - terminal_growth)
+    pv_tv = terminal_value / (1 + wacc_tv) ** len(fcff_series)
 
     pv_fcff_sum = sum(f.pv_fcff for f in fcff_series)
     enterprise_value = pv_fcff_sum + pv_tv
