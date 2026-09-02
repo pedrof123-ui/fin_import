@@ -61,6 +61,14 @@ actually author):
   different risk profile than the raw historical beta captures. Do not override these by default;
   most valuations should use the engine's own WACC inputs unchanged.
 
+  Note on cost_of_debt_override specifically: when the DEBT MATURITY block below has real
+  coverage, the engine already uses a *separate*, higher rate — this company's actual disclosed
+  long-dated bond coupon — to discount the terminal value, so a low embedded cost of debt (blended
+  cheap pre-rate-hike debt) does NOT need correcting via cost_of_debt_override just because it
+  looks stale; that correction already happens automatically. Only override cost_of_debt_override
+  for a reason unrelated to the terminal-value refinancing story (e.g. a credit-rating change, a
+  large upcoming issuance at a known rate not yet reflected in the balance sheet).
+
 METHODOLOGY:
 
 bear / base / bull are three FULL, INTERNALLY CONSISTENT scenarios, not a base case with

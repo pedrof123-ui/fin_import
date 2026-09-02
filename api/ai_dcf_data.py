@@ -42,6 +42,7 @@ COMPETITOR_TRANSCRIPT_QUARTERS = 4
 COMPETITOR_TRANSCRIPT_CHAR_CAP = 7000   # matches research_router._MAX_TRANSCRIPT_CHARS
 INDUSTRY_REPORT_MAX_AGE_DAYS = 14
 _NWC_LOOKBACK_YEARS = 7
+MAX_DEBT_TRANCHES_SHOWN = 15   # some filers disclose 50-130+ subsidiary rows (e.g. ETR: 133)
 
 
 def _f(v, fmt: str = ".1f") -> str:
@@ -452,6 +453,79 @@ def get_engine_context(ticker: str) -> str:
         if len(s_series) >= 2:
             trend = "declining (net buybacks)" if s_series.iloc[-1] < s_series.iloc[0] else "rising (net dilution)"
             lines.append(f"Diluted share count trend (oldest vs. newest): {trend}")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 1.5b — Debt maturity ladder (data/debt_maturity.duckdb, SEC 10-K XBRL notes;
+# PLAN_DEBT_MATURITY.md Phase 5). ~90% of the universe has no coverage (see
+# docs/debt_maturity_coverage.md Phase 4 section) -- that's the routine case, not an error.
+# ---------------------------------------------------------------------------
+
+def get_debt_maturity_context(ticker: str) -> str:
+    """Weighted-average coupon/maturity plus the individual disclosed tranches, so the
+    Architect/Valuation Analyst can reason over this company's real bond ladder instead of
+    inferring "probably pre-hike debt" from the WACC advisory warning text alone. Null-safe:
+    returns an [INFO] placeholder, not an empty/broken block, when nothing is on file."""
+    from debt_maturity.db import get_summary, get_tranches
+
+    ticker = ticker.upper()
+    summary = get_summary(ticker)
+    if summary is None:
+        return (
+            f"[INFO] No SEC debt-maturity data on file for {ticker} — either this company's "
+            "10-K doesn't tag a per-tranche or maturity-ladder debt note (common for revolver/"
+            "private debt or companies with little debt), or it hasn't been backfilled yet."
+        )
+
+    lines = [f"DEBT MATURITY — {ticker} (FY{summary['fiscal_year']}, from SEC 10-K XBRL notes)", ""]
+
+    waytm = summary["weighted_avg_years_to_maturity"]
+    pct_dated = summary["pct_maturity_dated"]
+    if waytm is None:
+        lines.append("Weighted-avg years to maturity: n/a")
+    else:
+        line = f"Weighted-avg years to maturity: {waytm:.1f}y"
+        if pct_dated is not None and pct_dated < 0.9:
+            line += (
+                f" — CAUTION: only {_pct(pct_dated, '.0f')} of this company's disclosed debt "
+                "carries an explicit maturity year; the rest sits in an undated \"Thereafter\" "
+                "bucket excluded from this average, so treat it as a rough, likely-short-biased "
+                "estimate, not a precise figure"
+            )
+        lines.append(line)
+
+    near = summary["weighted_avg_coupon_near_term"]
+    long_dated = summary["weighted_avg_coupon_long_dated"]
+    lines.append(
+        f"Weighted-avg coupon, near-term (matures within the 5yr DCF forecast horizon): "
+        f"{_pct(near, '.1f') if near is not None else 'n/a'}"
+    )
+    lines.append(
+        f"Weighted-avg coupon, long-dated (beyond 5yr — what the DCF terminal value now "
+        f"discounts on, when set): {_pct(long_dated, '.1f') if long_dated is not None else 'n/a'}"
+    )
+    covered = summary["total_debt_covered"]
+    lines.append(f"Total debt covered by this disclosure: ${covered:,.0f}" if covered else "Total debt covered: n/a")
+
+    tranches = get_tranches(ticker)
+    if tranches:
+        lines.append("")
+        lines.append(f"MATURITY LADDER (individual disclosed tranches/buckets, largest {MAX_DEBT_TRANCHES_SHOWN} by amount):")
+        ranked = sorted(tranches, key=lambda t: t.get("amount") or 0, reverse=True)
+        shown = ranked[:MAX_DEBT_TRANCHES_SHOWN]
+        for t in sorted(shown, key=lambda t: (t.get("maturity_year") is None, t.get("maturity_year") or 0)):
+            year = t.get("maturity_year")
+            coupon = t.get("coupon_rate")
+            amount = t.get("amount")
+            year_s = str(year) if year is not None else "undated/Thereafter"
+            coupon_s = f"{coupon * 100:.2f}%" if coupon is not None else "n/a"
+            amount_s = f"${amount:,.0f}" if amount is not None else "n/a"
+            label = t.get("raw_label") or ""
+            lines.append(f"  {year_s:<20} {coupon_s:>7} coupon  {amount_s:>15}  {label}")
+        if len(tranches) > len(shown):
+            lines.append(f"  ... {len(tranches) - len(shown)} smaller tranches omitted")
 
     return "\n".join(lines)
 

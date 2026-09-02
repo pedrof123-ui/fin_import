@@ -114,6 +114,32 @@ def save_summary(conn: duckdb.DuckDBPyConnection, ticker: str, summary: dict) ->
     conn.commit()
 
 
+def get_tranches(ticker: str, db_path: Path = DEFAULT_DB_PATH) -> list[dict]:
+    """Raw debt_tranches rows for `ticker`, newest filing first then by maturity year --
+    the maturity ladder itself (PLAN_DEBT_MATURITY.md Phase 5), which get_summary's
+    weighted averages don't expose. Null-safe: a missing file or missing ticker both just
+    return []."""
+    if not db_path.exists():
+        return []
+    conn = duckdb.connect(str(db_path), read_only=True)
+    try:
+        rows = conn.execute(
+            """
+            SELECT fiscal_year, filed_date, currency, coupon_rate, maturity_year, amount,
+                   source_concept, raw_label
+            FROM debt_tranches
+            WHERE ticker = ?
+            ORDER BY fiscal_year DESC, maturity_year IS NULL, maturity_year, amount DESC
+            """,
+            [ticker.upper()],
+        ).fetchall()
+    finally:
+        conn.close()
+    cols = ["fiscal_year", "filed_date", "currency", "coupon_rate", "maturity_year", "amount",
+            "source_concept", "raw_label"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
 def get_summary(ticker: str, db_path: Path = DEFAULT_DB_PATH) -> Optional[dict]:
     """Latest debt_maturity_summary row for `ticker`, or None if it has no coverage.
     Null-safe entry point for downstream consumers (dcf/wacc.py Phase 3, api/ai_dcf_data.py

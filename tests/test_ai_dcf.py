@@ -331,6 +331,96 @@ def test_engine_context_reports_cogs_matches_phase0_findings():
 
 
 # ---------------------------------------------------------------------------
+# get_debt_maturity_context — PLAN_DEBT_MATURITY.md Phase 5
+# ---------------------------------------------------------------------------
+
+def test_get_debt_maturity_context_no_coverage_renders_info_not_empty(monkeypatch):
+    """~90% of the universe has no coverage (docs/debt_maturity_coverage.md Phase 4) --
+    that must render a real [INFO] placeholder, not an empty or broken block."""
+    import debt_maturity.db as dmdb
+
+    monkeypatch.setattr(dmdb, "get_summary", lambda ticker: None)
+    result = add.get_debt_maturity_context("ZZZZ")
+    assert result.startswith("[INFO]")
+    assert "ZZZZ" in result
+
+
+def test_get_debt_maturity_context_renders_summary_and_ladder(monkeypatch):
+    import debt_maturity.db as dmdb
+
+    summary = {
+        "fiscal_year": 2025,
+        "weighted_avg_years_to_maturity": 9.8,
+        "pct_maturity_dated": 1.0,
+        "weighted_avg_coupon_near_term": 0.031,
+        "weighted_avg_coupon_long_dated": 0.039,
+        "total_debt_covered": 62286.0,
+    }
+    tranches = [
+        {"maturity_year": 2026, "coupon_rate": 0.037, "amount": 5800.0, "raw_label": "3.7% notes"},
+        {"maturity_year": 2049, "coupon_rate": 0.043, "amount": 3000.0, "raw_label": "4.3% notes"},
+    ]
+    monkeypatch.setattr(dmdb, "get_summary", lambda ticker: summary)
+    monkeypatch.setattr(dmdb, "get_tranches", lambda ticker: tranches)
+
+    result = add.get_debt_maturity_context("IBM")
+    assert "9.8y" in result
+    assert "CAUTION" not in result  # pct_maturity_dated == 1.0, fully dated
+    assert "3.1%" in result   # near-term coupon
+    assert "3.9%" in result   # long-dated coupon
+    assert "3.7% notes" in result
+    assert "4.3% notes" in result
+
+
+def test_get_debt_maturity_context_low_pct_dated_shows_caution(monkeypatch):
+    """Apple-shaped case: a large undated 'Thereafter' bucket means weighted_avg_years_to_
+    maturity rests on less than half the disclosed debt -- must not be stated as a bare fact."""
+    import debt_maturity.db as dmdb
+
+    summary = {
+        "fiscal_year": 2025,
+        "weighted_avg_years_to_maturity": 2.5,
+        "pct_maturity_dated": 0.46,
+        "weighted_avg_coupon_near_term": None,
+        "weighted_avg_coupon_long_dated": 0.025,
+        "total_debt_covered": 91281.0,
+    }
+    monkeypatch.setattr(dmdb, "get_summary", lambda ticker: summary)
+    monkeypatch.setattr(dmdb, "get_tranches", lambda ticker: [])
+
+    result = add.get_debt_maturity_context("AAPL")
+    assert "CAUTION" in result
+    assert "46%" in result
+
+
+def test_get_debt_maturity_context_caps_tranches_shown(monkeypatch):
+    import debt_maturity.db as dmdb
+
+    summary = {
+        "fiscal_year": 2025, "weighted_avg_years_to_maturity": 10.0, "pct_maturity_dated": 1.0,
+        "weighted_avg_coupon_near_term": 0.03, "weighted_avg_coupon_long_dated": 0.04,
+        "total_debt_covered": 1000.0,
+    }
+    tranches = [
+        {"maturity_year": 2026 + i, "coupon_rate": 0.03, "amount": float(100 - i), "raw_label": f"t{i}"}
+        for i in range(20)
+    ]
+    monkeypatch.setattr(dmdb, "get_summary", lambda ticker: summary)
+    monkeypatch.setattr(dmdb, "get_tranches", lambda ticker: tranches)
+
+    result = add.get_debt_maturity_context("ACME")
+    assert result.count(" coupon ") == add.MAX_DEBT_TRANCHES_SHOWN
+    assert "5 smaller tranches omitted" in result
+
+
+@pytest.mark.parametrize("ticker", _REAL_TICKERS)
+def test_debt_maturity_context_price_blind(ticker):
+    text = add.get_debt_maturity_context(ticker).lower()
+    hits = [term for term in _BANNED_TERMS if term in text]
+    assert not hits, f"{ticker}: prohibited terms leaked into debt maturity context: {hits}"
+
+
+# ---------------------------------------------------------------------------
 # Context assembly helpers — pure formatting, no DB access
 # ---------------------------------------------------------------------------
 

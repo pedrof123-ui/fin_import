@@ -790,13 +790,14 @@ def _format_brief_for_architect(label: str, brief: BaseModel) -> str:
 
 def build_architect_context(
     fundamentals_brief: FundamentalsBrief, industry_brief: IndustryBrief, guidance_brief: GuidanceBrief,
-    engine_context: str,
+    engine_context: str, debt_maturity_context: str,
 ) -> str:
     return (
         f"{_format_brief_for_architect('FUNDAMENTALS HISTORIAN BRIEF', fundamentals_brief)}\n\n"
         f"{_format_brief_for_architect('INDUSTRY & COMPETITORS BRIEF', industry_brief)}\n\n"
         f"{_format_brief_for_architect('GUIDANCE & MD&A BRIEF', guidance_brief)}\n\n"
-        f"--- ENGINE CONTEXT ---\n\n{engine_context}"
+        f"--- ENGINE CONTEXT ---\n\n{engine_context}\n\n"
+        f"--- DEBT MATURITY (SEC 10-K, PLAN_DEBT_MATURITY.md) ---\n\n{debt_maturity_context}"
     )
 
 
@@ -842,8 +843,9 @@ async def run_ai_dcf(ticker: str, model: str, status_cb=None) -> AiDcfResult:
     decide how to degrade; this function never partially-succeeds silently."""
     from api.ai_dcf_data import (
         build_fundamentals_context, build_guidance_context, build_industry_context,
-        get_competitor_transcripts, get_engine_context, get_fundamentals_history,
-        get_historical_margin_bounds, get_industry_name, get_industry_report, get_mda_history,
+        get_competitor_transcripts, get_debt_maturity_context, get_engine_context,
+        get_fundamentals_history, get_historical_margin_bounds, get_industry_name,
+        get_industry_report, get_mda_history,
     )
     from api.industry_data import get_industry_aggregates, get_industry_web_search
     from api.research_router import (
@@ -870,13 +872,14 @@ async def run_ai_dcf(ticker: str, model: str, status_cb=None) -> AiDcfResult:
     industry_name = await _run(get_industry_name, ticker, default="")
 
     (fundamentals_history, mda_history, industry_report, competitor_transcripts,
-     engine_context, bounds, target_transcripts, estimates, peer_table, beat_miss,
-     industry_aggregates, tavily_search) = await asyncio.gather(
+     engine_context, debt_maturity_context, bounds, target_transcripts, estimates, peer_table,
+     beat_miss, industry_aggregates, tavily_search) = await asyncio.gather(
         _run(get_fundamentals_history, ticker),
         _run(get_mda_history, ticker),
         _run(get_industry_report, ticker, default=None),
         _run(get_competitor_transcripts, ticker),
         _run(get_engine_context, ticker),
+        _run(get_debt_maturity_context, ticker),
         _run(get_historical_margin_bounds, ticker, default=dict(_EMPTY_BOUNDS)),
         _run(get_earnings_trend_summary, ticker, timeout=_EARNINGS_TIMEOUT),
         _run(get_estimates_summary, ticker),
@@ -900,7 +903,9 @@ async def run_ai_dcf(ticker: str, model: str, status_cb=None) -> AiDcfResult:
     )
 
     _status("running_architect", "DCF Architect authoring bear/base/bull assumptions...")
-    architect_context = build_architect_context(fundamentals_brief, industry_brief, guidance_brief, engine_context)
+    architect_context = build_architect_context(
+        fundamentals_brief, industry_brief, guidance_brief, engine_context, debt_maturity_context,
+    )
     assumptions = await run_architect(ticker, model, architect_context)
 
     _status("computing_dcf", "Running the deterministic DCF engine for bear/base/bull...")

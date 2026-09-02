@@ -214,6 +214,13 @@ def get_dcf_summary(ticker: str) -> str:
         f"  Effective tax rate:      {_fmt(wd.tax_rate * 100, '.1f')}%",
         f"  Debt / Equity weight:    {_fmt(wd.debt_weight * 100, '.0f')}% / {_fmt(wd.equity_weight * 100, '.0f')}%",
         f"  WACC:                    {_fmt(wd.wacc * 100, '.2f')}%",
+    ]
+    if wd.wacc_terminal is not None:
+        lines += [
+            f"  Cost of debt (terminal, from disclosed long-dated bond coupons): {_fmt(wd.cost_of_debt_terminal * 100, '.2f')}%",
+            f"  WACC (terminal value only):                                     {_fmt(wd.wacc_terminal * 100, '.2f')}%",
+        ]
+    lines += [
         "",
         f"Terminal growth rate: {_fmt(base.terminal_growth_rate * 100, '.2f')}%",
         f"Terminal value as % of enterprise value: {_fmt(base.tv_pct_enterprise_value * 100, '.1f')}%",
@@ -248,6 +255,9 @@ def get_dcf_summary(ticker: str) -> str:
         lines += ["", "ANALYST ESTIMATE ANCHORING USED BY FORECASTER:"]
         for e in base.analyst_estimates[:6]:
             lines.append(f"  {e}")
+
+    from api.ai_dcf_data import get_debt_maturity_context
+    lines += ["", get_debt_maturity_context(ticker)]
 
     return "\n".join(lines)
 
