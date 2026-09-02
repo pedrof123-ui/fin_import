@@ -1,11 +1,13 @@
 # PLAN: Debt Maturity Database (SEC EDGAR)
 
-Status: Phases 0-4 done (2026-09-02). Phase 5 (AI DCF context wiring) not started — next
-session should pick up there. See each phase's checkboxes below for what was actually
-built/found; nothing in Phases 0-4 is speculative, every design choice was driven by a live
+Status: ALL PHASES DONE (2026-09-02). See each phase's checkboxes below for what was actually
+built/found; nothing here is speculative, every design choice was driven by a live
 discrepancy hit while testing against real filings (see Phase 1.2, 2.2, 4.1 notes especially).
-`data/debt_maturity.duckdb` is now populated for real (1,272 of 2,666 tickers, 268 with the
-coupon data the WACC split needs) — Phase 3's mechanical DCF integration is live, not inert.
+`data/debt_maturity.duckdb` is populated for real (1,272 of 2,666 tickers, 268 with the coupon
+data the WACC split needs) — Phase 3's mechanical DCF integration is live, not inert, and
+Phase 5 wired the same data into the AI DCF Architect and AI Researcher Valuation Analyst as
+LLM-facing context. Full test suite 703 passed; the paid AI Researcher regression harness
+(5 tickers + degradation case) also passed clean. This plan can be archived.
 
 **Phases 4 and 5 were swapped from the original draft (2026-09-02), before either started:**
 the original order had the AI DCF context-wiring phase first. But Phase 3 (the mechanical
@@ -245,7 +247,7 @@ gap from Phase 1.2 showing up exactly where expected, not a new bug).
       `wacc_terminal > wacc`; a no-coverage ticker (ZM) confirmed `wacc_terminal is None`,
       unchanged fallback behavior.
 
-## Phase 5 — AI DCF integration — context
+## Phase 5 — AI DCF integration — context — DONE 2026-09-02
 
 Suggested starting point: `api/ai_dcf_data.py` already has `get_fundamentals_history` and
 `get_industry_report` to pattern-match against for shape/null-safety conventions. The data
@@ -261,29 +263,50 @@ rendered text should say so, not state it as a bare fact. With Phase 4 done firs
 phase should be designed against the real full-universe coverage/quality distribution
 rather than the Phase 0 sample alone.
 
-- [ ] 5.1 `api/ai_dcf_data.py`: new `get_debt_maturity_context(ticker)`, same shape as
-      `get_fundamentals_history`/`get_industry_report` — renders the maturity ladder and
-      weighted-average coupon/maturity as a text block, null-safe when unavailable.
-- [ ] 5.2 Wire into the DCF Architect / Valuation Analyst context assembly so they reason over
-      real numbers instead of inferring "probably pre-hike debt" from the warning text alone.
-- [ ] 5.3 Tests, including the no-coverage case renders nothing (not an empty/broken block).
+- [x] 5.1 `api/ai_dcf_data.py::get_debt_maturity_context(ticker)` — same [ERROR]/[INFO]-degrade
+      shape as `get_fundamentals_history`/`get_industry_report`. Renders weighted-avg
+      years-to-maturity (with a CAUTION line when `pct_maturity_dated < 0.9`, per the Apple
+      case), near-term/long-dated coupon, total debt covered, and the individual tranches —
+      capped at `MAX_DEBT_TRANCHES_SHOWN = 15` by amount (some filers disclose 50-130+
+      subsidiary rows, e.g. Entergy: 133), with an "N smaller tranches omitted" note. Added
+      `debt_maturity/db.py::get_tranches(ticker)` read helper (the plan's suggested starting
+      point — only `save_tranches`/`delete_ticker` existed before).
+- [x] 5.2 Wired into both consumers: (a) the DCF Architect — `build_architect_context` gained a
+      `debt_maturity_context` param and a new `--- DEBT MATURITY ---` block, gathered
+      alongside `engine_context` in `run_ai_dcf`'s asyncio.gather; `ai_dcf_architect.md` gained
+      a note that `cost_of_debt_override` shouldn't be used to "fix" a low embedded rate when
+      the terminal-value split already handles it automatically. (b) the AI Researcher's
+      Valuation Analyst — `api/valuation_data.py::get_dcf_summary` gained the same block
+      (imported from `api.ai_dcf_data`) plus `cost_of_debt_terminal`/`wacc_terminal` lines in
+      the existing WACC BREAKDOWN, shown only when the split applies.
+- [x] 5.3 10 new tests: 4 for `get_debt_maturity_context` (no-coverage renders `[INFO]` not
+      empty, full render with/without the caution line, tranche-count cap), a
+      price-blindness check (parametrized, matching the module's existing convention), and 4
+      round-trip tests for `get_tranches` in new `tests/test_debt_maturity_db.py` (missing
+      file/ticker, round-trip, cross-ticker isolation) — `debt_maturity/db.py` had no direct
+      unit tests before this (Phase 2 validated it only via live sanity checks). Full suite:
+      703 passed (was 693), 3 skipped, 3 deselected. Also ran the paid AI Researcher
+      regression harness (`scripts/research_regression.py`, required by this file's own
+      review-gate hook since `api/ai_dcf_router.py` changed) — NVDA/UPS/KO/MU/FANG +
+      degradation case, **ALL CHECKS PASSED**, no `[FAIL]` anywhere.
 
 ## Cross-cutting acceptance criteria
 
-- [x] (Phases 0-4; re-check after Phase 5) Full existing test suite green throughout, not
-      just new tests — 685 passed before Phase 3's edits (already including Phases 1-2's new
-      tests); 692 passed, 3 skipped, 3 deselected after Phase 3 (including
-      `tests/test_wacc.py`'s additions); 693 passed, 3 skipped, 3 deselected after Phase 4's
-      `extract_debt_tranches` no-XBRL-attachments fix (+1 test). No failures in any run.
-- [x] (Phases 0-4; re-check Phase 5's new context block too) Every integration point
-      is null-safe: a ticker with no debt-maturity coverage behaves exactly as it does
-      today (no new hard failures, no clipped/mutated numbers — this stays
+- [x] Full existing test suite green throughout, not just new tests — 685 passed before
+      Phase 3's edits (already including Phases 1-2's new tests); 692 passed, 3 skipped, 3
+      deselected after Phase 3 (including `tests/test_wacc.py`'s additions); 693 after
+      Phase 4's `extract_debt_tranches` no-XBRL-attachments fix (+1 test); 703 after Phase
+      5's new tests. No failures in any run. Phase 5 additionally ran the paid AI Researcher
+      regression harness (`scripts/research_regression.py`) since it touches
+      `api/ai_dcf_router.py` — ALL CHECKS PASSED, no `[FAIL]`.
+- [x] Every integration point is null-safe: a ticker with no debt-maturity coverage behaves
+      exactly as it does today (no new hard failures, no clipped/mutated numbers — this stays
       advisory/informational only, consistent with `PLAN_GUARDRAILS.md`'s "warnings, not
-      clips" design principle). Concretely: `debt_maturity.db.get_summary` returns `None`
-      on a missing file or missing ticker; `dcf/wacc.py` leaves `cost_of_debt_terminal`/
-      `wacc_terminal` `None` in that case; `dcf/model.py` falls back to the embedded
-      `wacc` for the terminal value, so every ticker's DCF output is unchanged until the
-      real `data/debt_maturity.duckdb` is populated (Phase 4) *and* that specific ticker
-      has per-tranche coverage (~36% of the universe per Phase 0).
+      clips" design principle). Concretely: `debt_maturity.db.get_summary`/`get_tranches`
+      return `None`/`[]` on a missing file or missing ticker; `dcf/wacc.py` leaves
+      `cost_of_debt_terminal`/`wacc_terminal` `None` in that case; `dcf/model.py` falls back
+      to the embedded `wacc` for the terminal value; `get_debt_maturity_context` renders an
+      `[INFO]` placeholder, not an empty/broken block, when there's no coverage — true for
+      ~90% of the universe per the real Phase 4 backfill (268/2,666 tickers get the split).
 - [x] Coverage numbers and the go/no-go decision logged to `docs/debt_maturity_coverage.md`
       (not only this plan), per [[feedback_log_findings_in_the_artifact]].
