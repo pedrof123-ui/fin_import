@@ -1,10 +1,11 @@
 # PLAN: Debt Maturity Database (SEC EDGAR)
 
-Status: Phases 0-3 done (2026-09-01), stopped there by request. Phase 4 (full-universe
-backfill + cron) and Phase 5 (AI DCF context wiring) not started — next session should pick
-up at Phase 4. See each phase's checkboxes below for what was actually built/found; nothing
-in Phases 0-3 is speculative, every design choice was driven by a live discrepancy hit
-while testing against real filings (see Phase 1.2, 2.2 notes especially).
+Status: Phases 0-4 done (2026-09-02). Phase 5 (AI DCF context wiring) not started — next
+session should pick up there. See each phase's checkboxes below for what was actually
+built/found; nothing in Phases 0-4 is speculative, every design choice was driven by a live
+discrepancy hit while testing against real filings (see Phase 1.2, 2.2, 4.1 notes especially).
+`data/debt_maturity.duckdb` is now populated for real (1,272 of 2,666 tickers, 268 with the
+coupon data the WACC split needs) — Phase 3's mechanical DCF integration is live, not inert.
 
 **Phases 4 and 5 were swapped from the original draft (2026-09-02), before either started:**
 the original order had the AI DCF context-wiring phase first. But Phase 3 (the mechanical
@@ -17,12 +18,17 @@ real bug fixes as sample size grew (Phase 1.2) — writing the LLM-facing render
 against the real full-universe distribution, once it exists, beats designing it against a
 small sample and risking rework.
 
-Everything shipped in Phases 0-3 is inert until Phase 4/5 run: `dcf/wacc.py` looks up
-`debt_maturity.db.get_summary(ticker)`, which returns `None` until `data/debt_maturity.duckdb`
-exists (nothing has written to it yet — Phase 2's tests and live checks all used scratch
+**Update 2026-09-02: no longer inert.** Phase 4 populated the real `data/debt_maturity.duckdb`
+(1,272 of 2,666 tickers have a summary row, 268 have the coupon data the split needs) and
+live-verified the split is active for real (IBM/AAPL/Southern Co.). The paragraph below is
+kept for history — it described the state through the end of Phase 3, before Phase 4 ran.
+
+Everything shipped in Phases 0-3 was inert until Phase 4 ran: `dcf/wacc.py` looks up
+`debt_maturity.db.get_summary(ticker)`, which returned `None` until `data/debt_maturity.duckdb`
+existed (nothing had written to it yet — Phase 2's tests and live checks all used scratch
 DBs in `/tmp`, on purpose, to avoid seeding the real one with a handful of tickers ahead of
-a proper full-universe backfill). So today's DCF output is byte-for-byte unchanged for
-every ticker; the split only activates once Phase 4 populates the real database.
+a proper full-universe backfill). So DCF output was byte-for-byte unchanged for every ticker
+until Phase 4 populated the real database.
 
 Builds on: `features/ai_dcf/PLAN_GUARDRAILS.md` Phase 1 (cost-of-debt-vs-risk-free-rate
 advisory warning, shipped 2026-08-27), which diagnosed the real issue but explicitly deferred
@@ -213,15 +219,31 @@ gap from Phase 1.2 showing up exactly where expected, not a new bug).
       Phase 3's edits, confirming Phases 1-2 introduced no regression) also green, second
       full run covering Phase 3 in progress.
 
-## Phase 4 — Full-universe backfill + refresh cadence — RESUME HERE next session
+## Phase 4 — Full-universe backfill + refresh cadence — DONE 2026-09-02
 
-- [ ] 4.1 Batch run across the full ticker universe (~2,500 tickers), throttled per Phase 0/1
-      findings on SEC request pacing.
-- [ ] 4.2 Refresh cadence: piggyback on the existing monthly AV-refresh cron (same "no new cron
-      needed" pattern as [[project_capex_rd_ratios]]) — a monthly sweep is enough since this only
-      changes when a ticker files a new 10-K.
-- [ ] 4.3 Live-verify a handful of tickers end-to-end (AV DCF warning text changes as expected
-      once real data exists — this is Phase 3's mechanical WACC split activating for real).
+- [x] 4.1 Batch run across the full ticker universe (2,666 tickers from `company_overview`),
+      concurrency 5 (Phase 0's validated setting) via a new `--universe` mode on
+      `scripts/backfill_debt_maturity.py`, resumable via a progress log. Result: 1,272 tickers
+      (47.7%) got any tranche data, but only 268 (10.1%) have the `weighted_avg_coupon_long_dated`
+      the WACC split actually needs — source-selection (Phase 2.2) often prefers the
+      coupon-less ladder over per-tranche detail when the ladder covers more debt, so the
+      Phase 0 sample's 35.8% estimate overstated the real activation rate. 39 initial errors
+      (36 transient SEC timeouts + a real bug: `extract_debt_tranches` crashed when a filing
+      has no XBRL attachments at all — fixed generically, same null-safe pattern as the
+      existing `filing is None` check, `tests/test_fetch_debt_maturity.py` +1 test) all
+      resolved on retry, down to 3 genuinely unresolvable "ticker not on EDGAR" cases
+      (delisted/renamed). Full numbers in `docs/debt_maturity_coverage.md`'s new Phase 4
+      section, per [[feedback_log_findings_in_the_artifact]].
+- [x] 4.2 Refresh cadence: wired into `scripts/run_pipeline.py` as a new step (gated on
+      `--av-update`, non-fatal, ~20 min), positioned right after `av_update` — piggybacks on
+      the existing monthly AV-refresh cron (same "no new cron needed" pattern as
+      [[project_capex_rd_ratios]]), a fresh full-universe pass each month (not `--resume`,
+      progress log dated per run) since this only changes when a ticker files a new 10-K.
+- [x] 4.3 Live-verified end-to-end against the real database (not a scratch DB): IBM/AAPL/
+      Southern Co.'s real `debt_maturity_summary` rows reproduce Phase 2's scratch-DB numbers
+      exactly; `dcf.model.run_dcf_av` for all three now emits the split-WACC advisory text with
+      `wacc_terminal > wacc`; a no-coverage ticker (ZM) confirmed `wacc_terminal is None`,
+      unchanged fallback behavior.
 
 ## Phase 5 — AI DCF integration — context
 
@@ -248,11 +270,12 @@ rather than the Phase 0 sample alone.
 
 ## Cross-cutting acceptance criteria
 
-- [x] (Phases 0-3 only; re-check after Phase 4/5) Full existing test suite green
-      throughout, not just new tests — 685 passed before Phase 3's edits (already
-      including Phases 1-2's new tests); 692 passed, 3 skipped, 3 deselected after
-      (including Phase 3's `tests/test_wacc.py` additions). No failures in either run.
-- [x] (Phases 0-3 only; re-check Phase 5's new context block too) Every integration point
+- [x] (Phases 0-4; re-check after Phase 5) Full existing test suite green throughout, not
+      just new tests — 685 passed before Phase 3's edits (already including Phases 1-2's new
+      tests); 692 passed, 3 skipped, 3 deselected after Phase 3 (including
+      `tests/test_wacc.py`'s additions); 693 passed, 3 skipped, 3 deselected after Phase 4's
+      `extract_debt_tranches` no-XBRL-attachments fix (+1 test). No failures in any run.
+- [x] (Phases 0-4; re-check Phase 5's new context block too) Every integration point
       is null-safe: a ticker with no debt-maturity coverage behaves exactly as it does
       today (no new hard failures, no clipped/mutated numbers — this stays
       advisory/informational only, consistent with `PLAN_GUARDRAILS.md`'s "warnings, not

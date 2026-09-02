@@ -197,6 +197,20 @@ def test_extract_debt_tranches_no_filing_returns_empty(monkeypatch):
     assert extract_debt_tranches("ZZZZ") == []
 
 
+def test_extract_debt_tranches_no_xbrl_returns_empty():
+    """A filing can lack XBRL attachments entirely (rare, hit live during the Phase 4
+    full-universe backfill: AKTS's latest 10-K had none) -- filing.xbrl() returns None."""
+
+    class _NoXbrlFiling:
+        cik = "12345"
+        filing_date = "2026-01-01"
+
+        def xbrl(self):
+            return None
+
+    assert extract_debt_tranches("ZZZZ", filing=_NoXbrlFiling()) == []
+
+
 def test_extract_debt_tranches_wires_ticker_cik_fiscal_year():
     import pandas as pd
 

@@ -214,6 +214,8 @@ def extract_debt_tranches(ticker: str, filing=None) -> list[dict]:
         return []
 
     xb = filing.xbrl()
+    if xb is None:
+        return []  # filing has no XBRL attachments (rare, but happens)
     facts = xb.facts.to_dataframe()
 
     rows = []

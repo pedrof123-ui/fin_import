@@ -15,6 +15,7 @@ Default pipeline (fast path, no AV data fetch):
 
 With --av-update (slow, ~30 min, rate-limited to 75 calls/min):
     0. av_update      — fetch latest financials from Alpha Vantage API
+    0b. debt_maturity — refresh SEC debt-maturity DB, full universe (~20 min)
     then steps 1–5 as above.
 
 Usage:
@@ -97,6 +98,8 @@ def main() -> None:
                         help="Skip model training (reuse existing model.joblib)")
     parser.add_argument("--skip-dcf", action="store_true",
                         help="Skip DCF batch (saves ~15 min for the full universe)")
+    parser.add_argument("--skip-debt-maturity", action="store_true",
+                        help="Skip debt-maturity DB refresh (saves ~20 min for the full universe)")
     parser.add_argument("--enable-ml-comps", action="store_true",
                         help="Train + score + re-validate the ML comps valuation model "
                              "(P/E, P/FCF, P/S; ~90 min total, ~85 of it the walk-forward "
@@ -131,6 +134,8 @@ def main() -> None:
         print("  Model training: SKIPPED (reusing model.joblib)")
     if args.skip_dcf:
         print("  DCF batch: SKIPPED")
+    if args.av_update and not args.skip_debt_maturity:
+        print("  Debt maturity refresh: YES (SEC EDGAR, full universe)")
     if args.enable_ml_comps:
         print("  ML Comps Valuation: ENABLED")
     print(f"  TC: {args.tc_bps:.0f} bps")
@@ -142,6 +147,20 @@ def main() -> None:
             uv + ["scripts/av_update.py"],
             "AV Update — fetch latest financials from Alpha Vantage",
             dry_run=args.dry_run,
+        )
+
+    # Step 0b: debt-maturity DB refresh (SEC EDGAR, full universe). Only changes when a
+    # ticker files a new 10-K, so piggybacking on the monthly AV-refresh cron is enough --
+    # no separate cron needed (PLAN_DEBT_MATURITY.md Phase 4.2). Non-fatal: a handful of
+    # transient SEC timeouts shouldn't block train_model/score_live from running.
+    if args.av_update and not args.skip_debt_maturity:
+        from datetime import date
+        progress_log = f"data/debt_maturity_backfill_progress_{date.today().isoformat()}.csv"
+        timings["debt_maturity"] = _run(
+            uv + ["scripts/backfill_debt_maturity.py", "--universe",
+                  "--concurrency", "5", "--progress-log", progress_log],
+            "Debt Maturity — refresh SEC debt-maturity DB (DCF terminal-value WACC split)",
+            dry_run=args.dry_run, fatal=False,
         )
 
     # Step 1: hf_update
